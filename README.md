@@ -54,17 +54,17 @@ proxy sets to the acting identity. A missing or empty header, or `Anonymous`, is
 
 | The request has | The record says |
 |---|---|
-| No `domino-username` header (a local run) | `no identity (the request had no domino-username header)` |
+| No `domino-username` header (the server runs locally) | `no identity (the request had no domino-username header)` |
 | An empty `domino-username` header | `no identity (the domino-username header was empty)` |
 | `domino-username: Anonymous` | `no identity (the domino-username header was Anonymous)` |
 
 These texts have spaces, so they can never be a Domino user name. The server logs one line for each tool call: its arguments,
 the names of its request headers (never their values: one is a token), and for a write, who acted.
 
-Not measured yet: whether the Apps proxy sets `domino-username` for a call from the platform (an API caller) to an App with
-extended identity off. domino-agent-service measured that, on an App with extended identity on, the proxy sends no
-`domino-username` to an API caller. So on Domino the record can say "no identity". The live check (#7) shows it, in the record
-and in the App's log.
+On Domino, who acted will very likely be "no identity". The platform calls this App as an API caller, and domino-agent-service
+measured that the Apps proxy sends no `domino-username` to an API caller (on an App with extended identity on: its
+`docs/STATUS.md`, September 28, 2026, and `docs/BACKEND_REQUIREMENTS.md`, ID-6). This App has extended identity off, and nobody
+has measured that case yet. The live check (#7) measures it: the record and the App's log show who acted.
 
 ### Reset
 
@@ -75,8 +75,8 @@ again, so it also works on a state file from an older build, whose tables may no
 {"result": "loaded the seed", "alerts": {"A-1001": "open", "A-1002": "open", "A-1003": "open", "A-1004": "closed"}}
 ```
 
-It is an HTTP route, not an MCP tool, so the tools route never offers it to an agent. Anyone who can open the App can call it.
-SAR case IDs start again at `SAR-5001`.
+It is an HTTP route, not one of the server's tools, so the tools route never offers it to an agent. Anyone who can open the
+App can call it. SAR case IDs start again at `SAR-5001`.
 
 ### The seed: four alerts
 
@@ -150,17 +150,20 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    - Start script: `app.sh`.
    - Access: "project collaborators". The Apps proxy then lets a call through only when its acting identity can open the
      App, so an analyst who isn't a collaborator of the AML project can't use the case-management system.
-   - Extended identity: off.
+   - Extended identity: off. With it off, the Apps proxy doesn't pass the caller's token to the App's code
+     (domino-agent-service ADR 0016, Consequences). The App needs no token: it reads who acted from `domino-username`.
 
    The App's first log line shows the `mcp` version, the state file, and `loaded the seed` (a new state file) or `kept the
    state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
    `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
-3. **Add the tool server.** Open the platform App's Tool servers page in your browser, as yourself (that list refuses the
-   view-as switch). Add a tool server with the name `aml`, the MCP URL from step 2, and no secret. The URL is on this
-   deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each call carries a short-lived token for
-   the acting identity, and the Apps proxy checks that identity's access to the App. The agent then sees the tools as
-   `aml_get_alert`, `aml_get_customer_profile`, `aml_get_transactions`, `aml_close_alert` and `aml_escalate_to_sar`.
+3. **Add the tool server.** Only the owner of the project that holds the platform App can change its tool server list: anyone
+   else gets a 403. So the project owner does this step and the next two, in the browser, as themselves (the list refuses the
+   view-as switch). Open the platform App's Tool servers page. Add a tool server with the name `aml`, the MCP URL from step 2,
+   and no secret. The URL is on this deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each
+   call carries a short-lived token for the acting identity, and the Apps proxy checks that identity's access to the App. The
+   agent then sees the tools as `aml_get_alert`, `aml_get_customer_profile`, `aml_get_transactions`, `aml_close_alert` and
+   `aml_escalate_to_sar`.
 4. **Mark the tools.** On the same page, mark the three read tools as `read` (`get_alert`, `get_customer_profile`,
    `get_transactions`) and the two write tools as `write` (`close_alert`, `escalate_to_sar`).
 5. **Turn approval on for `escalate_to_sar` only.** An escalation then waits for a reviewer (maker-checker). A close needs no
@@ -181,9 +184,8 @@ curl -s -X POST "https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/r
   platform has no Domino-hosted tool servers. Until domino-agent-service #68 merges, the Tool servers page refuses `aml` with no
   secret. So step 3 waits for #68, and the agent's registration waits too (the platform App refuses an agent whose tool server
   isn't on its list).
-- **Who acted.** Not measured yet: whether the Apps proxy sets `domino-username` on a call from the platform to this App
-  (extended identity off). If it doesn't, each close and SAR case records "no identity" (see "Who acted" above). The live check
-  (#7) shows it.
+- **Who acted.** Each close and SAR case will very likely record "no identity". "Who acted" above says why, and how the live
+  check (#7) measures it.
 - **The Workspace token.** Not measured yet: whether the Apps proxy takes a Workspace's token for an App with extended identity
   off (the `POST /reset` call above). acme-mcp's check script does the same, so it very likely works.
 
@@ -200,7 +202,7 @@ streamable HTTP. It prints one line per case (`ok` or `FAIL`) and exits with 1 w
 It covers each tool's answer on the seed, unknown IDs, the 90-day window, the seed's four alerts, the reason codes, the status
 rules (close, escalate, "already escalated" with the first SAR case, each refusal), transaction IDs of another customer, who acted
 (from `domino-username`, and with no identity), a SAR case and a close that survive a restart, `POST /reset` (also on a state
-file from an older build), the missing state folder, `app.sh`, and that no MCP tool resets the system.
+file from an older build), the missing state folder, `app.sh`, and that none of the server's tools resets the system.
 
 ## The agent
 
@@ -212,16 +214,19 @@ no tool call.
   case-management system's read tools. The MCP client waits up to 300 seconds for an answer (the platform needs at least 60). A
   denial is the tool's answer.
 - Client-side tools are the AG-UI run's tools, such as `aml_close_alert` and `aml_escalate_to_sar`. The graph doesn't run them: a
-  call to one ends the AG-UI run, and its answer comes in a later run (for an escalation, after a reviewer's approval).
+  call to one ends the AG-UI run, and its answer comes in a later AG-UI run (for an escalation, after a reviewer's approval).
 - `ask_human` asks the analyst a question with an interrupt, with an optional expiry. When no answer comes in time, the agent is
-  told so, and gets no answer.
+  told so, and gets no answer. The tool's result is then "No answer came before the question expired, so it was cancelled." This
+  differs from the platform's example, which adds "Carry on without it.": that pushes the model to decide without the answer,
+  and spec #1 says an unanswered question never becomes a decision (story 8). What the agent does then is its system prompt's
+  rule: leave the alert open and say why.
 - The system prompt is the AG-UI run's context: the agent's system prompt from its definition (the AML instructions), the
   platform's operating rules and the task brief. The code has no AML instructions.
 - The model client follows `AGENT_MODEL_FORMAT` (`anthropic` is Anthropic Messages, else OpenAI chat) and `AGENT_MODEL` (the alias).
 
 The agent uses only the packages of the certified LangGraph Environment (domino-agent-service's
 `environments/agent-langgraph.lock`). It has no requirements file, and the repo has none at its root: Domino installs a root
-`requirements.txt` at the start of each run, which would change the Environment's packages.
+`requirements.txt` at the start of each Job, which would change the Environment's packages.
 
 ## Certification
 
@@ -286,8 +291,8 @@ only, so it runs on the Domino Standard Environment.
    `SMOKE_ALLOW_VIEW_AS=1`, then restart the App (publish a new version). The App's first log line then shows
    `AGENT_ALLOW_VIEW_AS=1`. A project's `AGENT_ALLOW_VIEW_AS` does nothing on that App.
 2. The case-management App is on the platform App's tool server list with the name `aml` (the Tool servers page, in your browser).
-   The App refuses an agent whose `toolServers` names a tool server that isn't on the list. That list doesn't take the view-as
-   switch, so this script can't add it.
+   The App refuses an agent whose `toolServers` names a tool server that isn't on the list. Only the App's project owner can
+   change that list, and it doesn't take the view-as switch, so this script can't add it (step 3 of "Set it up on Domino").
 3. You know the reviewer's Domino user name. The reviewer must be another person: the approvers of an escalation are the agent's
    owner and editors, minus the analyst who asked.
 
@@ -300,8 +305,8 @@ python agent/register.py --print --reviewer <reviewer>
 python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer>
 ```
 
-- `--print` shows the agent body that the script sends (the file, with you as its user, the reviewer as its editor, and the
-  overrides). It calls nothing.
+- `--print` shows the agent body that the script sends (the file, with you in its `users` list, the reviewer in its `editors`
+  list, and the overrides). It calls nothing.
 - `--app` is the platform App's URL as Domino gives it. A vanity URL set through the API doesn't route. A URL that you copy from
   the browser (with `#/...`) works too.
 - `--model <alias>` uses another LLM Gateway alias. The default is `sonnet`. The smoke test runs on `haiku`.
@@ -316,7 +321,8 @@ your own Domino user name (for the App). Your name comes from `DOMINO_STARTING_U
 3. `POST api/agents` when there is none, else `PUT api/agents/<id>`, with the whole body.
 4. It prints the agent's ID and its page: `<App URL>/#/agents/<id>`.
 
-You are the agent's owner when the script creates it, and its user. The reviewer is its editor.
+The person who runs the script is the analyst: it puts you in the agent's `users` list. You are also the agent's owner when the
+script creates it. The reviewer is in its `editors` list.
 
 ### When it stops
 
