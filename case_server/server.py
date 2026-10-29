@@ -2,7 +2,7 @@
 
 On Domino it runs as the App aml-case-management: app.sh starts it on port 8888. Locally:
   mkdir -p /tmp/aml && AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
-Then the MCP URL is http://localhost:8890/mcp.
+Then the MCP URL is http://localhost:8890/mcp. POST /reset (not an MCP tool) loads the seed again.
 
 Settings (environment variables):
   AML_DB_PATH    the SQLite state file (required). Its folder must exist; the server never makes it.
@@ -20,6 +20,8 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from store import SEED, CaseStore, Refused
 
@@ -36,12 +38,29 @@ def refusals_as_tool_errors():
         raise ToolError(str(e)) from e
 
 
-def log_call(ctx: Context, tool: str, **args: Any) -> None:
+def log_call(ctx: Context, tool: str, *, who: str | None = None, **args: Any) -> None:
     """Log a tool call with the names of its request headers, so the log shows what the Apps proxy sends.
-    Never the values: one of them is a token."""
+    Never the values: one of them is a token. A write also logs who acts (see acting_identity)."""
     request = ctx.request_context.request  # None when the call didn't come over HTTP
     headers = sorted(request.headers.keys()) if request is not None else []
-    log.info("tool call: %s(%s) headers: %s", tool, ", ".join(f"{k}={v!r}" for k, v in args.items()), " ".join(headers))
+    log.info("tool call: %s(%s)%s headers: %s", tool, ", ".join(f"{k}={v!r}" for k, v in args.items()),
+             f" as {who}" if who else "", " ".join(headers))
+
+
+def acting_identity(ctx: Context) -> str:
+    """Who acts: the domino-username header, which the Apps proxy sets to the acting identity. A missing or empty header,
+    or Anonymous, is no identity (as domino-agent-service reads it), and the answer says so and why. It has spaces, so it
+    can never be a Domino user name. Nobody has measured yet whether the proxy sets the header for an API caller of an App
+    with extended identity off: the live check sees it in the record and in the log."""
+    request = ctx.request_context.request  # None when the call didn't come over HTTP
+    name = request.headers.get("domino-username") if request is not None else None
+    if name is None:
+        return "no identity (the request had no domino-username header)"
+    if not name.strip():
+        return "no identity (the domino-username header was empty)"
+    if name.strip().lower() == "anonymous":
+        return f"no identity (the domino-username header was {name.strip()})"
+    return name.strip()
 
 
 def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
@@ -60,7 +79,8 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
     def get_alert(alert_id: str, ctx: Context) -> dict[str, Any]:
         """Read one alert by its ID (for example A-1001): the customer, the monitoring rule that flagged it, the score,
         the status (open, closed or escalated) and the IDs of the flagged transactions. A closed or escalated alert also
-        has who acted (acted_by) and when (acted_at, UTC); a closed one has its reason_code and rationale."""
+        has who acted (acted_by) and when (acted_at, UTC). A closed one has its reason_code and rationale; an escalated
+        one has its sar_case_id."""
         log_call(ctx, "get_alert", alert_id=alert_id)
         with refusals_as_tool_errors():
             return store.get_alert(alert_id)
@@ -81,6 +101,37 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         log_call(ctx, "get_transactions", customer_id=customer_id, days=days)
         with refusals_as_tool_errors():
             return store.get_transactions(customer_id, days)
+
+    @mcp.tool()
+    def close_alert(alert_id: str, reason_code: str, rationale: str, ctx: Context) -> dict[str, Any]:
+        """Close an open alert. reason_code is false_positive, explained_activity or duplicate; the rationale says why,
+        citing the evidence. Answers with the closed alert, which names who acted and when. A close is final. Refused (a
+        tool error with the reason): another reason code, an empty rationale, and an alert that is closed or escalated."""
+        who = acting_identity(ctx)
+        log_call(ctx, "close_alert", who=who, alert_id=alert_id, reason_code=reason_code, rationale=rationale)
+        with refusals_as_tool_errors():
+            return store.close_alert(alert_id, reason_code, rationale, who)
+
+    @mcp.tool()
+    def escalate_to_sar(alert_id: str, narrative: str, transaction_ids: list[str], ctx: Context) -> dict[str, Any]:
+        """Escalate an open alert: open a SAR case with a narrative (what is suspicious) and the IDs of the transactions
+        that support it, which must be transactions of the alert's customer. Answers with the SAR case: its ID
+        (sar_case_id), who opened it and when, and result "escalated". An escalation is final. An alert has at most one
+        SAR case: for an alert that is escalated already, it opens no other and answers with the first one and result
+        "already escalated" (not an error). Refused (a tool error with the reason): a closed alert, an empty narrative,
+        no transaction IDs, and a transaction ID that is unknown or another customer's."""
+        who = acting_identity(ctx)
+        log_call(ctx, "escalate_to_sar", who=who, alert_id=alert_id, narrative=narrative, transaction_ids=transaction_ids)
+        with refusals_as_tool_errors():
+            return store.escalate_to_sar(alert_id, narrative, transaction_ids, who)
+
+    # Not an MCP tool, so the tools route never offers it to an agent. Anyone who can open the App can call it.
+    @mcp.custom_route("/reset", methods=["POST"])
+    async def reset(request: Request) -> JSONResponse:
+        """Load the seed again, for a repeat test: every alert open except alert 4, and no SAR cases."""
+        alerts = store.reset()
+        log.info("reset: made the tables again and loaded the seed %s", store.seed_path)
+        return JSONResponse({"result": "loaded the seed", "alerts": alerts})
 
     return mcp
 
