@@ -47,7 +47,9 @@ ASK_HUMAN = {"type": "function", "function": {
         "question": {"type": "string", "description": "The question"},
         "expires_at": {"type": "string", "description": "Optional: when the answer stops being useful (ISO 8601)"}}}}}
 CANCELLED = "__agui_cancelled__"   # what interrupt() returns when the platform cancels the question (the bridge's sentinel)
-NO_ANSWER = "No answer came before the question expired, so it was cancelled. Carry on without it."
+# The tool's result when the question expires. It only says what happened. The platform's example adds "Carry on without it.";
+# this text doesn't, because that pushes the model to decide without the answer. What to do then is the system prompt's rule.
+NO_ANSWER = "No answer came before the question expired, so it was cancelled."
 
 
 def plain_context(_, new):
