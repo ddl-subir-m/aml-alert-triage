@@ -4,8 +4,9 @@ name. Run it in a Domino Workspace: it acts as you. It uses the stdlib only, so 
   python agent/register.py --app URL --reviewer NAME [--model ALIAS] [--environment ID]
   python agent/register.py --print --reviewer NAME [--model ALIAS] [--environment ID]
 
-It adds you to the agent's users (you are the analyst, and the agent's owner when it creates it) and the reviewer to its editors (the
-approvers of an escalation are the owner and the editors, minus the analyst who asked). --print shows the agent body and calls nothing.
+It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewer in its editors
+list (the approvers of an escalation are the owner and the editors, minus the analyst who asked). --print shows the agent body and
+calls nothing.
 
 How it calls the App: the Workspace's token (for the Apps proxy) and the header X-Prototype-View-As with your own Domino user name. With
 extended identity off, the Apps proxy changes the token, so the App must take your name from the header: its view-as switch must be on
@@ -38,7 +39,7 @@ class Stop(Exception):
 
 
 def agent_body(reviewer, me, model=None, environment=None):
-    """The definition file, with you as its user, the reviewer as its editor, and the overrides."""
+    """The definition file, with you (the analyst) in its users list, the reviewer in its editors list, and the overrides."""
     b = json.loads(DEFINITION.read_text())
     b["access"] = {**b["access"], "users": [me], "editors": [reviewer]}
     if model:
@@ -97,9 +98,14 @@ def reason(status, data):
     return f"{status} {str(data)[:300]}"
 
 
+def starting_username():
+    """The Workspace's DOMINO_STARTING_USERNAME: the person who started it ("" when it isn't set)."""
+    return os.environ.get("DOMINO_STARTING_USERNAME", "").strip()
+
+
 def my_name():
     """Your own Domino user name: the Workspace's DOMINO_STARTING_USERNAME, else Domino's answer for the Workspace's token."""
-    name = os.environ.get("DOMINO_STARTING_USERNAME", "").strip()
+    name = starting_username()
     if name:
         return name
     host = os.environ.get("DOMINO_API_HOST", "").rstrip("/")
@@ -180,7 +186,7 @@ def main():
         if getattr(a, flag) is not None and not getattr(a, flag).strip():
             ap.error(f"--{flag} is empty")
     try:
-        me = (os.environ.get("DOMINO_STARTING_USERNAME", "").strip() or "<your Domino user name>") if a.print_only else my_name()
+        me = (starting_username() or "<your Domino user name>") if a.print_only else my_name()
         reviewer = a.reviewer.strip()
         if reviewer == me:
             ap.error(f"the reviewer can't be you ({me}): an escalation needs a second person to approve it. Name another Domino user "

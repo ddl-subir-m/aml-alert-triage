@@ -18,7 +18,8 @@ does: MCP over streamable HTTP. No case reads the server's tables.
   START    the server refuses to start without its state folder
   APP      the Domino App's start script (app.sh)
 
-Run: .venv/bin/python tests/check_case_server.py
+  python tests/check_case_server.py
+
 Exit code: 0 all passed, 1 any failed. The server logs stay in the temporary folder that the last line names.
 """
 import asyncio
@@ -117,7 +118,7 @@ async def _call(base, tool, args, user):
 
 
 def tools(base):
-    """The names of the server's MCP tools."""
+    """The names of the server's tools."""
     return asyncio.run(_call(base, None, None, None))
 
 
@@ -325,32 +326,32 @@ def check_escalate():
     with server(new_state("escalate")) as base:
         check("TOOLS the server lists escalate_to_sar", "escalate_to_sar" in tools(base))
 
-        err, case = escalate(base)
-        case = case if not err else {}
-        sar = case.get("sar_case_id", "")
+        err, sar_case = escalate(base)
+        sar_case = sar_case if not err else {}
+        sar_case_id = sar_case.get("sar_case_id", "")
         check("ESC escalate_to_sar opens a SAR case for an open alert and answers with its ID (SAR-<number>), who opened "
               "it (the domino-username header) and when (now, UTC)",
-              not err and case.get("result") == "escalated" and sar.startswith("SAR-") and sar[4:].isdigit()
-              and {k: v for k, v in case.items() if k not in ("sar_case_id", "opened_at", "result")} == {
+              not err and sar_case.get("result") == "escalated" and sar_case_id.startswith("SAR-") and sar_case_id[4:].isdigit()
+              and {k: v for k, v in sar_case.items() if k not in ("sar_case_id", "opened_at", "result")} == {
                   "alert_id": "A-1002", "narrative": NARRATIVE, "transaction_ids": ALERT_2["flagged_transaction_ids"],
-                  "opened_by": "olivia.analyst"} and just_now(case.get("opened_at")), case)
+                  "opened_by": "olivia.analyst"} and just_now(sar_case.get("opened_at")), sar_case)
         err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
         check("ESC ... get_alert shows the alert escalated: who acted, when, and the SAR case ID",
               not err and alert == {**ALERT_2, "status": "escalated", "acted_by": "olivia.analyst",
-                                    "acted_at": case.get("opened_at"), "sar_case_id": sar}, alert)
+                                    "acted_at": sar_case.get("opened_at"), "sar_case_id": sar_case_id}, alert)
 
         err, again = escalate(base, narrative="A second narrative.", transaction_ids=["T-30015"], user="sam.other")
         check("STATUS a second escalate_to_sar on an escalated alert isn't an error: it answers with the first SAR case "
               "(its ID, narrative, transactions, who and when) and \"already escalated\"",
-              not err and again == {**case, "result": "already escalated"}, again)
+              not err and again == {**sar_case, "result": "already escalated"}, again)
         err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
         check("STATUS ... and opens no second SAR case: the alert still names the first one, and who opened it",
-              not err and alert.get("sar_case_id") == sar and alert.get("acted_by") == "olivia.analyst", alert)
+              not err and alert.get("sar_case_id") == sar_case_id and alert.get("acted_by") == "olivia.analyst", alert)
 
         err, why = call(base, "close_alert", {"alert_id": "A-1002", "reason_code": "false_positive", "rationale": "x"})
         err2, alert = call(base, "get_alert", {"alert_id": "A-1002"})
         check("STATUS close_alert on an escalated alert is a tool error that names its SAR case, and the alert stays "
-              "escalated", err and "escalated" in str(why) and sar in str(why) and not err2
+              "escalated", err and "escalated" in str(why) and sar_case_id in str(why) and not err2
               and alert.get("status") == "escalated", (why, alert))
 
         err, why = escalate(base, alert_id="A-1004", transaction_ids=["T-30041"])
@@ -378,9 +379,9 @@ def check_escalate():
         err, alert = call(base, "get_alert", {"alert_id": "A-1003"})
         check("ESC ... after those refusals, the alert is still open", not err and alert.get("status") == "open", alert)
 
-        err, case3 = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"])
-        check("ESC the next SAR case has the next ID", not err and case3.get("result") == "escalated"
-              and case3.get("sar_case_id") == f"SAR-{int(sar[4:]) + 1}", (sar, case3))
+        err, next_sar_case = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"])
+        check("ESC the next SAR case has the next ID", not err and next_sar_case.get("result") == "escalated"
+              and next_sar_case.get("sar_case_id") == f"SAR-{int(sar_case_id[4:]) + 1}", (sar_case_id, next_sar_case))
 
 
 def check_who_acted():
@@ -396,36 +397,36 @@ def check_who_acted():
         check("WHO ... get_alert shows the same record", not err and again.get("acted_by") == who and just_now(again.get("acted_at")),
               again)
 
-        err, case = escalate(base, user="")
-        who = case.get("opened_by") if not err else None
+        err, sar_case = escalate(base, user="")
+        who = sar_case.get("opened_by") if not err else None
         check("WHO a SAR case with an empty domino-username header records no identity, and says the header was empty",
-              isinstance(who, str) and who.startswith("no identity") and "empty" in who, (err, case))
+              isinstance(who, str) and who.startswith("no identity") and "empty" in who, (err, sar_case))
         err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
         check("WHO ... get_alert shows the same record", not err and alert.get("acted_by") == who, alert)
 
-        err, case = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"], user="Anonymous")
-        who = case.get("opened_by") if not err else None
+        err, sar_case = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"], user="Anonymous")
+        who = sar_case.get("opened_by") if not err else None
         check("WHO a SAR case as Anonymous records no identity, and says the header was Anonymous",
-              isinstance(who, str) and who.startswith("no identity") and "Anonymous" in who, (err, case))
+              isinstance(who, str) and who.startswith("no identity") and "Anonymous" in who, (err, sar_case))
 
 
 def check_restart():
     db = new_state("restart")
     with server(db) as base:
-        err, case = escalate(base)
+        err, sar_case = escalate(base)
         err2, closed = call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."},
                             user="olivia.analyst")
         if err or err2:
-            raise RuntimeError(f"the writes before the restart failed: {case} {closed}")
+            raise RuntimeError(f"the writes before the restart failed: {sar_case} {closed}")
 
     with server(db) as base:
         err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
         check("RESTART a SAR case survives a restart of the server: the alert is still escalated to it, with who and when",
               not err and alert == {**ALERT_2, "status": "escalated", "acted_by": "olivia.analyst",
-                                    "acted_at": case["opened_at"], "sar_case_id": case["sar_case_id"]}, alert)
+                                    "acted_at": sar_case["opened_at"], "sar_case_id": sar_case["sar_case_id"]}, alert)
         err, again = escalate(base, narrative="After the restart.", user="sam.other")
         check("RESTART ... and a second escalate_to_sar after the restart answers with that SAR case and \"already escalated\"",
-              not err and again == {**case, "result": "already escalated"}, again)
+              not err and again == {**sar_case, "result": "already escalated"}, again)
         err, alert = call(base, "get_alert", {"alert_id": "A-1001"})
         check("RESTART a closed alert survives a restart too", not err and alert == closed, alert)
 
@@ -437,11 +438,11 @@ def check_reset():
               sorted(names) == ["close_alert", "escalate_to_sar", "get_alert", "get_customer_profile", "get_transactions"],
               names)
 
-        err, case = escalate(base)
+        err, sar_case = escalate(base)
         call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."})
         call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "duplicate", "rationale": "Seen before."})
         if err:
-            raise RuntimeError(f"the escalation before the reset failed: {case}")
+            raise RuntimeError(f"the escalation before the reset failed: {sar_case}")
 
         status, answer = reset(base)
         check("RESET POST /reset answers 200 with each alert's status in the seed",
@@ -454,7 +455,7 @@ def check_reset():
               and seen["A-1004"][1].get("acted_by") == "jordan.reyes", seen)
         err, again = escalate(base)
         check("RESET ... and there are no SAR cases: escalating alert 2 again opens a new one, with the first SAR case ID",
-              not err and again.get("result") == "escalated" and again.get("sar_case_id") == case["sar_case_id"], again)
+              not err and again.get("result") == "escalated" and again.get("sar_case_id") == sar_case["sar_case_id"], again)
 
     # A state file from an older build, whose tables don't fit this one. The server starts on it (it has an alerts table,
     # so the seed doesn't load); POST /reset makes the tables again.
@@ -467,10 +468,10 @@ def check_reset():
     with server(db) as base:
         status, answer = reset(base)
         err, alert = call(base, "get_alert", {"alert_id": "A-1001"})
-        err2, case = escalate(base)
+        err2, sar_case = escalate(base)
         check("RESET a state file from an older build gets new tables and the seed: get_alert and escalate_to_sar work",
               status == 200 and not err and alert == {**ALERT_1, "status": "open"} and not err2
-              and case.get("result") == "escalated", (status, answer, alert, case))
+              and sar_case.get("result") == "escalated", (status, answer, alert, sar_case))
 
 
 def check_seeded_alerts():

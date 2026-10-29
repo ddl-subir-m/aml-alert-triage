@@ -16,13 +16,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFINITION = ROOT / "agent" / "definition.json"
-FAILS = []
+failed = []
 
 
 def check(name, ok, detail=""):
-    print(("PASS " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
+    print(("ok   " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
     if not ok:
-        FAILS.append(name)
+        failed.append(name)
 
 
 # ------------------------------------------------------------------------------------------------------------------- the definition
@@ -181,8 +181,8 @@ def parsed(text):
 
 # ------------------------------------------------------------------------------------------------------------------- print mode
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--app", APP)
-check("--print shows the definition with you as its user and the reviewer as its editor", code == 0 and parsed(out) == body_with(),
-      (code, out[:300], err[:300]))
+check("--print shows the definition with you (the analyst) in its users list and the reviewer in its editors list",
+      code == 0 and parsed(out) == body_with(), (code, out[:300], err[:300]))
 check("--print calls nothing, not even with --app", log == [], log)
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--model", "haiku", "--environment", "6ae2ffffffffffffffffffff")
 check("--print shows the model alias and Environment overrides, and keeps the rest of the model and execution",
@@ -210,8 +210,8 @@ code, out, err, log = register("--app", APP, "--reviewer", "reviewer1")
 check("with no agent of its name, it creates one: GET api/me, GET api/agents, then POST api/agents",
       code == 0 and app_calls(log) == [("GET", "/app/api/me"), ("GET", "/app/api/agents"), ("POST", "/app/api/agents")],
       (code, app_calls(log), err[:300]))
-check("...with the whole agent body (you as its user, the reviewer as its editor)", writes(log) == [("POST", "/app/api/agents", body_with())],
-      writes(log))
+check("...with the whole agent body (you, the analyst, in its users list, the reviewer in its editors list)",
+      writes(log) == [("POST", "/app/api/agents", body_with())], writes(log))
 check("...each call with the Workspace's token for the Apps proxy and your name in the view-as header",
       all(h.get("authorization") == "Bearer tok-123" and h.get("x-prototype-view-as") == "analyst1"
           for _, p, h, _ in log if p.startswith("/app/")), [(p, h.get("authorization"), h.get("x-prototype-view-as")) for _, p, h, _ in log])
@@ -266,5 +266,5 @@ check("without DOMINO_STARTING_USERNAME, your name comes from Domino (GET /api/u
       and all(h.get("x-prototype-view-as") == "analyst2" for _, p, h, _ in log if p.startswith("/app/")),
       (code, self_calls, err[:300]))
 
-print("\nall checks passed" if not FAILS else f"\n{len(FAILS)} failed: {FAILS}")
-sys.exit(1 if FAILS else 0)
+print(f"\n{len(failed)} failed: {', '.join(failed)}" if failed else "\nall checks passed")
+sys.exit(1 if failed else 0)
