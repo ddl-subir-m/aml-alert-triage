@@ -237,7 +237,7 @@ survives a Job restart. A scripted fake model drives each test, so it doesn't te
 | | |
 |---|---|
 | Date | October 29, 2026 |
-| Agent | `agent/graph.py:build_graph`, at AML commit `da10cd0` on `review-fixes` (the next commit adds only this record) |
+| Agent | `agent/graph.py:build_graph`, at AML commit `da10cd0` (the commit after it, `2146489`, adds only this record) |
 | Suite | domino-agent-service `main` at `7561668`: `tests/certify/certify.py` |
 | Image | `domino-agents-langgraph:695987bf9f16`, built from domino-agent-service's committed `environments/agent-langgraph.dockerfile` on its local stand-in base (`python:3.12-slim`), not on the Domino Standard Environment |
 | Platform | linux/arm64: Docker Desktop on an Apple silicon Mac |
