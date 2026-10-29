@@ -9,9 +9,34 @@ The data is fake. The spec is issue #1; the setup steps come with the build.
 ## Case-management system
 
 A fake case-management system, served as an MCP server over streamable HTTP at `/mcp` (`case_server/`). On Domino it is the
-App `aml-case-management`. Its tools so far:
+App `aml-case-management`. Its tools so far (all read tools):
 
-- `get_alert(alert_id)`: the alert's customer, rule, score, status and flagged transaction IDs. An unknown ID is a tool error.
+- `get_alert(alert_id)`: the alert's customer, rule, score, status (`open`, `closed` or `escalated`) and flagged transaction
+  IDs. A closed or escalated alert also has who acted (`acted_by`) and when (`acted_at`, a UTC time such as
+  `2026-10-17T15:04:05Z`). A closed alert also has its `reason_code` and `rationale`.
+- `get_customer_profile(customer_id)`: the name, segment, KYC risk rating, occupation, expected monthly activity (in USD),
+  country and PEP flag.
+- `get_transactions(customer_id, days=90)`: the customer's transactions of the last `days` days (1 to 3650), oldest first.
+  Each has its ID, date, amount, currency, type, counterparty, country and memo.
+
+An unknown alert or customer ID is an MCP tool error that names the ID. So is a `days` value out of range.
+
+### The seed: four alerts
+
+The seed (`case_server/seed.json`) has fake customers, transactions and four alerts. Each alert takes a different path through
+the platform once:
+
+| Alert | Customer | What the evidence shows | Expected triage |
+|---|---|---|---|
+| `A-1001` | `C-2001` | A clear false positive: a large-amount rule flagged three monthly salary deposits of 11,850 from the same employer, within the profile's expected activity. | `close_alert` with `false_positive` or `explained_activity` |
+| `A-1002` | `C-2002` | Structuring: 8 cash deposits from 9,400 to 9,900 in 8 days (77,450 in all), at 3 branches and an ATM, for a rideshare driver who expects 4,500 a month. | `escalate_to_sar`, which waits for a reviewer |
+| `A-1003` | `C-2003` | Unclear: a wire of 46,000 to Cyprus (memo `PER AGREEMENT 2026-14`), a country new for the customer. The profile neither explains it nor rules it out. | A question to the analyst (`ask_human`) |
+| `A-1004` | `C-2004` | Already closed in the seed, by `jordan.reyes`, 12 days before the load, with `explained_activity` (the customer sold her car). | A report, and no write |
+
+A transaction's date is stored in the seed as days before the load (`days_ago`), and becomes a date (UTC) when the seed loads.
+So the 90-day window always finds the alerts' transactions. Alert 4's time of close (`acted_days_ago`) works the same way.
+One payroll deposit of `C-2001` (`T-30004`) is 94 days old, outside the default window. A model's judgment can differ from the
+expected triage.
 
 Its state is one SQLite file. The first start with a missing or empty file loads the seed (`case_server/seed.json`, fake data).
 After that, the file keeps the state across restarts. To start from the seed again, stop the server and delete the file.

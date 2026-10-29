@@ -59,10 +59,28 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
     @mcp.tool()
     def get_alert(alert_id: str, ctx: Context) -> dict[str, Any]:
         """Read one alert by its ID (for example A-1001): the customer, the monitoring rule that flagged it, the score,
-        the status (open, closed or escalated) and the IDs of the flagged transactions."""
+        the status (open, closed or escalated) and the IDs of the flagged transactions. A closed or escalated alert also
+        has who acted (acted_by) and when (acted_at, UTC); a closed one has its reason_code and rationale."""
         log_call(ctx, "get_alert", alert_id=alert_id)
         with refusals_as_tool_errors():
             return store.get_alert(alert_id)
+
+    @mcp.tool()
+    def get_customer_profile(customer_id: str, ctx: Context) -> dict[str, Any]:
+        """Read one customer's KYC profile by its ID (for example C-2001; an alert names its customer): the name, the
+        segment, the KYC risk rating (low, medium or high), the occupation, the expected monthly activity in USD, the
+        country and the PEP flag (true when the customer is a politically exposed person)."""
+        log_call(ctx, "get_customer_profile", customer_id=customer_id)
+        with refusals_as_tool_errors():
+            return store.get_customer_profile(customer_id)
+
+    @mcp.tool()
+    def get_transactions(customer_id: str, ctx: Context, days: int = 90) -> dict[str, Any]:
+        """Read one customer's transactions of the last `days` days (default 90, from 1 to 3650), oldest first. Each has
+        its ID, date, amount, currency, type, counterparty, country (where the money came from or went to) and memo."""
+        log_call(ctx, "get_transactions", customer_id=customer_id, days=days)
+        with refusals_as_tool_errors():
+            return store.get_transactions(customer_id, days)
 
     return mcp
 
