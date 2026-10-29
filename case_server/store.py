@@ -9,7 +9,8 @@ from typing import Any
 
 SEED = Path(__file__).with_name("seed.json")
 MAX_DAYS = 3650  # the widest window get_transactions takes: 10 years
-STATUSES = ("open", "closed", "escalated")  # open moves to closed or to escalated; both are final
+OPEN, CLOSED, ESCALATED = "open", "closed", "escalated"  # an alert's statuses
+STATUSES = (OPEN, CLOSED, ESCALATED)  # open moves to closed or to escalated; both are final
 REASON_CODES = ("false_positive", "explained_activity", "duplicate")  # why an alert was closed
 
 
@@ -124,22 +125,25 @@ class CaseStore:
         """An alert as the tools answer it. A closed or escalated alert adds who acted and when; a closed one adds why."""
         alert = {"alert_id": row["alert_id"], "customer_id": row["customer_id"], "rule": row["rule"], "score": row["score"],
                  "status": row["status"], "flagged_transaction_ids": json.loads(row["flagged_transaction_ids"])}
-        if row["status"] != "open":
+        if row["status"] != OPEN:
             alert.update(acted_by=row["acted_by"], acted_at=row["acted_at"])
-        if row["status"] == "closed":
+        if row["status"] == CLOSED:
             alert.update(reason_code=row["reason_code"], rationale=row["rationale"])
-        if row["status"] == "escalated":
+        if row["status"] == ESCALATED:
             alert.update(sar_case_id=row["sar_case_id"])
         return alert
 
     @staticmethod
-    def _sar_case(row: sqlite3.Row) -> dict[str, Any]:
+    def _sar_case(db: sqlite3.Connection, alert_id: str) -> dict[str, Any]:
+        """The SAR case of an escalated alert, as escalate_to_sar answers it."""
+        row = db.execute("SELECT * FROM sar_cases WHERE alert_id = ?", (alert_id,)).fetchone()
         return {"sar_case_id": row["sar_case_id"], "alert_id": row["alert_id"], "narrative": row["narrative"],
                 "transaction_ids": json.loads(row["transaction_ids"]), "opened_by": row["opened_by"],
                 "opened_at": row["opened_at"]}
 
     @staticmethod
-    def _row(db: sqlite3.Connection, alert_id: str) -> sqlite3.Row:
+    def _alert_row(db: sqlite3.Connection, alert_id: str) -> sqlite3.Row:
+        """The alert's row, with the ID of its SAR case (empty unless it is escalated). Refused for an unknown alert ID."""
         row = db.execute("SELECT alerts.*, sar_cases.sar_case_id FROM alerts LEFT JOIN sar_cases USING (alert_id) "
                          "WHERE alert_id = ?", (alert_id,)).fetchone()
         if row is None:
@@ -147,9 +151,17 @@ class CaseStore:
         return row
 
     @staticmethod
-    def _final(row: sqlite3.Row, change: str) -> Refused:
+    def _customer_row(db: sqlite3.Connection, customer_id: str) -> sqlite3.Row:
+        """The customer's row. Refused for an unknown customer ID."""
+        row = db.execute("SELECT * FROM customers WHERE customer_id = ?", (customer_id,)).fetchone()
+        if row is None:
+            raise Refused(f"No customer {customer_id}. Check the customer ID (an alert names its customer).")
+        return row
+
+    @staticmethod
+    def _decision_is_final(row: sqlite3.Row, change: str) -> Refused:
         """The refusal of a change to an alert that is closed or escalated: its decision is final."""
-        if row["status"] == "closed":
+        if row["status"] == CLOSED:
             decision = f"closed: {row['acted_by']} closed it at {row['acted_at']} with the reason code {row['reason_code']}"
         else:
             decision = f"escalated to SAR case {row['sar_case_id']}: {row['acted_by']} escalated it at {row['acted_at']}"
@@ -157,33 +169,32 @@ class CaseStore:
 
     def get_alert(self, alert_id: str) -> dict[str, Any]:
         with self._tx() as db:
-            return self._alert(self._row(db, alert_id))
+            return self._alert(self._alert_row(db, alert_id))
 
     def close_alert(self, alert_id: str, reason_code: str, rationale: str, acted_by: str) -> dict[str, Any]:
         """Close an open alert, as acted_by, now -> the closed alert."""
         with self._tx() as db:
-            row = self._row(db, alert_id)
-            if row["status"] != "open":
-                raise self._final(row, "closed" if row["status"] == "escalated" else "closed again")
+            row = self._alert_row(db, alert_id)
+            if row["status"] != OPEN:
+                raise self._decision_is_final(row, "closed" if row["status"] == ESCALATED else "closed again")
             if reason_code not in REASON_CODES:
                 raise Refused(f"The reason code must be {', '.join(REASON_CODES[:-1])} or {REASON_CODES[-1]}, "
                               f"not {reason_code!r}.")
             if not rationale.strip():
                 raise Refused("The rationale is empty. Say why the alert can be closed, and cite the evidence.")
-            db.execute("UPDATE alerts SET status = 'closed', acted_by = ?, acted_at = ?, reason_code = ?, rationale = ? "
-                       "WHERE alert_id = ?", (acted_by, timestamp(), reason_code, rationale, alert_id))
-            return self._alert(self._row(db, alert_id))
+            db.execute("UPDATE alerts SET status = ?, acted_by = ?, acted_at = ?, reason_code = ?, rationale = ? "
+                       "WHERE alert_id = ?", (CLOSED, acted_by, timestamp(), reason_code, rationale, alert_id))
+            return self._alert(self._alert_row(db, alert_id))
 
     def escalate_to_sar(self, alert_id: str, narrative: str, transaction_ids: list[str], acted_by: str) -> dict[str, Any]:
         """Open a SAR case for an open alert, as acted_by, now -> the SAR case, with result "escalated".
         For an escalated alert -> its first SAR case, with result "already escalated", so a replayed call opens no other."""
         with self._tx() as db:
-            row = self._row(db, alert_id)
-            if row["status"] == "escalated":
-                case = db.execute("SELECT * FROM sar_cases WHERE alert_id = ?", (alert_id,)).fetchone()
-                return {"result": "already escalated", **self._sar_case(case)}
-            if row["status"] == "closed":
-                raise self._final(row, "escalated")
+            row = self._alert_row(db, alert_id)
+            if row["status"] == ESCALATED:
+                return {"result": "already escalated", **self._sar_case(db, alert_id)}
+            if row["status"] == CLOSED:
+                raise self._decision_is_final(row, "escalated")
             if not narrative.strip():
                 raise Refused("The narrative is empty. Say what is suspicious, and cite the transactions.")
             if not transaction_ids:
@@ -193,10 +204,9 @@ class CaseStore:
             sar_case_id, now = f"SAR-{FIRST_SAR_CASE + count}", timestamp()
             db.execute("INSERT INTO sar_cases VALUES (?, ?, ?, ?, ?, ?)",
                        (sar_case_id, alert_id, narrative, json.dumps(transaction_ids), acted_by, now))
-            db.execute("UPDATE alerts SET status = 'escalated', acted_by = ?, acted_at = ? WHERE alert_id = ?",
-                       (acted_by, now, alert_id))
-            case = db.execute("SELECT * FROM sar_cases WHERE alert_id = ?", (alert_id,)).fetchone()
-            return {"result": "escalated", **self._sar_case(case)}
+            db.execute("UPDATE alerts SET status = ?, acted_by = ?, acted_at = ? WHERE alert_id = ?",
+                       (ESCALATED, acted_by, now, alert_id))
+            return {"result": "escalated", **self._sar_case(db, alert_id)}
 
     @staticmethod
     def _check_customer_transactions(db: sqlite3.Connection, customer_id: str, transaction_ids: list[str]) -> None:
@@ -214,9 +224,7 @@ class CaseStore:
 
     def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
         with self._tx() as db:
-            row = db.execute("SELECT * FROM customers WHERE customer_id = ?", (customer_id,)).fetchone()
-        if row is None:
-            raise Refused(f"No customer {customer_id}. Check the customer ID (an alert names its customer).")
+            row = self._customer_row(db, customer_id)
         return {**dict(row), "pep": bool(row["pep"])}
 
     def get_transactions(self, customer_id: str, days: int) -> dict[str, Any]:
@@ -224,8 +232,7 @@ class CaseStore:
             raise Refused(f"days must be from 1 to {MAX_DAYS}, not {days}.")
         since = (today() - timedelta(days=days)).isoformat()
         with self._tx() as db:
-            if db.execute("SELECT 1 FROM customers WHERE customer_id = ?", (customer_id,)).fetchone() is None:
-                raise Refused(f"No customer {customer_id}. Check the customer ID (an alert names its customer).")
+            self._customer_row(db, customer_id)
             rows = db.execute("SELECT transaction_id, date, amount, currency, type, counterparty, country, memo "
                               "FROM transactions WHERE customer_id = ? AND date >= ? ORDER BY date, transaction_id",
                               (customer_id, since)).fetchall()

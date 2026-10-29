@@ -2,7 +2,7 @@
 
 On Domino it runs as the App aml-case-management: app.sh starts it on port 8888. Locally:
   mkdir -p /tmp/aml && AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
-Then the MCP URL is http://localhost:8890/mcp. POST /reset (not an MCP tool) loads the seed again.
+Then the MCP URL is http://localhost:8890/mcp. POST /reset (not one of the server's tools) loads the seed again.
 
 Settings (environment variables):
   AML_DB_PATH    the SQLite state file (required). Its folder must exist; the server never makes it.
@@ -15,7 +15,7 @@ import sys
 from contextlib import contextmanager
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -29,22 +29,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("aml")
 
 
+def request_headers(ctx: Context) -> Mapping[str, str]:
+    """The headers of the tool call's HTTP request (none when the call didn't come over HTTP)."""
+    request = ctx.request_context.request
+    return request.headers if request is not None else {}
+
+
 @contextmanager
-def refusals_as_tool_errors():
-    """A refusal reaches the MCP client as a tool error (isError true) with the reason."""
+def tool_call(ctx: Context, tool: str, *, who: str | None = None, **args: Any):
+    """One tool call. It logs the call with the names of its request headers, so the log shows what the Apps proxy sends.
+    Never the values: one of them is a token. A write also logs who acts (see acting_identity). A refusal reaches the MCP
+    client as a tool error (isError true) with the reason."""
+    log.info("tool call: %s(%s)%s headers: %s", tool, ", ".join(f"{k}={v!r}" for k, v in args.items()),
+             f" as {who}" if who else "", " ".join(sorted(request_headers(ctx).keys())))
     try:
         yield
     except Refused as e:
         raise ToolError(str(e)) from e
-
-
-def log_call(ctx: Context, tool: str, *, who: str | None = None, **args: Any) -> None:
-    """Log a tool call with the names of its request headers, so the log shows what the Apps proxy sends.
-    Never the values: one of them is a token. A write also logs who acts (see acting_identity)."""
-    request = ctx.request_context.request  # None when the call didn't come over HTTP
-    headers = sorted(request.headers.keys()) if request is not None else []
-    log.info("tool call: %s(%s)%s headers: %s", tool, ", ".join(f"{k}={v!r}" for k, v in args.items()),
-             f" as {who}" if who else "", " ".join(headers))
 
 
 def acting_identity(ctx: Context) -> str:
@@ -52,8 +53,7 @@ def acting_identity(ctx: Context) -> str:
     or Anonymous, is no identity (as domino-agent-service reads it), and the answer says so and why. It has spaces, so it
     can never be a Domino user name. Nobody has measured yet whether the proxy sets the header for an API caller of an App
     with extended identity off: the live check sees it in the record and in the log."""
-    request = ctx.request_context.request  # None when the call didn't come over HTTP
-    name = request.headers.get("domino-username") if request is not None else None
+    name = request_headers(ctx).get("domino-username")
     if name is None:
         return "no identity (the request had no domino-username header)"
     if not name.strip():
@@ -81,8 +81,7 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         the status (open, closed or escalated) and the IDs of the flagged transactions. A closed or escalated alert also
         has who acted (acted_by) and when (acted_at, UTC). A closed one has its reason_code and rationale; an escalated
         one has its sar_case_id."""
-        log_call(ctx, "get_alert", alert_id=alert_id)
-        with refusals_as_tool_errors():
+        with tool_call(ctx, "get_alert", alert_id=alert_id):
             return store.get_alert(alert_id)
 
     @mcp.tool()
@@ -90,16 +89,14 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         """Read one customer's KYC profile by its ID (for example C-2001; an alert names its customer): the name, the
         segment, the KYC risk rating (low, medium or high), the occupation, the expected monthly activity in USD, the
         country and the PEP flag (true when the customer is a politically exposed person)."""
-        log_call(ctx, "get_customer_profile", customer_id=customer_id)
-        with refusals_as_tool_errors():
+        with tool_call(ctx, "get_customer_profile", customer_id=customer_id):
             return store.get_customer_profile(customer_id)
 
     @mcp.tool()
     def get_transactions(customer_id: str, ctx: Context, days: int = 90) -> dict[str, Any]:
         """Read one customer's transactions of the last `days` days (default 90, from 1 to 3650), oldest first. Each has
         its ID, date, amount, currency, type, counterparty, country (where the money came from or went to) and memo."""
-        log_call(ctx, "get_transactions", customer_id=customer_id, days=days)
-        with refusals_as_tool_errors():
+        with tool_call(ctx, "get_transactions", customer_id=customer_id, days=days):
             return store.get_transactions(customer_id, days)
 
     @mcp.tool()
@@ -108,8 +105,7 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         citing the evidence. Answers with the closed alert, which names who acted and when. A close is final. Refused (a
         tool error with the reason): another reason code, an empty rationale, and an alert that is closed or escalated."""
         who = acting_identity(ctx)
-        log_call(ctx, "close_alert", who=who, alert_id=alert_id, reason_code=reason_code, rationale=rationale)
-        with refusals_as_tool_errors():
+        with tool_call(ctx, "close_alert", who=who, alert_id=alert_id, reason_code=reason_code, rationale=rationale):
             return store.close_alert(alert_id, reason_code, rationale, who)
 
     @mcp.tool()
@@ -121,11 +117,11 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         "already escalated" (not an error). Refused (a tool error with the reason): a closed alert, an empty narrative,
         no transaction IDs, and a transaction ID that is unknown or another customer's."""
         who = acting_identity(ctx)
-        log_call(ctx, "escalate_to_sar", who=who, alert_id=alert_id, narrative=narrative, transaction_ids=transaction_ids)
-        with refusals_as_tool_errors():
+        with tool_call(ctx, "escalate_to_sar", who=who, alert_id=alert_id, narrative=narrative,
+                       transaction_ids=transaction_ids):
             return store.escalate_to_sar(alert_id, narrative, transaction_ids, who)
 
-    # Not an MCP tool, so the tools route never offers it to an agent. Anyone who can open the App can call it.
+    # Not one of the server's tools, so the tools route never offers it to an agent. Anyone who can open the App can call it.
     @mcp.custom_route("/reset", methods=["POST"])
     async def reset(request: Request) -> JSONResponse:
         """Load the seed again, for a repeat test: every alert open except alert 4, and no SAR cases."""
