@@ -237,7 +237,7 @@ survives a Job restart. A scripted fake model drives each test, so it doesn't te
 | | |
 |---|---|
 | Date | October 29, 2026 |
-| Agent | `agent/graph.py:build_graph`, at AML commit `00ea0c2` on `ticket/5-agent-graph` (the next commit adds only this record) |
+| Agent | `agent/graph.py:build_graph`, at AML commit `da10cd0` on `review-fixes` (the next commit adds only this record) |
 | Suite | domino-agent-service `main` at `7561668`: `tests/certify/certify.py` |
 | Image | `domino-agents-langgraph:695987bf9f16`, built from domino-agent-service's committed `environments/agent-langgraph.dockerfile` on its local stand-in base (`python:3.12-slim`), not on the Domino Standard Environment |
 | Platform | linux/arm64: Docker Desktop on an Apple silicon Mac |
@@ -257,8 +257,9 @@ survives a Job restart. A scripted fake model drives each test, so it doesn't te
 | C9 | An expired interrupt resumes as `cancelled` | pass (3 of 3 checks) | pass (3 of 3 checks) |
 | C10 | The thread survives a Job restart, and a plain turn works without the checkpoint | pass (3 of 3 checks) | pass (3 of 3 checks) |
 
-A test passes when every one of its checks passes: 39 checks in each format, all passed. The run took 96 seconds. The suite's own
-output names a commit of its copy of the code, not an AML commit.
+A test passes when every one of its checks passes: 39 checks in each format, all passed. The certification took 95 seconds. The
+suite's own output names a commit of its copy of the code, not an AML commit. C9 passes with this agent's own text for an expired
+question, which differs from the platform's example (see "The agent" above).
 
 Run it again with Docker running. The host needs Python 3 with the standard library only. `--code` is copied whole (only `.git`
 and `__pycache__` are left out), so give it a clean copy of the committed code, never a folder with `.venv/`. Keep `--out` outside
