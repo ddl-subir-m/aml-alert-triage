@@ -9,17 +9,74 @@ The data is fake. The spec is issue #1; the setup steps come with the build.
 ## Case-management system
 
 A fake case-management system, served as an MCP server over streamable HTTP at `/mcp` (`case_server/`). On Domino it is the
-App `aml-case-management`. Its tools so far (all read tools):
+App `aml-case-management`. It has three read tools and two write tools.
+
+Read tools:
 
 - `get_alert(alert_id)`: the alert's customer, rule, score, status (`open`, `closed` or `escalated`) and flagged transaction
   IDs. A closed or escalated alert also has who acted (`acted_by`) and when (`acted_at`, a UTC time such as
-  `2026-10-17T15:04:05Z`). A closed alert also has its `reason_code` and `rationale`.
+  `2026-10-17T15:04:05Z`). A closed alert also has its `reason_code` and `rationale`. An escalated alert also has its
+  `sar_case_id`.
 - `get_customer_profile(customer_id)`: the name, segment, KYC risk rating, occupation, expected monthly activity (in USD),
   country and PEP flag.
 - `get_transactions(customer_id, days=90)`: the customer's transactions of the last `days` days (1 to 3650), oldest first.
   Each has its ID, date, amount, currency, type, counterparty, country and memo.
 
-An unknown alert or customer ID is an MCP tool error that names the ID. So is a `days` value out of range.
+Write tools:
+
+- `close_alert(alert_id, reason_code, rationale)`: closes an open alert. The reason code is `false_positive`,
+  `explained_activity` or `duplicate`, and the rationale can't be empty. It answers with the closed alert.
+- `escalate_to_sar(alert_id, narrative, transaction_ids)`: opens a SAR case for an open alert. The narrative and the list of
+  transaction IDs can't be empty, and each transaction must be one of the alert's customer. It answers with the SAR case: its
+  ID (`sar_case_id`, such as `SAR-5001`), the `narrative`, the `transaction_ids`, who opened it (`opened_by`), when
+  (`opened_at`), and `"result": "escalated"`.
+
+An unknown alert or customer ID is an MCP tool error that names the ID. So is a `days` value out of range, and each refusal
+below. The error text starts with `Error executing tool <tool>: `, then the reason.
+
+### Status rules
+
+An alert's status moves only from `open` to `closed`, or from `open` to `escalated`. Both are final.
+
+| Call | On an open alert | On a closed alert | On an escalated alert |
+|---|---|---|---|
+| `close_alert` | Closes it | Refused | Refused |
+| `escalate_to_sar` | Opens a SAR case | Refused | Opens no other SAR case. Answers with the first one and `"result": "already escalated"` (not an error) |
+
+So an alert has at most one SAR case, and a replayed escalation does no harm: the case-management system itself refuses a
+second SAR case, not only the platform. Each refusal names the alert's decision: who acted, when, and the reason code or the SAR
+case ID.
+
+### Who acted
+
+Each close and each SAR case records who acted and when (a UTC time). Who acted is the `domino-username` header, which the Apps
+proxy sets to the acting identity. A missing or empty header, or `Anonymous`, is no identity, and the record says so and why:
+
+| The request has | The record says |
+|---|---|
+| No `domino-username` header (a local run) | `no identity (the request had no domino-username header)` |
+| An empty `domino-username` header | `no identity (the domino-username header was empty)` |
+| `domino-username: Anonymous` | `no identity (the domino-username header was Anonymous)` |
+
+These texts have spaces, so they can never be a Domino user name. The server logs one line for each tool call: its arguments,
+the names of its request headers (never their values: one is a token), and for a write, who acted.
+
+Not measured yet: whether the Apps proxy sets `domino-username` for a call from the platform (an API caller) to an App with
+extended identity off. domino-agent-service measured that, on an App with extended identity on, the proxy sends no
+`domino-username` to an API caller. So on Domino the record can say "no identity". The live check (#7) shows it, in the record
+and in the App's log.
+
+### Reset
+
+`POST /reset` loads the seed again: every alert open except alert 4, and no SAR cases. It drops every table and makes them
+again, so it also works on a state file from an older build, whose tables may not fit. It answers with each alert's status:
+
+```json
+{"result": "loaded the seed", "alerts": {"A-1001": "open", "A-1002": "open", "A-1003": "open", "A-1004": "closed"}}
+```
+
+It is an HTTP route, not an MCP tool, so the tools route never offers it to an agent. Anyone who can open the App can call it.
+SAR case IDs start again at `SAR-5001`.
 
 ### The seed: four alerts
 
@@ -39,7 +96,8 @@ One payroll deposit of `C-2001` (`T-30004`) is 94 days old, outside the default 
 expected triage.
 
 Its state is one SQLite file. The first start with a missing or empty file loads the seed (`case_server/seed.json`, fake data).
-After that, the file keeps the state across restarts. To start from the seed again, stop the server and delete the file.
+After that, the file keeps the state across restarts: alert statuses, closes and SAR cases. To start from the seed again, call
+`POST /reset` (or stop the server and delete the file).
 
 | Variable | What it does |
 |---|---|
@@ -63,6 +121,12 @@ curl -s -X POST http://localhost:8890/mcp -H 'content-type: application/json' -H
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_alert","arguments":{"alert_id":"A-1001"}}}'
 ```
 
+To act as a person, add `-H 'domino-username: olivia.analyst'` (the Apps proxy sets it on Domino). To load the seed again:
+
+```bash
+curl -s -X POST http://localhost:8890/reset
+```
+
 In a Domino Workspace, don't use port 8899: it is the sidecar's token port.
 
 ### Run it on Domino
@@ -71,6 +135,57 @@ In a Domino Workspace, don't use port 8899: it is the sidecar's token port.
 it), keeps the state on the AML project's dataset `aml-cases` (`/mnt/data/aml-cases/cases.db`), and starts the server on port
 8888. When the dataset doesn't exist, the App stops with a message that says to create it. The repo has no root
 `requirements.txt` on purpose: Domino would install it into the agent's Jobs too.
+
+### Set it up on Domino
+
+Do these steps in your browser, in this order. The AML project is the Domino project `aml-alert-triage`, with this repo as its
+code. The platform App is `agent-framework-smoke` on cloud-dogfood.
+
+1. **Create the dataset.** In the AML project, create the dataset `aml-cases`. The App keeps its state file there
+   (`/mnt/data/aml-cases/cases.db`), so the state survives an App restart. Create it before you publish the App. If the App is
+   already running, restart it after you create the dataset.
+2. **Publish the App.** In the AML project, publish an App:
+   - Name: `aml-case-management`.
+   - Environment: the Domino Standard Environment. It has `mcp`, so `app.sh` installs nothing.
+   - Start script: `app.sh`.
+   - Access: "project collaborators". The Apps proxy then lets a call through only when its acting identity can open the
+     App, so an analyst who isn't a collaborator of the AML project can't use the case-management system.
+   - Extended identity: off.
+
+   The App's first log line shows the `mcp` version, the state file, and `loaded the seed` (a new state file) or `kept the
+   state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
+   `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
+   `/mcp/` with a redirect that loses the App's path.
+3. **Add the tool server.** Open the platform App's Tool servers page in your browser, as yourself (that list refuses the
+   view-as switch). Add a tool server with the name `aml`, the MCP URL from step 2, and no secret. The URL is on this
+   deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each call carries a short-lived token for
+   the acting identity, and the Apps proxy checks that identity's access to the App. The agent then sees the tools as
+   `aml_get_alert`, `aml_get_customer_profile`, `aml_get_transactions`, `aml_close_alert` and `aml_escalate_to_sar`.
+4. **Mark the tools.** On the same page, mark the three read tools as `read` (`get_alert`, `get_customer_profile`,
+   `get_transactions`) and the two write tools as `write` (`close_alert`, `escalate_to_sar`).
+5. **Turn approval on for `escalate_to_sar` only.** An escalation then waits for a reviewer (maker-checker). A close needs no
+   approval. The approvers are the agent's owner and editors, minus the analyst who asked: see "Register the agent" below.
+
+Then register the agent (below).
+
+To load the seed again on Domino, call `POST /reset` on the App, from a Workspace in a project that can open it:
+
+```bash
+curl -s -X POST "https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/reset" \
+  -H "Authorization: Bearer $(curl -s http://localhost:8899/access-token | sed 's/^Bearer //')"
+```
+
+#### Where the platform differs from these steps
+
+- **No secret (step 3).** On domino-agent-service `origin/main`, a tool server entry still needs a secret (`secretEnv`), and the
+  platform has no Domino-hosted tool servers. Until domino-agent-service #68 merges, the Tool servers page refuses `aml` with no
+  secret. So step 3 waits for #68, and the agent's registration waits too (the platform App refuses an agent whose tool server
+  isn't on its list).
+- **Who acted.** Not measured yet: whether the Apps proxy sets `domino-username` on a call from the platform to this App
+  (extended identity off). If it doesn't, each close and SAR case records "no identity" (see "Who acted" above). The live check
+  (#7) shows it.
+- **The Workspace token.** Not measured yet: whether the Apps proxy takes a Workspace's token for an App with extended identity
+  off (the `POST /reset` call above). acme-mcp's check script does the same, so it very likely works.
 
 ### Check it
 
@@ -81,6 +196,11 @@ python tests/check_case_server.py
 The case server check starts the server as a local process with a temporary `AML_DB_PATH`, and calls it with an MCP client over
 streamable HTTP. It prints one line per case (`ok` or `FAIL`) and exits with 1 when any case fails. It needs the same Python and
 `mcp` as the server.
+
+It covers each tool's answer on the seed, unknown IDs, the 90-day window, the seed's four alerts, the reason codes, the status
+rules (close, escalate, "already escalated" with the first SAR case, each refusal), transaction IDs of another customer, who acted
+(from `domino-username`, and with no identity), a SAR case and a close that survive a restart, `POST /reset` (also on a state
+file from an older build), the missing state folder, `app.sh`, and that no MCP tool resets the system.
 
 ## The agent
 

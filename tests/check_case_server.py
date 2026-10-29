@@ -3,10 +3,16 @@
 Each group starts the server as its own process with a temporary AML_DB_PATH, and calls it the way the platform
 does: MCP over streamable HTTP. No case reads the server's tables.
 
-  TOOLS    the tool list
+  TOOLS    the tool list: three reads, two writes, and no reset
   ALERT    get_alert, with alert 4 closed in the seed
   PROFILE  get_customer_profile
   TXNS     get_transactions and its window of days
+  CLOSE    close_alert and its reason codes
+  ESC      escalate_to_sar: a SAR case, and transaction IDs of the alert's customer only
+  STATUS   open moves to closed or to escalated, and both are final ("already escalated" is an answer, not an error)
+  WHO      who acted: the domino-username header, and the record when it is missing, empty or Anonymous
+  RESTART  a SAR case and a close survive a restart of the server
+  RESET    POST /reset loads the seed again, also on a state file from an older build
   DATA     the seed's four alerts: the evidence shows each one's pattern
   SEED     the seed loads only into an empty state file; a restart keeps the state
   START    the server refuses to start without its state folder
@@ -20,10 +26,13 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -97,7 +106,7 @@ def run_to_exit(cmd, **env):
 
 
 async def _call(base, tool, args, user):
-    headers = {"domino-username": user} if user else {}
+    headers = {"domino-username": user} if user is not None else {}
     async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(30, read=60)) as hc:
         async with streamable_http_client(f"{base}/mcp", http_client=hc) as (read, write, _):
             async with ClientSession(read, write) as s:
@@ -113,11 +122,24 @@ def tools(base):
 
 
 def call(base, tool, args=None, user=None):
-    """Call one tool, as the Apps proxy would name user in domino-username -> (is_error, answer).
+    """Call one tool, as the Apps proxy would name user in domino-username (None: no such header) -> (is_error, answer).
     The answer is the structured result, or else the text (an error's reason)."""
     res = asyncio.run(_call(base, tool, args or {}, user))
     text = res.content[0].text if res.content else ""
     return res.isError, (res.structuredContent if res.structuredContent is not None else text)
+
+
+def reset(base):
+    """POST /reset -> (HTTP status, the answer's JSON or text)."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{base}/reset", data=b"", method="POST"), timeout=30) as r:
+            status, body = r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        status, body = e.code, e.read().decode()
+    try:
+        return status, json.loads(body)
+    except ValueError:
+        return status, body
 
 
 def new_state(name, empty_file=False):
@@ -127,6 +149,15 @@ def new_state(name, empty_file=False):
     if empty_file:
         db.touch()
     return db
+
+
+def just_now(when):
+    """True when `when` is a UTC time of the last minute, written as the case-management system writes times."""
+    try:
+        t = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    return timedelta(0) <= datetime.now(timezone.utc) - t < timedelta(minutes=1)
 
 
 def days_ago(n):
@@ -225,6 +256,223 @@ def evidence(base, alert_id):
     return alert, profile, flagged, others
 
 
+ALERT_1 = {"alert_id": "A-1001", "customer_id": "C-2001", "rule": "large_amount", "score": 0.42,
+           "flagged_transaction_ids": ["T-30001", "T-30002", "T-30003"]}
+
+
+def check_close():
+    with server(new_state("close")) as base:
+        check("TOOLS the server lists close_alert", "close_alert" in tools(base))
+
+        rationale = "Monthly payroll from the customer's employer, within the profile's expected activity."
+        err, alert = call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": rationale},
+                          user="olivia.analyst")
+        when = alert.get("acted_at") if not err else None
+        check("CLOSE close_alert closes an open alert and answers with the closed alert: who acted (the domino-username "
+              "header), when (now, UTC), the reason code and the rationale",
+              not err and {k: v for k, v in alert.items() if k != "acted_at"} == {
+                  **ALERT_1, "status": "closed", "acted_by": "olivia.analyst", "reason_code": "false_positive",
+                  "rationale": rationale} and just_now(when), alert)
+        err, again = call(base, "get_alert", {"alert_id": "A-1001"})
+        check("CLOSE ... get_alert shows the same closed alert", not err and again == alert, again)
+
+        err, why = call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "looks_fine", "rationale": "x"})
+        check("CLOSE a reason code that isn't false_positive, explained_activity or duplicate is a tool error that names "
+              "the three", err and all(c in str(why) for c in ("looks_fine", "false_positive", "explained_activity",
+                                                                 "duplicate")), (err, why))
+        err, why = call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "duplicate", "rationale": "  "})
+        check("CLOSE an empty rationale is a tool error that says why", err and "rationale" in str(why), (err, why))
+        err, why = call(base, "close_alert", {"alert_id": "A-404", "reason_code": "duplicate", "rationale": "x"})
+        check("CLOSE an unknown alert ID is a tool error that names the ID", err and "No alert A-404" in str(why), (err, why))
+        err, alert = call(base, "get_alert", {"alert_id": "A-1003"})
+        check("CLOSE ... after those refusals, the alert is still open", not err and alert.get("status") == "open", alert)
+
+        err, alert = call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "explained_activity",
+                                                "rationale": "The analyst confirmed the contract."}, user="olivia.analyst")
+        check("CLOSE explained_activity closes an alert too", not err and alert.get("reason_code") == "explained_activity", alert)
+        with server(new_state("close-duplicate")) as other:
+            err, alert = call(other, "close_alert", {"alert_id": "A-1002", "reason_code": "duplicate",
+                                                     "rationale": "The same deposits as an earlier alert."})
+            check("CLOSE duplicate closes an alert too", not err and alert.get("reason_code") == "duplicate", alert)
+
+        err, why = call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "duplicate", "rationale": "Again."},
+                        user="sam.other")
+        check("STATUS close_alert on a closed alert is a tool error that says it is closed, and by whom",
+              err and "A-1001" in str(why) and "closed" in str(why) and "olivia.analyst" in str(why), (err, why))
+        err, alert = call(base, "get_alert", {"alert_id": "A-1001"})
+        check("STATUS ... and the first close stands", not err and alert.get("reason_code") == "false_positive"
+              and alert.get("acted_by") == "olivia.analyst", alert)
+        err, why = call(base, "close_alert", {"alert_id": "A-1004", "reason_code": "false_positive", "rationale": "x"})
+        err4, alert = call(base, "get_alert", {"alert_id": "A-1004"})
+        check("STATUS close_alert on alert 4 (closed in the seed) is a tool error, and alert 4 doesn't change",
+              err and "A-1004" in str(why) and "closed" in str(why) and not err4 and alert.get("acted_by") == "jordan.reyes"
+              and alert.get("reason_code") == "explained_activity", (why, alert))
+
+
+ALERT_2 = {"alert_id": "A-1002", "customer_id": "C-2002", "rule": "structuring", "score": 0.91,
+           "flagged_transaction_ids": ["T-30015", "T-30016", "T-30017", "T-30018", "T-30019", "T-30020", "T-30021", "T-30022"]}
+NARRATIVE = "Eight cash deposits from 9,400 to 9,900 in eight days, at four places, far above the expected activity."
+
+
+def escalate(base, alert_id="A-1002", narrative=NARRATIVE, transaction_ids=None, user="olivia.analyst"):
+    """escalate_to_sar on an alert, by default alert 2 with its flagged transactions -> (is_error, answer)."""
+    return call(base, "escalate_to_sar", {"alert_id": alert_id, "narrative": narrative,
+                                          "transaction_ids": ALERT_2["flagged_transaction_ids"] if transaction_ids is None
+                                          else transaction_ids}, user=user)
+
+
+def check_escalate():
+    with server(new_state("escalate")) as base:
+        check("TOOLS the server lists escalate_to_sar", "escalate_to_sar" in tools(base))
+
+        err, case = escalate(base)
+        case = case if not err else {}
+        sar = case.get("sar_case_id", "")
+        check("ESC escalate_to_sar opens a SAR case for an open alert and answers with its ID (SAR-<number>), who opened "
+              "it (the domino-username header) and when (now, UTC)",
+              not err and case.get("result") == "escalated" and sar.startswith("SAR-") and sar[4:].isdigit()
+              and {k: v for k, v in case.items() if k not in ("sar_case_id", "opened_at", "result")} == {
+                  "alert_id": "A-1002", "narrative": NARRATIVE, "transaction_ids": ALERT_2["flagged_transaction_ids"],
+                  "opened_by": "olivia.analyst"} and just_now(case.get("opened_at")), case)
+        err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
+        check("ESC ... get_alert shows the alert escalated: who acted, when, and the SAR case ID",
+              not err and alert == {**ALERT_2, "status": "escalated", "acted_by": "olivia.analyst",
+                                    "acted_at": case.get("opened_at"), "sar_case_id": sar}, alert)
+
+        err, again = escalate(base, narrative="A second narrative.", transaction_ids=["T-30015"], user="sam.other")
+        check("STATUS a second escalate_to_sar on an escalated alert isn't an error: it answers with the first SAR case "
+              "(its ID, narrative, transactions, who and when) and \"already escalated\"",
+              not err and again == {**case, "result": "already escalated"}, again)
+        err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
+        check("STATUS ... and opens no second SAR case: the alert still names the first one, and who opened it",
+              not err and alert.get("sar_case_id") == sar and alert.get("acted_by") == "olivia.analyst", alert)
+
+        err, why = call(base, "close_alert", {"alert_id": "A-1002", "reason_code": "false_positive", "rationale": "x"})
+        err2, alert = call(base, "get_alert", {"alert_id": "A-1002"})
+        check("STATUS close_alert on an escalated alert is a tool error that names its SAR case, and the alert stays "
+              "escalated", err and "escalated" in str(why) and sar in str(why) and not err2
+              and alert.get("status") == "escalated", (why, alert))
+
+        err, why = escalate(base, alert_id="A-1004", transaction_ids=["T-30041"])
+        check("STATUS escalate_to_sar on a closed alert (alert 4) is a tool error that says it is closed",
+              err and "A-1004" in str(why) and "closed" in str(why), (err, why))
+        call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."})
+        err, why = escalate(base, alert_id="A-1001", transaction_ids=["T-30001"])
+        err2, alert = call(base, "get_alert", {"alert_id": "A-1001"})
+        check("STATUS escalate_to_sar on an alert that close_alert closed is a tool error, and the alert stays closed",
+              err and "closed" in str(why) and not err2 and alert.get("status") == "closed"
+              and "sar_case_id" not in alert, (why, alert))
+
+        err, why = escalate(base, alert_id="A-1003", transaction_ids=["T-30037", "T-30001"])
+        check("ESC a transaction ID of another customer is a tool error that names the ID and the alert's customer",
+              err and "T-30001" in str(why) and "C-2003" in str(why) and "T-30037" not in str(why), (err, why))
+        err, why = escalate(base, alert_id="A-1003", transaction_ids=["T-99999"])
+        check("ESC an unknown transaction ID is a tool error that names the ID", err and "T-99999" in str(why), (err, why))
+        err, why = escalate(base, alert_id="A-1003", transaction_ids=[])
+        check("ESC an empty list of transaction IDs is a tool error that says why",
+              err and "transaction" in str(why).lower(), (err, why))
+        err, why = escalate(base, alert_id="A-1003", narrative=" ", transaction_ids=["T-30037"])
+        check("ESC an empty narrative is a tool error that says why", err and "narrative" in str(why), (err, why))
+        err, why = escalate(base, alert_id="A-404", transaction_ids=["T-30037"])
+        check("ESC an unknown alert ID is a tool error that names the ID", err and "No alert A-404" in str(why), (err, why))
+        err, alert = call(base, "get_alert", {"alert_id": "A-1003"})
+        check("ESC ... after those refusals, the alert is still open", not err and alert.get("status") == "open", alert)
+
+        err, case3 = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"])
+        check("ESC the next SAR case has the next ID", not err and case3.get("result") == "escalated"
+              and case3.get("sar_case_id") == f"SAR-{int(sar[4:]) + 1}", (sar, case3))
+
+
+def check_who_acted():
+    # The Apps proxy names the acting identity in domino-username. A local run sends no such header; a missing, empty or
+    # Anonymous one is no identity, and the record says so (and why), so a missing name never looks like a person.
+    with server(new_state("who-acted")) as base:
+        err, alert = call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."})
+        who = alert.get("acted_by") if not err else None
+        check("WHO a close with no domino-username header (a local run) records no identity, and says the header was "
+              "missing", isinstance(who, str) and who.startswith("no identity") and "no domino-username header" in who,
+              (err, alert))
+        err, again = call(base, "get_alert", {"alert_id": "A-1001"})
+        check("WHO ... get_alert shows the same record", not err and again.get("acted_by") == who and just_now(again.get("acted_at")),
+              again)
+
+        err, case = escalate(base, user="")
+        who = case.get("opened_by") if not err else None
+        check("WHO a SAR case with an empty domino-username header records no identity, and says the header was empty",
+              isinstance(who, str) and who.startswith("no identity") and "empty" in who, (err, case))
+        err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
+        check("WHO ... get_alert shows the same record", not err and alert.get("acted_by") == who, alert)
+
+        err, case = escalate(base, alert_id="A-1003", transaction_ids=["T-30037"], user="Anonymous")
+        who = case.get("opened_by") if not err else None
+        check("WHO a SAR case as Anonymous records no identity, and says the header was Anonymous",
+              isinstance(who, str) and who.startswith("no identity") and "Anonymous" in who, (err, case))
+
+
+def check_restart():
+    db = new_state("restart")
+    with server(db) as base:
+        err, case = escalate(base)
+        err2, closed = call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."},
+                            user="olivia.analyst")
+        if err or err2:
+            raise RuntimeError(f"the writes before the restart failed: {case} {closed}")
+
+    with server(db) as base:
+        err, alert = call(base, "get_alert", {"alert_id": "A-1002"})
+        check("RESTART a SAR case survives a restart of the server: the alert is still escalated to it, with who and when",
+              not err and alert == {**ALERT_2, "status": "escalated", "acted_by": "olivia.analyst",
+                                    "acted_at": case["opened_at"], "sar_case_id": case["sar_case_id"]}, alert)
+        err, again = escalate(base, narrative="After the restart.", user="sam.other")
+        check("RESTART ... and a second escalate_to_sar after the restart answers with that SAR case and \"already escalated\"",
+              not err and again == {**case, "result": "already escalated"}, again)
+        err, alert = call(base, "get_alert", {"alert_id": "A-1001"})
+        check("RESTART a closed alert survives a restart too", not err and alert == closed, alert)
+
+
+def check_reset():
+    with server(new_state("reset")) as base:
+        names = tools(base)
+        check("TOOLS the server lists the five tools (three reads, two writes) and no reset",
+              sorted(names) == ["close_alert", "escalate_to_sar", "get_alert", "get_customer_profile", "get_transactions"],
+              names)
+
+        err, case = escalate(base)
+        call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Payroll."})
+        call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "duplicate", "rationale": "Seen before."})
+        if err:
+            raise RuntimeError(f"the escalation before the reset failed: {case}")
+
+        status, answer = reset(base)
+        check("RESET POST /reset answers 200 with each alert's status in the seed",
+              status == 200 and isinstance(answer, dict) and answer.get("alerts") == {
+                  "A-1001": "open", "A-1002": "open", "A-1003": "open", "A-1004": "closed"}, (status, answer))
+        seen = {a: call(base, "get_alert", {"alert_id": a}) for a in ("A-1001", "A-1002", "A-1003", "A-1004")}
+        check("RESET ... after it, every alert is open except alert 4, which is closed as in the seed",
+              all(not err and alert.get("status") == "open" and "acted_by" not in alert
+                  for a, (err, alert) in seen.items() if a != "A-1004")
+              and seen["A-1004"][1].get("acted_by") == "jordan.reyes", seen)
+        err, again = escalate(base)
+        check("RESET ... and there are no SAR cases: escalating alert 2 again opens a new one, with the first SAR case ID",
+              not err and again.get("result") == "escalated" and again.get("sar_case_id") == case["sar_case_id"], again)
+
+    # A state file from an older build, whose tables don't fit this one. The server starts on it (it has an alerts table,
+    # so the seed doesn't load); POST /reset makes the tables again.
+    db = new_state("older-build")
+    old = sqlite3.connect(db)
+    old.execute("CREATE TABLE alerts (alert_id TEXT PRIMARY KEY, status TEXT)")
+    old.execute("INSERT INTO alerts VALUES ('A-1001', 'open')")
+    old.commit()
+    old.close()
+    with server(db) as base:
+        status, answer = reset(base)
+        err, alert = call(base, "get_alert", {"alert_id": "A-1001"})
+        err2, case = escalate(base)
+        check("RESET a state file from an older build gets new tables and the seed: get_alert and escalate_to_sar work",
+              status == 200 and not err and alert == {**ALERT_1, "status": "open"} and not err2
+              and case.get("result") == "escalated", (status, answer, alert, case))
+
+
 def check_seeded_alerts():
     # The four alerts of spec #1. The agent's judgment isn't checked here: only that the evidence shows each pattern.
     with server(new_state("seeded-alerts")) as base:
@@ -311,7 +559,8 @@ def check_app_script():
               not err and alert.get("alert_id") == "A-1001", alert)
 
 
-for group in (check_alert, check_profile, check_transactions, check_seeded_alerts, check_seed, check_start,
+for group in (check_alert, check_profile, check_transactions, check_close, check_escalate, check_who_acted, check_restart, check_reset,
+              check_seeded_alerts, check_seed, check_start,
               check_app_script):
     try:
         group()

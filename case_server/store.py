@@ -42,7 +42,13 @@ SCHEMA = (
         alert_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL REFERENCES customers, rule TEXT NOT NULL, score REAL NOT NULL,
         status TEXT NOT NULL CHECK (status IN ({_one_of(STATUSES)})), flagged_transaction_ids TEXT NOT NULL,
         acted_by TEXT, acted_at TEXT, reason_code TEXT CHECK (reason_code IN ({_one_of(REASON_CODES)})), rationale TEXT)""",
+    # The investigation record that an escalation opens. An alert has at most one (UNIQUE alert_id).
+    # opened_by and opened_at: who escalated the alert (the acting identity), and when.
+    """CREATE TABLE sar_cases (
+        sar_case_id TEXT PRIMARY KEY, alert_id TEXT NOT NULL UNIQUE REFERENCES alerts, narrative TEXT NOT NULL,
+        transaction_ids TEXT NOT NULL, opened_by TEXT NOT NULL, opened_at TEXT NOT NULL)""",
 )
+FIRST_SAR_CASE = 5001  # SAR case IDs are SAR-5001, SAR-5002, ... in the order the escalations come
 
 
 class Refused(Exception):
@@ -63,9 +69,23 @@ class CaseStore:
         with self._tx() as db:
             self.loaded_seed = db.execute("SELECT 1 FROM sqlite_master WHERE name = 'alerts'").fetchone() is None
             if self.loaded_seed:
-                for statement in SCHEMA:
-                    db.execute(statement)
-                self._load_seed(db)
+                self._make_tables(db)
+
+    def reset(self) -> dict[str, str]:
+        """Make the tables again and load the seed: every change since the seed is gone, and so is every SAR case.
+        It drops every table, so a state file from an older build, whose tables may not fit, works again.
+        -> each alert's status."""
+        with self._tx() as db:
+            tables = db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").fetchall()
+            for (name,) in tables:
+                db.execute(f'DROP TABLE "{name}"')
+            self._make_tables(db)
+            return dict(db.execute("SELECT alert_id, status FROM alerts ORDER BY alert_id").fetchall())
+
+    def _make_tables(self, db: sqlite3.Connection) -> None:
+        for statement in SCHEMA:
+            db.execute(statement)
+        self._load_seed(db)
 
     @contextmanager
     def _tx(self):
@@ -108,14 +128,89 @@ class CaseStore:
             alert.update(acted_by=row["acted_by"], acted_at=row["acted_at"])
         if row["status"] == "closed":
             alert.update(reason_code=row["reason_code"], rationale=row["rationale"])
+        if row["status"] == "escalated":
+            alert.update(sar_case_id=row["sar_case_id"])
         return alert
+
+    @staticmethod
+    def _sar_case(row: sqlite3.Row) -> dict[str, Any]:
+        return {"sar_case_id": row["sar_case_id"], "alert_id": row["alert_id"], "narrative": row["narrative"],
+                "transaction_ids": json.loads(row["transaction_ids"]), "opened_by": row["opened_by"],
+                "opened_at": row["opened_at"]}
+
+    @staticmethod
+    def _row(db: sqlite3.Connection, alert_id: str) -> sqlite3.Row:
+        row = db.execute("SELECT alerts.*, sar_cases.sar_case_id FROM alerts LEFT JOIN sar_cases USING (alert_id) "
+                         "WHERE alert_id = ?", (alert_id,)).fetchone()
+        if row is None:
+            raise Refused(f"No alert {alert_id}. Check the alert ID.")
+        return row
+
+    @staticmethod
+    def _final(row: sqlite3.Row, change: str) -> Refused:
+        """The refusal of a change to an alert that is closed or escalated: its decision is final."""
+        if row["status"] == "closed":
+            decision = f"closed: {row['acted_by']} closed it at {row['acted_at']} with the reason code {row['reason_code']}"
+        else:
+            decision = f"escalated to SAR case {row['sar_case_id']}: {row['acted_by']} escalated it at {row['acted_at']}"
+        return Refused(f"Alert {row['alert_id']} is {decision}. That decision is final, so the alert can't be {change}.")
 
     def get_alert(self, alert_id: str) -> dict[str, Any]:
         with self._tx() as db:
-            row = db.execute("SELECT * FROM alerts WHERE alert_id = ?", (alert_id,)).fetchone()
-        if row is None:
-            raise Refused(f"No alert {alert_id}. Check the alert ID.")
-        return self._alert(row)
+            return self._alert(self._row(db, alert_id))
+
+    def close_alert(self, alert_id: str, reason_code: str, rationale: str, acted_by: str) -> dict[str, Any]:
+        """Close an open alert, as acted_by, now -> the closed alert."""
+        with self._tx() as db:
+            row = self._row(db, alert_id)
+            if row["status"] != "open":
+                raise self._final(row, "closed" if row["status"] == "escalated" else "closed again")
+            if reason_code not in REASON_CODES:
+                raise Refused(f"The reason code must be {', '.join(REASON_CODES[:-1])} or {REASON_CODES[-1]}, "
+                              f"not {reason_code!r}.")
+            if not rationale.strip():
+                raise Refused("The rationale is empty. Say why the alert can be closed, and cite the evidence.")
+            db.execute("UPDATE alerts SET status = 'closed', acted_by = ?, acted_at = ?, reason_code = ?, rationale = ? "
+                       "WHERE alert_id = ?", (acted_by, timestamp(), reason_code, rationale, alert_id))
+            return self._alert(self._row(db, alert_id))
+
+    def escalate_to_sar(self, alert_id: str, narrative: str, transaction_ids: list[str], acted_by: str) -> dict[str, Any]:
+        """Open a SAR case for an open alert, as acted_by, now -> the SAR case, with result "escalated".
+        For an escalated alert -> its first SAR case, with result "already escalated", so a replayed call opens no other."""
+        with self._tx() as db:
+            row = self._row(db, alert_id)
+            if row["status"] == "escalated":
+                case = db.execute("SELECT * FROM sar_cases WHERE alert_id = ?", (alert_id,)).fetchone()
+                return {"result": "already escalated", **self._sar_case(case)}
+            if row["status"] == "closed":
+                raise self._final(row, "escalated")
+            if not narrative.strip():
+                raise Refused("The narrative is empty. Say what is suspicious, and cite the transactions.")
+            if not transaction_ids:
+                raise Refused("The list of transaction IDs is empty. Name the transactions that support the escalation.")
+            self._check_customer_transactions(db, row["customer_id"], transaction_ids)
+            count = db.execute("SELECT COUNT(*) FROM sar_cases").fetchone()[0]
+            sar_case_id, now = f"SAR-{FIRST_SAR_CASE + count}", timestamp()
+            db.execute("INSERT INTO sar_cases VALUES (?, ?, ?, ?, ?, ?)",
+                       (sar_case_id, alert_id, narrative, json.dumps(transaction_ids), acted_by, now))
+            db.execute("UPDATE alerts SET status = 'escalated', acted_by = ?, acted_at = ? WHERE alert_id = ?",
+                       (acted_by, now, alert_id))
+            case = db.execute("SELECT * FROM sar_cases WHERE alert_id = ?", (alert_id,)).fetchone()
+            return {"result": "escalated", **self._sar_case(case)}
+
+    @staticmethod
+    def _check_customer_transactions(db: sqlite3.Connection, customer_id: str, transaction_ids: list[str]) -> None:
+        """Refuse transaction IDs that aren't the customer's: unknown ones, and those of another customer."""
+        marks = ", ".join("?" * len(transaction_ids))
+        owners = dict(db.execute(f"SELECT transaction_id, customer_id FROM transactions WHERE transaction_id IN ({marks})",
+                                 transaction_ids).fetchall())
+        unknown = [t for t in transaction_ids if t not in owners]
+        others = [t for t in transaction_ids if t in owners and owners[t] != customer_id]
+        if unknown or others:
+            why = ([f"Unknown: {', '.join(unknown)}."] if unknown else []) + (
+                [f"Another customer's: {', '.join(others)}."] if others else [])
+            raise Refused(f"Name only transactions of the alert's customer {customer_id} (get_transactions lists them). "
+                          f"{' '.join(why)}")
 
     def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
         with self._tx() as db:
