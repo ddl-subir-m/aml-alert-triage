@@ -3,11 +3,14 @@
 Each group starts the server as its own process with a temporary AML_DB_PATH, and calls it the way the platform
 does: MCP over streamable HTTP. No case reads the server's tables.
 
-  TOOLS  the tool list
-  ALERT  get_alert
-  SEED   the seed loads only into an empty state file; a restart keeps the state
-  START  the server refuses to start without its state folder
-  APP    the Domino App's start script (app.sh)
+  TOOLS    the tool list
+  ALERT    get_alert, with alert 4 closed in the seed
+  PROFILE  get_customer_profile
+  TXNS     get_transactions and its window of days
+  DATA     the seed's four alerts: the evidence shows each one's pattern
+  SEED     the seed loads only into an empty state file; a restart keeps the state
+  START    the server refuses to start without its state folder
+  APP      the Domino App's start script (app.sh)
 
 Run: .venv/bin/python tests/check_case_server.py
 Exit code: 0 all passed, 1 any failed. The server logs stay in the temporary folder that the last line names.
@@ -22,6 +25,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -125,6 +129,11 @@ def new_state(name, empty_file=False):
     return db
 
 
+def days_ago(n):
+    """The date n days before today (UTC), as the case-management system writes dates: 2026-10-25."""
+    return (datetime.now(timezone.utc).date() - timedelta(days=n)).isoformat()
+
+
 # One function for each group of cases. Each group starts its own servers on its own state.
 
 def check_alert():
@@ -139,6 +148,118 @@ def check_alert():
 
         err, why = call(base, "get_alert", {"alert_id": "A-404"})
         check("ALERT an unknown alert ID is a tool error that names the ID", err and "No alert A-404" in str(why), (err, why))
+
+        err, alert = call(base, "get_alert", {"alert_id": "A-1004"})
+        acted_at = alert.get("acted_at", "") if not err else ""
+        check("ALERT get_alert answers alert 4, closed in the seed: who acted, when (12 days before the load, in UTC), "
+              "its reason code and its rationale",
+              not err and {k: v for k, v in alert.items() if k != "acted_at"} == {
+                  "alert_id": "A-1004", "customer_id": "C-2004", "rule": "large_amount", "score": 0.35, "status": "closed",
+                  "flagged_transaction_ids": ["T-30041"], "acted_by": "jordan.reyes", "reason_code": "explained_activity",
+                  "rationale": "The customer sold her car to a dealer. The deposit matches the bill of sale on file."}
+              and acted_at.startswith(days_ago(12) + "T") and acted_at.endswith("Z"), alert)
+
+
+def check_profile():
+    with server(new_state("profile")) as base:
+        check("TOOLS the server lists get_customer_profile", "get_customer_profile" in tools(base))
+
+        err, profile = call(base, "get_customer_profile", {"customer_id": "C-2001"})
+        check("PROFILE get_customer_profile answers alert 1's customer: name, segment, KYC risk rating, occupation, "
+              "expected monthly activity, country and PEP flag",
+              not err and profile == {"customer_id": "C-2001", "name": "Dana Whitfield", "segment": "retail",
+                                      "kyc_risk_rating": "low", "occupation": "Software engineer at a logistics company",
+                                      "expected_monthly_activity_usd": 14000, "country": "US", "pep": False}, profile)
+
+        err, why = call(base, "get_customer_profile", {"customer_id": "C-404"})
+        check("PROFILE an unknown customer ID is a tool error that names the ID",
+              err and "No customer C-404" in str(why), (err, why))
+
+
+def check_transactions():
+    with server(new_state("transactions")) as base:
+        check("TOOLS the server lists get_transactions", "get_transactions" in tools(base))
+
+        err, answer = call(base, "get_transactions", {"customer_id": "C-2001"})
+        listed = answer.get("transactions", []) if not err else []
+        payroll = next((t for t in listed if t.get("transaction_id") == "T-30001"), None)
+        check("TXNS get_transactions answers each transaction with its ID, date, amount, currency, type, counterparty, "
+              "country and memo; the seed's 4 days ago is a date 4 days before today",
+              payroll == {"transaction_id": "T-30001", "date": days_ago(4), "amount": 11850, "currency": "USD",
+                          "type": "ach_credit", "counterparty": "Northwind Logistics Inc", "country": "US",
+                          "memo": "PAYROLL NORTHWIND LOGISTICS"}, answer)
+
+        ids = [t.get("transaction_id") for t in listed]
+        check("TXNS ... by default, the transactions of the last 90 days, without the payroll deposit of 94 days ago",
+              not err and answer.get("days") == 90 and answer.get("customer_id") == "C-2001"
+              and set(ids) == {"T-30001", "T-30002", "T-30003", "T-30005", "T-30006", "T-30007", "T-30008"}, answer)
+        dates = [t["date"] for t in listed]
+        check("TXNS ... oldest first", len(dates) > 1 and dates == sorted(dates), ids)
+
+        err, answer = call(base, "get_transactions", {"customer_id": "C-2001", "days": 120})
+        check("TXNS ... a 120-day window has the payroll deposit of 94 days ago",
+              not err and any(t.get("transaction_id") == "T-30004" and t.get("date") == days_ago(94)
+                              for t in answer.get("transactions", [])), answer)
+
+        err, why = call(base, "get_transactions", {"customer_id": "C-404"})
+        check("TXNS an unknown customer ID is a tool error that names the ID",
+              err and "No customer C-404" in str(why), (err, why))
+
+        err, why = call(base, "get_transactions", {"customer_id": "C-2001", "days": 0})
+        check("TXNS a window of 0 days is a tool error that says what days can be",
+              err and "days must be" in str(why), (err, why))
+
+
+def evidence(base, alert_id):
+    """What the agent reads for one alert -> (the alert, its customer's profile, its flagged transactions that the 90-day
+    window lists, the customer's other transactions in the window)."""
+    answers = []
+    for tool, args in (("get_alert", {"alert_id": alert_id}), ("get_customer_profile", None), ("get_transactions", None)):
+        err, answer = call(base, tool, args or {"customer_id": answers[0]["customer_id"]})
+        if err:
+            raise RuntimeError(f"{tool} for {alert_id}: {answer}")
+        answers.append(answer)
+    alert, profile, window = answers
+    flagged = [t for t in window["transactions"] if t["transaction_id"] in alert["flagged_transaction_ids"]]
+    others = [t for t in window["transactions"] if t["transaction_id"] not in alert["flagged_transaction_ids"]]
+    return alert, profile, flagged, others
+
+
+def check_seeded_alerts():
+    # The four alerts of spec #1. The agent's judgment isn't checked here: only that the evidence shows each pattern.
+    with server(new_state("seeded-alerts")) as base:
+        seen = {a: evidence(base, a) for a in ("A-1001", "A-1002", "A-1003", "A-1004")}
+        check("DATA each alert's flagged transactions belong to its customer, in the 90-day window",
+              all(len(flagged) == len(alert["flagged_transaction_ids"]) > 0 for alert, _, flagged, _ in seen.values()),
+              {a: (alert["flagged_transaction_ids"], [t["transaction_id"] for t in flagged])
+               for a, (alert, _, flagged, _) in seen.items()})
+
+        alert, profile, flagged, _ = seen["A-1001"]
+        dates = sorted(date.fromisoformat(t["date"]) for t in flagged)
+        check("DATA alert 1 is a clear false positive: a large-amount rule flagged regular salary deposits (one payer, one "
+              "amount, a month apart, within the profile's expected monthly activity)",
+              alert["status"] == "open" and alert["rule"] == "large_amount" and len(flagged) >= 3
+              and len({(t["type"], t["counterparty"], t["amount"]) for t in flagged}) == 1
+              and all("PAYROLL" in t["memo"] for t in flagged)
+              and all(10000 < t["amount"] <= profile["expected_monthly_activity_usd"] for t in flagged)
+              and all(28 <= (b - a).days <= 31 for a, b in zip(dates, dates[1:])), (alert, profile, flagged))
+
+        alert, profile, flagged, _ = seen["A-1002"]
+        dates = [date.fromisoformat(t["date"]) for t in flagged]
+        check("DATA alert 2 is structuring: 6 or more cash deposits just under 10,000 within 14 days, more than 5 times "
+              "the profile's expected monthly activity",
+              alert["status"] == "open" and alert["rule"] == "structuring" and len(flagged) >= 6
+              and all(t["type"] == "cash_deposit" and 9000 <= t["amount"] < 10000 for t in flagged)
+              and (max(dates) - min(dates)).days <= 14
+              and sum(t["amount"] for t in flagged) > 5 * profile["expected_monthly_activity_usd"], (alert, profile, flagged))
+
+        alert, profile, flagged, others = seen["A-1003"]
+        check("DATA alert 3 is unclear: one large outgoing wire to a country that the customer's profile and other "
+              "transactions don't have",
+              alert["status"] == "open" and len(flagged) == 1 and flagged[0]["type"] == "wire_out"
+              and flagged[0]["amount"] > 2 * profile["expected_monthly_activity_usd"] and len(others) >= 3
+              and flagged[0]["country"] not in {profile["country"]} | {t["country"] for t in others},
+              (alert, profile, flagged, others))
 
 
 def check_seed():
@@ -190,7 +311,8 @@ def check_app_script():
               not err and alert.get("alert_id") == "A-1001", alert)
 
 
-for group in (check_alert, check_seed, check_start, check_app_script):
+for group in (check_alert, check_profile, check_transactions, check_seeded_alerts, check_seed, check_start,
+              check_app_script):
     try:
         group()
     except Exception as e:  # a case that can't run is a failure, never a skip
