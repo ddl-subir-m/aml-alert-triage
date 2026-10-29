@@ -1,0 +1,27 @@
+{
+  "about": "Fake data only. A transaction's days_ago becomes its date when the seed loads, so the 90-day window always finds it.",
+  "customers": [
+    {
+      "customer_id": "C-2001",
+      "name": "Dana Whitfield",
+      "segment": "retail",
+      "kyc_risk_rating": "low",
+      "occupation": "Software engineer at a logistics company",
+      "expected_monthly_activity": 14000,
+      "country": "US",
+      "pep": false
+    }
+  ],
+  "transactions": [
+    {"transaction_id": "T-30001", "customer_id": "C-2001", "days_ago": 4, "amount": 11850.00, "currency": "USD", "type": "ach_credit",
+     "counterparty": "Northwind Logistics Inc", "country": "US", "memo": "PAYROLL NORTHWIND LOGISTICS"},
+    {"transaction_id": "T-30002", "customer_id": "C-2001", "days_ago": 34, "amount": 11850.00, "currency": "USD", "type": "ach_credit",
+     "counterparty": "Northwind Logistics Inc", "country": "US", "memo": "PAYROLL NORTHWIND LOGISTICS"},
+    {"transaction_id": "T-30003", "customer_id": "C-2001", "days_ago": 64, "amount": 11850.00, "currency": "USD", "type": "ach_credit",
+     "counterparty": "Northwind Logistics Inc", "country": "US", "memo": "PAYROLL NORTHWIND LOGISTICS"}
+  ],
+  "alerts": [
+    {"alert_id": "A-1001", "customer_id": "C-2001", "rule": "large_amount", "score": 0.42, "status": "open",
+     "flagged_transaction_ids": ["T-30001", "T-30002", "T-30003"]}
+  ]
+}
