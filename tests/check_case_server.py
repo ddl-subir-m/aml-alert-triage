@@ -20,11 +20,13 @@ does: MCP over streamable HTTP. No case reads the server's tables.
 
   python tests/check_case_server.py
 
-Exit code: 0 all passed, 1 any failed. The server logs stay in the temporary folder that the last line names.
+Exit code: 0 all passed, 1 any failed. When a case fails, the server logs stay in the temporary folder that the last line
+names. When all pass, the check deletes that folder.
 """
 import asyncio
 import json
 import os
+import shutil
 import signal
 import socket
 import sqlite3
@@ -568,5 +570,8 @@ for group in (check_alert, check_profile, check_transactions, check_close, check
     except Exception as e:  # a case that can't run is a failure, never a skip
         check(f"{group.__name__} ran to the end", False, f"{type(e).__name__}: {e}")
 
-print(f"\n{len(failed)} failed: {', '.join(failed)}  (server logs in {ROOT})" if failed else "\nall checks passed")
-sys.exit(1 if failed else 0)
+if failed:
+    print(f"\n{len(failed)} failed: {', '.join(failed)}  (server logs in {ROOT})")
+    sys.exit(1)
+shutil.rmtree(ROOT, ignore_errors=True)  # the logs are kept only when a case failed
+print("\nall checks passed")
