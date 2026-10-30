@@ -61,10 +61,10 @@ proxy sets to the acting identity. A missing or empty header, or `Anonymous`, is
 These texts have spaces, so they can never be a Domino user name. The server logs one line for each tool call: its arguments,
 the names of its request headers (never their values: one is a token), and for a write, who acted.
 
-On Domino, who acted will very likely be "no identity". The platform calls this App as an API caller, and domino-agent-service
-measured that the Apps proxy sends no `domino-username` to an API caller (on an App with extended identity on: its
-`docs/STATUS.md`, September 28, 2026, and `docs/BACKEND_REQUIREMENTS.md`, ID-6). This App has extended identity off, and nobody
-has measured that case yet. The live check (#7) measures it: the record and the App's log show who acted.
+On Domino, who acted is the acting identity. The live check (#7) measured it on this App with extended identity off: the Apps proxy
+set `domino-username` on each call from the platform, and each close and SAR case named the analyst, also the escalation that the
+platform sent after a reviewer's approval. (domino-agent-service had measured no `domino-username` for an API caller on an App with
+extended identity on: its `docs/STATUS.md`, September 28, 2026.)
 
 ### Reset
 
@@ -157,10 +157,12 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
    `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
-3. **Add the tool server.** Only the owner of the project that holds the platform App can change its tool server list: anyone
-   else gets a 403. So the project owner does this step and the next two, in the browser, as themselves (the list refuses the
-   view-as switch). Open the platform App's Tool servers page. Add a tool server with the name `aml`, the MCP URL from step 2,
-   and no secret. The URL is on this deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each
+3. **Add the tool server.** Only the platform App's owner can change its tool server list: anyone else gets a 403. The owner is
+   the owner of the project that holds the App, or, on `agent-framework-smoke` with the view-as switch on, the person who
+   published it (domino-agent-service #82). So the owner does this step and the next two, in the browser, as themselves (the
+   list refuses the view-as switch). Open the platform App's Tool servers page. Add a tool server with the name `aml`, the MCP
+   URL from step 2, and no secret. Save it, reload the page, then edit `aml`: the form lists a tool server's tools only after
+   it is saved. The URL is on this deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each
    call carries a short-lived token for the acting identity, and the Apps proxy checks that identity's access to the App. The
    agent then sees the tools as `aml_get_alert`, `aml_get_customer_profile`, `aml_get_transactions`, `aml_close_alert` and
    `aml_escalate_to_sar`.
@@ -180,14 +182,13 @@ curl -s -X POST "https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/r
 
 #### Where the platform differs from these steps
 
-- **No secret (step 3).** On domino-agent-service `origin/main`, a tool server entry still needs a secret (`secretEnv`), and the
-  platform has no Domino-hosted tool servers. Until domino-agent-service #68 merges, the Tool servers page refuses `aml` with no
-  secret. So step 3 waits for #68, and the agent's registration waits too (the platform App refuses an agent whose tool server
-  isn't on its list).
-- **Who acted.** Each close and SAR case will very likely record "no identity". "Who acted" above says why, and how the live
-  check (#7) measures it.
-- **The Workspace token.** Not measured yet: whether the Apps proxy takes a Workspace's token for an App with extended identity
-  off (the `POST /reset` call above). acme-mcp's check script does the same, so it very likely works.
+- **The platform App in a new browser tab.** `agent-framework-smoke` runs without extended identity. So in a new tab, each of its
+  pages except Tool servers answers "Domino didn't accept that token", and the view-as switch isn't on the page. Set the switch
+  once in each tab: on the App's page, open the browser's console and run
+  `sessionStorage.setItem('viewAs', '<your Domino user name>'); location.reload()`. The switch then shows at the top right, and
+  you can change it there (domino-agent-service #90).
+- **The Workspace token.** The `POST /reset` call above works: the live check (#7) measured that the Apps proxy takes a
+  Workspace's token for an App with extended identity off.
 
 ### Check it
 
@@ -292,8 +293,8 @@ only, so it runs on the Domino Standard Environment.
    `SMOKE_ALLOW_VIEW_AS=1`, then restart the App (publish a new version). The App's first log line then shows
    `AGENT_ALLOW_VIEW_AS=1`. A project's `AGENT_ALLOW_VIEW_AS` does nothing on that App.
 2. The case-management App is on the platform App's tool server list with the name `aml` (the Tool servers page, in your browser).
-   The App refuses an agent whose `toolServers` names a tool server that isn't on the list. Only the App's project owner can
-   change that list, and it doesn't take the view-as switch, so this script can't add it (step 3 of "Set it up on Domino").
+   The App refuses an agent whose `toolServers` names a tool server that isn't on the list. Only the App's owner can change
+   that list, and it doesn't take the view-as switch, so this script can't add it (step 3 of "Set it up on Domino").
 3. You know the reviewer's Domino user name. The reviewer must be another person: the approvers of an escalation are the agent's
    owner and editors, minus the analyst who asked.
 
@@ -350,16 +351,15 @@ The script follows the platform App (domino-agent-service `origin/main`):
   answer `viewAsEnabled: false`: it ignores the header, checks the token that the Apps proxy changed, and answers 401 ("Domino didn't
   accept that token"). The script reads that 401 as "the switch is off". It also stops on `viewAsEnabled: false`.
 - **The tool server first.** The App refuses the agent until `aml` is on its tool server list. So the operator adds `aml` on the Tool
-  servers page before the script runs. Before domino-agent-service #68 merges, a tool server entry needs a secret, so the case-management
-  App can't be added with no secret, and the registration waits for #68.
+  servers page before the script runs.
 - **The Environment's revision.** The definition names only the Environment ID. The App picks the revision from its certified list
   (`AGENT_CERTIFIED_ENVIRONMENTS`), so a revision in the file would do nothing.
 - **An update keeps old keys.** `PUT api/agents/<id>` replaces each key that the body has, and keeps the others. The script sends the
   whole file, so every key in it is replaced. A key that you remove from the file stays on the App.
 - **Names aren't unique.** The App allows two agents with one name. The script stops when it finds two.
 
-Not measured yet: whether the Apps proxy passes `X-Prototype-View-As` to an App with extended identity off. The live check (#7) shows
-it: the script prints how the App knows you, and stops when the App doesn't know you by your name.
+The Apps proxy passes `X-Prototype-View-As` to an App with extended identity off: in the live check (#7), the script printed "The App
+knows you as subir_mansukhani (through the prototype view-as switch)".
 
 The definition's other values are choices, not platform rules: at most 30 minutes and 20 model turns for each Job; `idleWaitMin: 0`
 (a question to the analyst ends the Job at once, and the answer starts a new Job); `onError: fail`; and the guardrails' `named: read`
@@ -376,3 +376,52 @@ rule in its system prompt, the print mode, and the script's calls to a small fak
 off (both answers), the header dropped, a redirect, a refused request, two agents with one name, an agent you can't change, and your
 name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host. The real
 calls are proven in the live check.
+
+## Live check
+
+The live check (#7) ran the workflow on cloud-dogfood on October 29, 2026, with the steps above.
+
+| | |
+|---|---|
+| Platform App | `agent-framework-smoke`, App `6ae3e34d4abd2d2682012349`, domino-agent-service `main` at `cb9d366`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
+| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, AML `main` at `a06e213`, on the Domino Standard Environment, state on the dataset `aml-cases` |
+| Agent | `agt_8acd4c27ef`, registered with `agent/register.py`, model alias `sonnet`, LangGraph Environment revision `6ae24cbd4abd2d2682011256` |
+| Analyst | `subir_mansukhani`, the agent's owner, who started each task |
+| Reviewer | `etan_lightstone`, an editor, through the view-as switch |
+
+| Alert | Task | What happened | Result |
+|---|---|---|---|
+| A-1001 | AGT-101 | 3 reads, then `close_alert` with `explained_activity`. Each call has a decided row and a completed row, acting as the analyst. The record names the analyst. | Pass |
+| A-1002 | AGT-102 | 3 reads, then `escalate_to_sar`, held. The reviewer approved it. The next Job's claim sent it once, and SAR-5001 opened, by the analyst. The decided and completed rows have the same SHA-256. The case App's log has one `escalate_to_sar`. | Pass |
+| A-1003 | AGT-103, AGT-106 | 3 reads, then `escalate_to_sar` (the $30,000 securities sale, then the $46,000 wire to Cyprus, as possible layering), in both runs. The agent asked no question. | Model judgment (below) |
+| A-1004 | AGT-104 | 1 read. It reported the alert as already closed (by `jordan.reyes`, `explained_activity`), and wrote nothing. | Pass |
+| A-1002, after `POST /reset` | AGT-105 | 3 reads, then `escalate_to_sar`, held. The reviewer rejected it. The task failed with "Not done: etan_lightstone rejected aml_escalate_to_sar (sha256 e9632761aed4), so it never ran." No other write, and the alert stayed open. | Pass, with a difference (below) |
+| A-1001, steered | AGT-107 | The task told the agent to ask one question first. 3 reads, then a question about the deposits, and the Job ended. The analyst's reply started a new Job, and the agent closed A-1001 with `explained_activity`, by the analyst. | Pass (the question path) |
+
+Each task's result was the summary (Decision, Rationale, Evidence, Action taken), and the transcript showed each call.
+
+Measured:
+
+- **Who acted.** The Apps proxy set `domino-username` on every call to the case-management App, so each close and SAR case named the
+  analyst ("Who acted" above).
+- **The view-as header.** `register.py` printed "The App knows you as subir_mansukhani (through the prototype view-as switch)": the
+  Apps proxy passes `X-Prototype-View-As` to an App with extended identity off.
+- **The Workspace token.** `POST /reset` from a Workspace in the AML project worked.
+
+Where the platform differs from spec #1:
+
+- **A denial ends the task.** Spec #1 says that after a denial, the agent reports it and who denied it. On the platform, a reject
+  ends the task at once (domino-agent-service ADR 0001): the agent doesn't run again, and the platform's summary names who rejected
+  the call. When the analyst continues the task after a reject (AGT-103, round 2), the agent learns only that "a person rejected
+  it", so its report says "rejected by a reviewer" (domino-agent-service #88). It followed its rule: no other write, and the alert
+  stayed open, although the analyst had explained the wire.
+- **A message while an approval waits.** A message sent to a task that waits on an approval is saved in the conversation, and the
+  agent never gets it (domino-agent-service #89). Send it after the decision, as feedback.
+
+Model judgment (it doesn't fail the check):
+
+- **A-1003.** `sonnet` escalated A-1003 in 2 runs of 2 and never asked the analyst. So a steered task proved the question path:
+  AGT-107 told the agent to ask first (the table above). The question ended the Job, the reply started a new Job, and the agent
+  decided with the answer.
+- **AGT-102's wording.** After the approved escalation ran, its "Action taken" still said that the escalation "requires reviewer
+  approval before it runs", and it didn't name the approver.
