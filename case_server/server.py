@@ -2,7 +2,8 @@
 
 On Domino it runs as the App aml-case-management: app.sh starts it on port 8888. Locally:
   mkdir -p /tmp/aml && AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
-Then the MCP URL is http://localhost:8890/mcp. POST /reset (not one of the server's tools) loads the seed again.
+Then the MCP URL is http://localhost:8890/mcp. POST /reset (not one of the server's tools) loads the seed again, and GET / is the
+case board: a read-only page with the alerts and SAR cases (case_server/board.py).
 
 Settings (environment variables):
   AML_DB_PATH    the SQLite state file (required). Its folder must exist; the server never makes it.
@@ -13,6 +14,7 @@ import logging
 import os
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Mapping
@@ -21,8 +23,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
+import board
 from store import SEED, CaseStore, Refused
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -128,6 +131,12 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         alerts = store.reset()
         log.info("reset: made the tables again and loaded the seed %s", store.seed_path)
         return JSONResponse({"result": "loaded the seed", "alerts": alerts})
+
+    # Not one of the server's tools either. Read only: it changes nothing, so a person can leave it open while agents work.
+    @mcp.custom_route("/", methods=["GET"])
+    async def case_board(request: Request) -> HTMLResponse:
+        """The case board: each alert's status and decision, and the SAR cases."""
+        return HTMLResponse(board.render(store.board(), datetime.now(timezone.utc)), headers={"Cache-Control": "no-store"})
 
     return mcp
 

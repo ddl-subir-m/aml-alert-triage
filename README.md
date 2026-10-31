@@ -78,6 +78,19 @@ again, so it also works on a state file from an older build, whose tables may no
 It is an HTTP route, not one of the server's tools, so the tools route never offers it to an agent. Anyone who can open the
 App can call it. SAR case IDs start again at `SAR-5001`.
 
+### Case board
+
+`GET /` is the case board: one read-only page that shows the system of record, so people can watch it change while an agent
+works (for example in a demo). On Domino it is the App's URL, without `mcp`.
+
+- **Alerts:** each alert's customer, rule, score and status, its decision (the reason code and rationale, or the SAR case), who
+  acted and when (UTC).
+- **SAR cases:** each SAR case's alert, who opened it and when, its transactions and its narrative. With none, the page says so.
+- The page reloads itself every 5 seconds. An alert that was closed or escalated in the last 2 minutes is marked **New**.
+- It changes nothing: `POST /` is refused. Like `/reset`, it is an HTTP route, not a tool, so no agent sees it. Anyone who can
+  open the App can open it.
+- Each value is escaped, so a rationale or a narrative that an agent wrote shows as text, never as HTML.
+
 ### The seed: four alerts
 
 The seed (`case_server/seed.json`) has fake customers, transactions and four alerts. Each alert takes a different path through
@@ -87,7 +100,7 @@ the platform once:
 |---|---|---|---|
 | `A-1001` | `C-2001` | A clear false positive: a large-amount rule flagged three monthly salary deposits of 11,850 from the same employer, within the profile's expected activity. | `close_alert` with `false_positive` or `explained_activity` |
 | `A-1002` | `C-2002` | Structuring: 8 cash deposits from 9,400 to 9,900 in 8 days (77,450 in all), at 3 branches and an ATM, for a rideshare driver who expects 4,500 a month. | `escalate_to_sar`, which waits for a reviewer |
-| `A-1003` | `C-2003` | Unclear: a wire of 46,000 to Cyprus (memo `PER AGREEMENT 2026-14`), a country new for the customer. The profile neither explains it nor rules it out. | A question to the analyst (`ask_human`) |
+| `A-1003` | `C-2003` | Unclear: a wire of 46,000 to Cyprus (memo `PER AGREEMENT 2026-14`), a country new for the customer. The profile neither explains it nor rules it out, and the transactions show no pattern: no other one is above the expected monthly activity. | A question to the analyst (`ask_human`) |
 | `A-1004` | `C-2004` | Already closed in the seed, by `jordan.reyes`, 12 days before the load, with `explained_activity` (the customer sold her car). | A report, and no write |
 
 A transaction's date is stored in the seed as days before the load (`days_ago`), and becomes a date (UTC) when the seed loads.
@@ -114,7 +127,7 @@ mkdir -p /tmp/aml
 AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
 ```
 
-The MCP URL is `http://localhost:8890/mcp`. To try it without an MCP client:
+The MCP URL is `http://localhost:8890/mcp`, and the case board is `http://localhost:8890/`. To try it without an MCP client:
 
 ```bash
 curl -s -X POST http://localhost:8890/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
@@ -157,6 +170,7 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
    `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
+   The App's URL itself (without `mcp`) is the case board: open it in your browser to watch the alerts change.
 3. **Add the tool server.** Only the platform App's owner can change its tool server list: anyone else gets a 403. The owner is
    the owner of the project that holds the App, or, on `agent-framework-smoke` with the view-as switch on, the person who
    published it (domino-agent-service #82). So the owner does this step and the next two, in the browser, as themselves (the
@@ -203,7 +217,8 @@ streamable HTTP. It prints one line per case (`ok` or `FAIL`) and exits with 1 w
 It covers each tool's answer on the seed, unknown IDs, the 90-day window, the seed's four alerts, the reason codes, the status
 rules (close, escalate, "already escalated" with the first SAR case, each refusal), transaction IDs of another customer, who acted
 (from `domino-username`, and with no identity), a SAR case and a close that survive a restart, `POST /reset` (also on a state
-file from an older build), the missing state folder, `app.sh`, and that none of the server's tools resets the system.
+file from an older build), the case board (each alert's row, the SAR cases, the New mark, escaped text, read only), the missing state folder, `app.sh`, and
+that none of the server's tools resets the system.
 
 ## The agent
 
@@ -423,5 +438,13 @@ Model judgment (it doesn't fail the check):
 - **A-1003.** `sonnet` escalated A-1003 in 2 runs of 2 and never asked the analyst. So a steered task proved the question path:
   AGT-107 told the agent to ask first (the table above). The question ended the Job, the reply started a new Job, and the agent
   decided with the answer.
+  After the live check, the seed's `T-30035` (the $30,000 securities sale) became an invoice of 10,600, so no large amount comes in
+  before the wire. Rule 6 of the system prompt now also says when the evidence is unclear: one transaction doesn't fit the profile,
+  but the transactions show no pattern. Then the agent asks what the transaction is for before it escalates. Not run live yet. A
+  local test with another Sonnet model asked the analyst on the old seed too, so only a live run shows the effect. On a running
+  App, `POST /reset` loads the new seed.
 - **AGT-102's wording.** After the approved escalation ran, its "Action taken" still said that the escalation "requires reviewer
   approval before it runs", and it didn't name the approver.
+  After the live check, the system prompt says that an answer with a SAR case ID means that a reviewer approved the escalation and
+  it ran, so "Action taken" says so. The agent still can't name the approver: the platform gives it only the tool's answer. The
+  task page names the approver. Not run live yet: run `agent/register.py` again to update the agent on the App.

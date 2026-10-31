@@ -76,6 +76,8 @@ rule("the reason codes", "false_positive", "explained_activity", "duplicate")
 rule("escalate only with a narrative and the supporting transaction IDs", "aml_escalate_to_sar", "only with a narrative",
      "transaction ids", "support")
 rule("ask the analyst when the evidence is unclear", "unclear", "ask the analyst", "ask_human")
+rule("...unclear means one transaction that doesn't fit the profile and no pattern: ask what it is for before escalating",
+     "unclear when", "no pattern", "ask what the transaction is for before you escalate")
 rule("with no answer, leave the alert open and say why", "no answer", "leave the alert open", "say why")
 rule("after a denied escalation, report the denial and who denied it", "denies", "report the denial", "who denied it")
 rule("...and make no other write", "denies", "no other write")
@@ -84,6 +86,9 @@ at = [prompt.find(h) for h in heads]
 check("the prompt ends the task with the summary: Decision, Rationale, Evidence, Action taken, in that order",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(heads, at)))
 rule("the summary's Evidence names the transaction IDs", "**evidence**", "transaction ids")
+rule("an answer with a SAR case ID means that a reviewer approved the escalation and it ran", "sar case id",
+     "reviewer approved", "only after it ran")
+rule("...so Action taken never says that an escalation that ran still waits for approval", "**action taken**", "no longer waits")
 named = set(re.findall(r"\baml_[a-z_]+", prompt))
 check("the prompt names the five case-management tools, and no other aml_ name",
       named == {"aml_get_alert", "aml_get_customer_profile", "aml_get_transactions", "aml_close_alert", "aml_escalate_to_sar"}, named)

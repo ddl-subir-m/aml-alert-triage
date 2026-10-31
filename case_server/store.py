@@ -222,6 +222,18 @@ class CaseStore:
             raise Refused(f"Name only transactions of the alert's customer {customer_id} (get_transactions lists them). "
                           f"{' '.join(why)}")
 
+    def board(self) -> dict[str, Any]:
+        """What the case board shows: each alert as get_alert answers it, with its customer's name, in ID order, and each SAR
+        case in the order it opened. Read only."""
+        with self._tx() as db:
+            rows = db.execute("SELECT alerts.*, sar_cases.sar_case_id, customers.name AS customer_name FROM alerts "
+                              "LEFT JOIN sar_cases USING (alert_id) JOIN customers USING (customer_id) "
+                              "ORDER BY alert_id").fetchall()
+            alerts = [{**self._alert(row), "customer_name": row["customer_name"]} for row in rows]
+            sar_cases = [self._sar_case(db, alert_id)
+                         for (alert_id,) in db.execute("SELECT alert_id FROM sar_cases ORDER BY rowid").fetchall()]
+        return {"alerts": alerts, "sar_cases": sar_cases}
+
     def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
         with self._tx() as db:
             row = self._customer_row(db, customer_id)
