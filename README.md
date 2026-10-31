@@ -78,6 +78,19 @@ again, so it also works on a state file from an older build, whose tables may no
 It is an HTTP route, not one of the server's tools, so the tools route never offers it to an agent. Anyone who can open the
 App can call it. SAR case IDs start again at `SAR-5001`.
 
+### Case board
+
+`GET /` is the case board: one read-only page that shows the system of record, so people can watch it change while an agent
+works (for example in a demo). On Domino it is the App's URL, without `mcp`.
+
+- **Alerts:** each alert's customer, rule, score and status, its decision (the reason code and rationale, or the SAR case), who
+  acted and when (UTC).
+- **SAR cases:** each SAR case's alert, who opened it and when, its transactions and its narrative. With none, the page says so.
+- The page reloads itself every 5 seconds. An alert that was closed or escalated in the last 2 minutes is marked **New**.
+- It changes nothing: `POST /` is refused. Like `/reset`, it is an HTTP route, not a tool, so no agent sees it. Anyone who can
+  open the App can open it.
+- Each value is escaped, so a rationale or a narrative that an agent wrote shows as text, never as HTML.
+
 ### The seed: four alerts
 
 The seed (`case_server/seed.json`) has fake customers, transactions and four alerts. Each alert takes a different path through
@@ -114,7 +127,7 @@ mkdir -p /tmp/aml
 AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
 ```
 
-The MCP URL is `http://localhost:8890/mcp`. To try it without an MCP client:
+The MCP URL is `http://localhost:8890/mcp`, and the case board is `http://localhost:8890/`. To try it without an MCP client:
 
 ```bash
 curl -s -X POST http://localhost:8890/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
@@ -157,6 +170,7 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
    `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
+   The App's URL itself (without `mcp`) is the case board: open it in your browser to watch the alerts change.
 3. **Add the tool server.** Only the platform App's owner can change its tool server list: anyone else gets a 403. The owner is
    the owner of the project that holds the App, or, on `agent-framework-smoke` with the view-as switch on, the person who
    published it (domino-agent-service #82). So the owner does this step and the next two, in the browser, as themselves (the
@@ -203,7 +217,8 @@ streamable HTTP. It prints one line per case (`ok` or `FAIL`) and exits with 1 w
 It covers each tool's answer on the seed, unknown IDs, the 90-day window, the seed's four alerts, the reason codes, the status
 rules (close, escalate, "already escalated" with the first SAR case, each refusal), transaction IDs of another customer, who acted
 (from `domino-username`, and with no identity), a SAR case and a close that survive a restart, `POST /reset` (also on a state
-file from an older build), the missing state folder, `app.sh`, and that none of the server's tools resets the system.
+file from an older build), the case board (each alert's row, the SAR cases, the New mark, escaped text, read only), the missing state folder, `app.sh`, and
+that none of the server's tools resets the system.
 
 ## The agent
 

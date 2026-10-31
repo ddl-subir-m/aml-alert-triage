@@ -13,6 +13,7 @@ does: MCP over streamable HTTP. No case reads the server's tables.
   WHO      who acted: the domino-username header, and the record when it is missing, empty or Anonymous
   RESTART  a SAR case and a close survive a restart of the server
   RESET    POST /reset loads the seed again, also on a state file from an older build
+  BOARD    GET / is the case board: a read-only page with each alert's status and decision, and the SAR cases
   DATA     the seed's four alerts: the evidence shows each one's pattern
   SEED     the seed loads only into an empty state file; a restart keeps the state
   START    the server refuses to start without its state folder
@@ -143,6 +144,22 @@ def reset(base):
         return status, json.loads(body)
     except ValueError:
         return status, body
+
+
+def page(base, method="GET"):
+    """The case board at / -> (HTTP status, content type, the page's text)."""
+    req = urllib.request.Request(f"{base}/", data=b"" if method == "POST" else None, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.headers.get("content-type", ""), r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("content-type", ""), e.read().decode()
+
+
+def board_row(html, alert_id):
+    """The case board's row of one alert ("" when the page has none)."""
+    start = html.find(f'<tr data-alert="{alert_id}"')
+    return html[start:html.find("</tr>", start)] if start >= 0 else ""
 
 
 def new_state(name, empty_file=False):
@@ -476,6 +493,52 @@ def check_reset():
               and sar_case.get("result") == "escalated", (status, answer, alert, sar_case))
 
 
+def check_board():
+    alerts = ("A-1001", "A-1002", "A-1003", "A-1004")
+    with server(new_state("board")) as base:
+        status, ctype, html = page(base)
+        rows = {a: board_row(html, a) for a in alerts}
+        check("BOARD GET / answers the case board: an HTML page that reloads itself, with each alert of the seed and its status",
+              status == 200 and ctype.startswith("text/html") and 'http-equiv="refresh"' in html
+              and all(f'data-status="{s}"' in rows[a] for a, s in zip(alerts, ("open", "open", "open", "closed"))),
+              (status, ctype, html[:600]))
+        check("BOARD ... alert 4 shows who closed it, its reason code and its rationale, and isn't marked New (it closed 12 days ago)",
+              "jordan.reyes" in rows["A-1004"] and "explained_activity" in rows["A-1004"] and "sold her car" in rows["A-1004"]
+              and "data-recent" not in rows["A-1004"], rows["A-1004"])
+        check("BOARD ... and it says that there are no SAR cases yet",
+              'data-empty="sar-cases"' in html and "data-sar-case" not in html, html[-1200:])
+
+        call(base, "close_alert", {"alert_id": "A-1001", "reason_code": "false_positive", "rationale": "Monthly payroll."},
+             user="olivia.analyst")
+        err, sar_case = escalate(base)
+        _, _, html = page(base)
+        rows = {a: board_row(html, a) for a in alerts}
+        check("BOARD after a close, alert 1 shows that it is closed, who closed it, the reason code and the rationale, marked New",
+              'data-status="closed"' in rows["A-1001"] and "olivia.analyst" in rows["A-1001"] and "false_positive" in rows["A-1001"]
+              and "Monthly payroll." in rows["A-1001"] and 'data-recent="yes"' in rows["A-1001"], rows["A-1001"])
+        sar_row = html[html.find("<tr data-sar-case="):]
+        check("BOARD after an escalation, alert 2 shows its SAR case, marked New, and the SAR cases list it with who opened it, its "
+              "transactions and its narrative",
+              not err and 'data-status="escalated"' in rows["A-1002"] and sar_case["sar_case_id"] in rows["A-1002"]
+              and 'data-recent="yes"' in rows["A-1002"] and f'data-sar-case="{sar_case["sar_case_id"]}"' in html
+              and "olivia.analyst" in sar_row and "T-30015" in sar_row and NARRATIVE in sar_row
+              and 'data-empty="sar-cases"' not in html, (sar_case, html[-2000:]))
+        check("BOARD ... an alert that nobody acted on stays open, and isn't marked New",
+              'data-status="open"' in rows["A-1003"] and "data-recent" not in rows["A-1003"], rows["A-1003"])
+
+        call(base, "close_alert", {"alert_id": "A-1003", "reason_code": "duplicate",
+                                    "rationale": '<script>alert("x")</script> & <b>bold</b>'}, user="<i>someone</i>")
+        _, _, html = page(base)
+        check("BOARD text from a tool call shows as text, never as HTML: the rationale and who acted are escaped",
+              "<script>" not in html and "<b>bold</b>" not in html and "<i>someone</i>" not in html
+              and "&lt;script&gt;" in html and "&lt;i&gt;someone&lt;/i&gt;" in html, board_row(html, "A-1003"))
+
+        status, _, _ = page(base, "POST")
+        _, _, after = page(base)
+        check("BOARD it is read only: POST / is refused (405), and no alert changes",
+              status == 405 and [board_row(after, a) for a in alerts] == [board_row(html, a) for a in alerts], status)
+
+
 def check_seeded_alerts():
     # The four alerts of spec #1. The agent's judgment isn't checked here: only that the evidence shows each pattern.
     with server(new_state("seeded-alerts")) as base:
@@ -563,7 +626,7 @@ def check_app_script():
 
 
 for group in (check_alert, check_profile, check_transactions, check_close, check_escalate, check_who_acted, check_restart, check_reset,
-              check_seeded_alerts, check_seed, check_start,
+              check_board, check_seeded_alerts, check_seed, check_start,
               check_app_script):
     try:
         group()
