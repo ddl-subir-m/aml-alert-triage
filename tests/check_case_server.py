@@ -574,6 +574,9 @@ def check_seeded_alerts():
               and flagged[0]["amount"] > 2 * profile["expected_monthly_activity_usd"] and len(others) >= 3
               and flagged[0]["country"] not in {profile["country"]} | {t["country"] for t in others},
               (alert, profile, flagged, others))
+        check("DATA ... and it shows no pattern: no other transaction is above the profile's expected monthly activity, so no large "
+              "amount comes in just before the wire (in the live check, a $30,000 sale and then the wire read as layering)",
+              max(t["amount"] for t in others) <= profile["expected_monthly_activity_usd"], (profile, others))
 
 
 def check_seed():

@@ -76,6 +76,8 @@ rule("the reason codes", "false_positive", "explained_activity", "duplicate")
 rule("escalate only with a narrative and the supporting transaction IDs", "aml_escalate_to_sar", "only with a narrative",
      "transaction ids", "support")
 rule("ask the analyst when the evidence is unclear", "unclear", "ask the analyst", "ask_human")
+rule("...unclear means one transaction that doesn't fit the profile and no pattern: ask what it is for before escalating",
+     "unclear when", "no pattern", "ask what the transaction is for before you escalate")
 rule("with no answer, leave the alert open and say why", "no answer", "leave the alert open", "say why")
 rule("after a denied escalation, report the denial and who denied it", "denies", "report the denial", "who denied it")
 rule("...and make no other write", "denies", "no other write")

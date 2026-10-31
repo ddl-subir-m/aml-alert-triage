@@ -100,7 +100,7 @@ the platform once:
 |---|---|---|---|
 | `A-1001` | `C-2001` | A clear false positive: a large-amount rule flagged three monthly salary deposits of 11,850 from the same employer, within the profile's expected activity. | `close_alert` with `false_positive` or `explained_activity` |
 | `A-1002` | `C-2002` | Structuring: 8 cash deposits from 9,400 to 9,900 in 8 days (77,450 in all), at 3 branches and an ATM, for a rideshare driver who expects 4,500 a month. | `escalate_to_sar`, which waits for a reviewer |
-| `A-1003` | `C-2003` | Unclear: a wire of 46,000 to Cyprus (memo `PER AGREEMENT 2026-14`), a country new for the customer. The profile neither explains it nor rules it out. | A question to the analyst (`ask_human`) |
+| `A-1003` | `C-2003` | Unclear: a wire of 46,000 to Cyprus (memo `PER AGREEMENT 2026-14`), a country new for the customer. The profile neither explains it nor rules it out, and the transactions show no pattern: no other one is above the expected monthly activity. | A question to the analyst (`ask_human`) |
 | `A-1004` | `C-2004` | Already closed in the seed, by `jordan.reyes`, 12 days before the load, with `explained_activity` (the customer sold her car). | A report, and no write |
 
 A transaction's date is stored in the seed as days before the load (`days_ago`), and becomes a date (UTC) when the seed loads.
@@ -438,6 +438,11 @@ Model judgment (it doesn't fail the check):
 - **A-1003.** `sonnet` escalated A-1003 in 2 runs of 2 and never asked the analyst. So a steered task proved the question path:
   AGT-107 told the agent to ask first (the table above). The question ended the Job, the reply started a new Job, and the agent
   decided with the answer.
+  After the live check, the seed's `T-30035` (the $30,000 securities sale) became an invoice of 10,600, so no large amount comes in
+  before the wire. Rule 6 of the system prompt now also says when the evidence is unclear: one transaction doesn't fit the profile,
+  but the transactions show no pattern. Then the agent asks what the transaction is for before it escalates. Not run live yet. A
+  local test with another Sonnet model asked the analyst on the old seed too, so only a live run shows the effect. On a running
+  App, `POST /reset` loads the new seed.
 - **AGT-102's wording.** After the approved escalation ran, its "Action taken" still said that the escalation "requires reviewer
   approval before it runs", and it didn't name the approver.
   After the live check, the system prompt says that an answer with a SAR case ID means that a reviewer approved the escalation and
