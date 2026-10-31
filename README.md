@@ -440,3 +440,6 @@ Model judgment (it doesn't fail the check):
   decided with the answer.
 - **AGT-102's wording.** After the approved escalation ran, its "Action taken" still said that the escalation "requires reviewer
   approval before it runs", and it didn't name the approver.
+  After the live check, the system prompt says that an answer with a SAR case ID means that a reviewer approved the escalation and
+  it ran, so "Action taken" says so. The agent still can't name the approver: the platform gives it only the tool's answer. The
+  task page names the approver. Not run live yet: run `agent/register.py` again to update the agent on the App.
