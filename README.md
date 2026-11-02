@@ -440,11 +440,38 @@ Model judgment (it doesn't fail the check):
   decided with the answer.
   After the live check, the seed's `T-30035` (the $30,000 securities sale) became an invoice of 10,600, so no large amount comes in
   before the wire. Rule 6 of the system prompt now also says when the evidence is unclear: one transaction doesn't fit the profile,
-  but the transactions show no pattern. Then the agent asks what the transaction is for before it escalates. Not run live yet. A
-  local test with another Sonnet model asked the analyst on the old seed too, so only a live run shows the effect. On a running
-  App, `POST /reset` loads the new seed.
+  but the transactions show no pattern. Then the agent asks what the transaction is for before it escalates. The rehearsal (below)
+  ran it live: the agent asked in 3 runs of 3.
 - **AGT-102's wording.** After the approved escalation ran, its "Action taken" still said that the escalation "requires reviewer
   approval before it runs", and it didn't name the approver.
   After the live check, the system prompt says that an answer with a SAR case ID means that a reviewer approved the escalation and
   it ran, so "Action taken" says so. The agent still can't name the approver: the platform gives it only the tool's answer. The
-  task page names the approver. Not run live yet: run `agent/register.py` again to update the agent on the App.
+  task page names the approver. The rehearsal (below) ran it live: "Action taken" said that a reviewer approved the escalation
+  and that SAR-5001 is open.
+
+### Rehearsal, November 2, 2026
+
+The demo rehearsal ran A-1003 three times on cloud-dogfood, after the changes of PR #10. It checked the two changes that the live
+check asked for: the A-1003 question and the "Action taken" wording.
+
+| | |
+|---|---|
+| Platform App | `agent-framework-smoke`, App `6ae3e34d4abd2d2682012349`, domino-agent-service `main` at `8c34ea3`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
+| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, a new version from AML `main` at `a078450`, then `POST /reset` |
+| Agent | A new agent, registered with `agent/register.py` from `a078450`, model alias `sonnet`, LangGraph Environment revision `6ae24cbd4abd2d2682011256` |
+| Analyst | `subir_mansukhani`, who started each task |
+| Reviewer | `etan_lightstone`, an editor, through the view-as switch |
+
+| Task | What happened | Result |
+|---|---|---|
+| The analyst explains | 3 reads, then a question about the business purpose of the wire. The analyst explained the wire, and the agent closed A-1003. | Pass |
+| The analyst can't explain | 3 reads, then the question. Its message said that the transactions show "no structuring or rapid in-and-out pattern". The analyst answered that the counterparty is unknown and that the customer couldn't explain the wire. The agent called `escalate_to_sar`, held. The reviewer approved it, the next Job sent it once, and SAR-5001 opened, by the analyst. "Action taken" said that a reviewer approved the escalation and that SAR-5001 is open. | Pass |
+| No answer | 3 reads, then the question. Nobody answered. | Pass |
+
+Each was a new task, on an open A-1003.
+
+- **A-1003.** The agent asked the analyst in 3 runs of 3. In the live check, it asked in 0 runs of 2.
+- **"Action taken".** It no longer says that an escalation that ran waits for approval. It still doesn't name the approver.
+- **The platform App's store.** The platform App published from `8c34ea3` had a new store: no agent, and no tool server `aml`.
+  The tool server `aml` was added again (step 3 of "Set it up on Domino"), and `register.py` created a new agent. The live
+  check's agent `agt_8acd4c27ef` and its tasks aren't in that store.
