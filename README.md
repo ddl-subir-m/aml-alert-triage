@@ -310,8 +310,8 @@ only, so it runs on the Domino Standard Environment.
 2. The case-management App is on the platform App's tool server list with the name `aml` (the Tool servers page, in your browser).
    The App refuses an agent whose `toolServers` names a tool server that isn't on the list. Only the App's owner can change
    that list, and it doesn't take the view-as switch, so this script can't add it (step 3 of "Set it up on Domino").
-3. You know the reviewer's Domino user name. The reviewer must be another person: the approvers of an escalation are the agent's
-   owner and editors, minus the analyst who asked.
+3. You know the Domino user name of each reviewer. A reviewer must be another person: the approvers of an escalation are the
+   agent's owner and editors, minus the analyst who asked. Any one of them approves or denies: one decision is enough.
 
 ### Run it
 
@@ -320,9 +320,13 @@ In a Domino Workspace, in this repo:
 ```
 python agent/register.py --print --reviewer <reviewer>
 python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer>
+python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer 1> --reviewer <reviewer 2>
 ```
 
-- `--print` shows the agent body that the script sends (the file, with you in its `users` list, the reviewer in its `editors`
+- `--reviewer` is required. Give it once for each reviewer. Each run sets the whole `editors` list, so name every reviewer each
+  time: a reviewer that you leave out is no longer an editor. An editor can also change the agent, not only approve.
+
+- `--print` shows the agent body that the script sends (the file, with you in its `users` list, the reviewers in its `editors`
   list, and the overrides). It calls nothing.
 - `--app` is the platform App's URL as Domino gives it. A vanity URL set through the API doesn't route. A URL that you copy from
   the browser (with `#/...`) works too.
@@ -339,7 +343,7 @@ your own Domino user name (for the App). Your name comes from `DOMINO_STARTING_U
 4. It prints the agent's ID and its page: `<App URL>/#/agents/<id>`.
 
 The person who runs the script is the analyst: it puts you in the agent's `users` list. You are also the agent's owner when the
-script creates it. The reviewer is in its `editors` list.
+script creates it. The reviewers are in its `editors` list.
 
 ### When it stops
 
