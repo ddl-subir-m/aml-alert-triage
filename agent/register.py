@@ -1,12 +1,13 @@
 """Creates the AML alert triage agent on the platform App from agent/definition.json, or updates it when the App has an agent of that
 name. Run it in a Domino Workspace: it acts as you. It uses the stdlib only, so it runs on the Domino Standard Environment.
 
-  python agent/register.py --app URL --reviewer NAME [--model ALIAS] [--environment ID]
-  python agent/register.py --print --reviewer NAME [--model ALIAS] [--environment ID]
+  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
+  python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
 
-It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewer in its editors
-list (the approvers of an escalation are the owner and the editors, minus the analyst who asked). --print shows the agent body and
-calls nothing.
+It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewers in its editors
+list (the approvers of an escalation are the owner and the editors, minus the analyst who asked: any one of them decides). Give
+--reviewer once for each reviewer. Each run sets the whole editors list, so name every reviewer each time. --print shows the agent body
+and calls nothing.
 
 How it calls the App: the Workspace's token (for the Apps proxy) and the header X-Prototype-View-As with your own Domino user name. With
 extended identity off, the Apps proxy changes the token, so the App must take your name from the header: its view-as switch must be on
@@ -38,10 +39,10 @@ class Stop(Exception):
     """Why the script stops, for the person who runs it."""
 
 
-def agent_body(reviewer, me, model=None, environment=None):
-    """The definition file, with you (the analyst) in its users list, the reviewer in its editors list, and the overrides."""
+def agent_body(reviewers, me, model=None, environment=None):
+    """The definition file, with you (the analyst) in its users list, the reviewers in its editors list, and the overrides."""
     b = json.loads(DEFINITION.read_text())
-    b["access"] = {**b["access"], "users": [me], "editors": [reviewer]}
+    b["access"] = {**b["access"], "users": [me], "editors": list(reviewers)}
     if model:
         b["model"] = {**b["model"], "models": [model]}
     if environment:
@@ -175,23 +176,26 @@ def register(base, me, body):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--app", help="the platform App's URL, as Domino gives it (https://<apps host>/apps-internal/<App ID>)")
-    ap.add_argument("--reviewer", required=True, help="the reviewer's Domino user name: the agent's editor, who approves escalations")
+    ap.add_argument("--reviewer", required=True, action="append",
+                    help="a reviewer's Domino user name: an editor of the agent, who approves escalations. Give it once for each reviewer")
     ap.add_argument("--model", help="an LLM Gateway alias, instead of the file's")
     ap.add_argument("--environment", help="a certified LangGraph Environment's ID, instead of the file's")
     ap.add_argument("--print", action="store_true", dest="print_only", help="show the agent body, and call nothing")
     a = ap.parse_args()
     if not a.print_only and not a.app:
         ap.error("--app is required (the platform App's URL), or --print to only show the agent body")
-    for flag in ("reviewer", "model", "environment"):
+    for flag in ("model", "environment"):
         if getattr(a, flag) is not None and not getattr(a, flag).strip():
             ap.error(f"--{flag} is empty")
+    if any(not r.strip() for r in a.reviewer):
+        ap.error("a --reviewer is empty")
+    reviewers = list(dict.fromkeys(r.strip() for r in a.reviewer))   # in the order given, each name once
     try:
         me = (starting_username() or "<your Domino user name>") if a.print_only else my_name()
-        reviewer = a.reviewer.strip()
-        if reviewer == me:
-            ap.error(f"the reviewer can't be you ({me}): an escalation needs a second person to approve it. Name another Domino user "
-                     "with --reviewer.")
-        body = agent_body(reviewer, me, (a.model or "").strip(), (a.environment or "").strip())
+        if me in reviewers:
+            ap.error(f"a reviewer can't be you ({me}): an escalation needs a second person to approve it. Remove --reviewer {me}, and "
+                     "name other Domino users.")
+        body = agent_body(reviewers, me, (a.model or "").strip(), (a.environment or "").strip())
         if a.print_only:
             print(json.dumps(body, indent=2))
             return 0
@@ -201,7 +205,8 @@ def main():
     except Stop as e:
         print(e, file=sys.stderr)
         return 1
-    print(f"{verb} the agent {agent.get('name')!r} as {me}, with {reviewer} as its editor.")
+    print(f"{verb} the agent {agent.get('name')!r} as {me}, with {', '.join(reviewers)} as its "
+          f"{'editor' if len(reviewers) == 1 else 'editors'}.")
     print(f"Agent ID: {agent['id']}")
     print(f"Agent page: {page(base, agent['id'])}")
     return 0

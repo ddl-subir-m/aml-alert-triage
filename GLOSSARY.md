@@ -17,7 +17,8 @@ The person who starts a triage. On the platform, the requester.
 _Avoid_: maker, user
 
 **Reviewer**:
-The second person who approves or denies an escalation. On the platform, the approver.
+The second person who approves or denies an escalation. On the platform, the approver. An agent can have several reviewers: any
+one of them decides.
 _Avoid_: checker
 
 **Escalation**:

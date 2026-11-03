@@ -195,6 +195,17 @@ check("--print shows the model alias and Environment overrides, and keeps the re
 code, out, err, log = register("--print", "--reviewer", "analyst1")
 check("the reviewer can't be you (maker-checker needs a second person): it stops before any call",
       code != 0 and "reviewer" in err.lower() and not log and not out, (code, out[:200], err[:300]))
+code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "reviewer2")
+check("--reviewer given twice: --print shows both reviewers in its editors list, in the order given",
+      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"]), (code, out[:300], err[:300]))
+code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "reviewer2", "--reviewer", " reviewer1 ")
+check("...a reviewer named twice is in the editors list once",
+      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"]), (code, out[:300], err[:300]))
+code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "analyst1")
+check("...no reviewer can be you, even with others: it stops before any call, and names you",
+      code != 0 and "analyst1" in err and not log and not out, (code, out[:200], err[:300]))
+code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", " ")
+check("...an empty --reviewer stops it", code != 0 and "empty" in err and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print")
 check("the reviewer's name is required", code != 0 and "--reviewer" in err and not log, (code, err[:300]))
 code, out, err, log = register("--reviewer", "reviewer1")
@@ -222,6 +233,11 @@ check("...each call with the Workspace's token for the Apps proxy and your name 
           for _, p, h, _ in log if p.startswith("/app/")), [(p, h.get("authorization"), h.get("x-prototype-view-as")) for _, p, h, _ in log])
 check("...and it prints the agent's ID and page URL", "agt_0123456789" in out and f"{APP}/#/agents/agt_0123456789" in out, out)
 check("...and how the App knows you (the live check records it: the view-as switch)", "prototype view-as switch" in out, out)
+
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--reviewer", "reviewer2")
+check("with two reviewers, it sends both in the agent's editors list, and prints both names",
+      code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(editors=["reviewer1", "reviewer2"]))]
+      and "reviewer1, reviewer2 as its editors" in out, (code, writes(log), out[:300], err[:300]))
 
 agents = [{"id": "agt_00000000aa", "name": NAME, "canEdit": True}, {"id": "agt_00000000bb", "name": "Another agent", "canEdit": True}]
 code, out, err, log = register("--app", APP + "/#/agents", "--reviewer", "reviewer1", "--model", "haiku", state={"agents": agents})
