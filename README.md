@@ -1,8 +1,9 @@
 # aml-alert-triage
 
-The AML alert triage reference workflow for the Domino Agent Service: a LangGraph agent on the framework lane triages transaction
-monitoring alerts, through a fake case-management system that runs as a Domino-hosted tool server. Escalating an alert to a SAR case
-needs a reviewer's approval.
+The AML alert triage reference workflow for the Domino Agent Service: an agent on the framework lane triages transaction monitoring
+alerts, through a fake case-management system that runs as a Domino-hosted tool server. Escalating an alert to a SAR case needs a
+reviewer's approval. The agent is one definition and three 1-line entry points: it runs on LangGraph, CrewAI or the Anthropic SDK
+(see "The agent").
 
 The data is fake. The spec is issue #1; the setup steps come with the build.
 
@@ -216,82 +217,112 @@ that none of the server's tools resets the system.
 
 ## The agent
 
-The agent is a LangGraph graph. Its entry point is `agent/graph.py:build_graph` (the definition's `framework.entrypoint`). The graph
-is the loop of domino-agent-service's LangGraph example (`examples/langgraph/graph.py`): the model calls tools until an answer has
-no tool call.
+The agent is one definition, `agent/definition.json`, and three entry points: one for each framework. Each entry point is a 1-line
+file that names a ready-made agent of domino-agui, the platform's helper library (domino-agent-service ADR 0030). The repo has no
+other agent code.
 
+| Variant | Framework (as the wizard names it) | File: its one line | Entry point |
+|---|---|---|---|
+| LangGraph | LangGraph | `agent/graph.py`: `from domino_agui.langgraph import build_graph` | `agent/graph.py:build_graph` |
+| CrewAI | CrewAI | `agent/flow.py`: `from domino_agui.crewai import build_flow` | `agent/flow.py:build_flow` |
+| Anthropic SDK | Domino AG-UI SDK | `agent/handler.py`: `from domino_agui.loop import handler` | `agent/handler.py:handler` |
+
+The three ready-made agents do the same things for the platform (the agent contract, in domino-agent-service's GLOSSARY):
+
+- The model client follows `AGENT_MODEL_FORMAT` (`anthropic` is Anthropic Messages, else OpenAI chat) and `AGENT_MODEL` (the alias).
+  The definition's alias is `sonnet`, a Claude model, so the Anthropic SDK variant calls the Anthropic SDK.
 - Agent-side tools are the tools that the relay lists (MCP at `$AGENT_SERVICE_URL/mcp`, with `$SESSION_TOKEN`), such as the
-  case-management system's read tools. The MCP client waits up to 300 seconds for an answer (the platform needs at least 60). A
+  case-management system's read tools. The relay client waits up to 300 seconds for an answer (the platform needs at least 60). A
   denial is the tool's answer.
-- Client-side tools are the AG-UI run's tools, such as `aml_close_alert` and `aml_escalate_to_sar`. The graph doesn't run them: a
+- Client-side tools are the AG-UI run's tools, such as `aml_close_alert` and `aml_escalate_to_sar`. The agent doesn't run them: a
   call to one ends the AG-UI run, and its answer comes in a later AG-UI run (for an escalation, after a reviewer's approval).
 - `ask_human` asks the analyst a question with an interrupt, with an optional expiry. When no answer comes in time, the agent is
-  told so, and gets no answer. The tool's result is then "No answer came before the question expired, so it was cancelled." This
-  differs from the platform's example, which adds "Carry on without it.": that pushes the model to decide without the answer,
-  and spec #1 says an unanswered question never becomes a decision (story 8). What the agent does then is its system prompt's
-  rule: leave the alert open and say why.
+  told so, and gets no answer. The tool's result is then "No answer came before the question expired, so it was cancelled." It says
+  only what happened: spec #1 says an unanswered question never becomes a decision (story 8). What the agent does then is its system
+  prompt's rule 7: leave the alert open and say why. (The text was this repo's own; the library took it, ADR 0030 decision 6.)
 - The system prompt is the AG-UI run's context: the agent's system prompt from its definition (the AML instructions), the
-  platform's operating rules and the task brief. The code has no AML instructions.
-- The model client follows `AGENT_MODEL_FORMAT` (`anthropic` is Anthropic Messages, else OpenAI chat) and `AGENT_MODEL` (the alias).
+  platform's operating rules and the task brief. The code has no AML instructions, so the three variants follow the same rules.
 
-The agent uses only the packages of the certified LangGraph Environment (domino-agent-service's
-`environments/agent-langgraph.lock`). It has no requirements file, and the repo has none at its root: Domino installs a root
-`requirements.txt` at the start of each Job, which would change the Environment's packages.
+Each variant uses only the packages of its framework's certified Environment (domino-agent-service's
+`environments/agent-<framework>.lock`). The repo has no requirements file at its root: Domino installs a root `requirements.txt` at
+the start of each Job, which would change the Environment's packages. The ready-made agents came with domino-agui 0.2.0, so a
+variant runs only on an Environment revision that has them. On an older revision, the import fails. On cloud-dogfood,
+domino-agent-service #155 builds and certifies those revisions.
 
 ## Certification
 
-Certification (domino-agent-service's ADR 0003 decision 8) proves that the agent follows the platform's agent contract: agent-side
-tools through the relay, client-side tools across AG-UI runs and across Jobs with an approval, an interrupt, and a thread that
-survives a Job restart. A scripted fake model drives each test, so it doesn't test the AML judgment.
+Certification (domino-agent-service's ADR 0003 decision 8) proves that an agent follows the platform's agent contract: agent-side
+tools through the relay, client-side tools across AG-UI runs and across Jobs with an approval, an interrupt, an expired question, a
+thread that survives a Job restart, and the ready-made agent's own model and tools (C1 to C11). A scripted fake model drives each
+test, so it doesn't test the AML judgment.
+
+The three entry points are the same lines as domino-agent-service's examples (`examples/langgraph/graph.py`,
+`examples/crewai/flow.py`, `examples/domino_agui/anthropic_agent.py`). So the platform's certification of each Environment covers
+this repo's code too: C1 to C11 pass in both formats for all three, on a laptop on November 10, 2026, and domino-agent-service #155
+certifies the new revisions in Domino Jobs. Its records are domino-agent-service's `docs/certification/<framework>.md`.
+
+On November 10, 2026, C1 ran on each variant, in both formats, in the new images (domino-agui 0.2.0):
 
 | | |
 |---|---|
-| Date | October 29, 2026 |
-| Agent | `agent/graph.py:build_graph`, at AML commit `da10cd0` (the commit after it, `2146489`, adds only this record) |
-| Suite | domino-agent-service `main` at `7561668`: `tests/certify/certify.py` |
-| Image | `domino-agents-langgraph:695987bf9f16`, built from domino-agent-service's committed `environments/agent-langgraph.dockerfile` on its local stand-in base (`python:3.12-slim`), not on the Domino Standard Environment |
+| Date | November 10, 2026 |
+| Agent | this repo's `agent/` folder at AML commit `9e9ac10` as `--code`, so the entry points were `graph.py:build_graph`, `flow.py:build_flow` and `handler.py:handler` |
+| Suite | domino-agent-service `feat/148-ready-made-agents` at `2af79f9`: `tests/certify/certify.py --only C1` |
+| Images | built from that commit's `environments/agent-<framework>.dockerfile` on its local stand-in base (`python:3.12-slim`), not on the Domino Standard Environment |
 | Platform | linux/arm64: Docker Desktop on an Apple silicon Mac |
-| Model | the suite's scripted fake model, on the alias `gpt-5.4` (OpenAI chat, `ChatOpenAI`) and on `haiku` (Anthropic Messages, `ChatAnthropic`) |
-| Versions | python 3.12.15, langgraph 1.2.16, ag-ui-langgraph 0.0.47, ag-ui-protocol 1.0.0, langchain-core 1.6.13, langchain-openai 1.7.2, langchain-anthropic 1.7.6, langchain-mcp-adapters 0.3.2, langgraph-checkpoint-sqlite 3.1.2, openai 3.36.0, anthropic 1.17.0 |
+| Model | the suite's scripted fake model, on the alias `gpt-5.4` (OpenAI chat) and on `haiku` (Anthropic Messages) |
 
-| Test | Proves | OpenAI chat | Anthropic Messages |
-|---|---|---|---|
-| C1 | The server boots in the sandbox, and `/health` reports the versions | pass (3 of 3 checks) | pass (3 of 3 checks) |
-| C2 | A plain run has zero denied egress events | pass (2 of 2 checks) | pass (2 of 2 checks) |
-| C3 | Model calls go through the model proxy with run tags, and `maxTurns` applies | pass (7 of 7 checks) | pass (7 of 7 checks) |
-| C4 | The transcript shows the text and tool events | pass (4 of 4 checks) | pass (4 of 4 checks) |
-| C5 | An agent-side tool goes through the relay and `decide()` | pass (4 of 4 checks) | pass (4 of 4 checks) |
-| C6 | A client-side tool works across two AG-UI runs | pass (5 of 5 checks) | pass (5 of 5 checks) |
-| C7 | A client-side tool that needs approval works across two Jobs, and the replay runs once | pass (5 of 5 checks) | pass (5 of 5 checks) |
-| C8 | An interrupt, a reply, then the run continues | pass (3 of 3 checks) | pass (3 of 3 checks) |
-| C9 | An expired interrupt resumes as `cancelled` | pass (3 of 3 checks) | pass (3 of 3 checks) |
-| C10 | The thread survives a Job restart, and a plain turn works without the checkpoint | pass (3 of 3 checks) | pass (3 of 3 checks) |
+| Variant | Image | Versions | OpenAI chat | Anthropic Messages |
+|---|---|---|---|---|
+| LangGraph | `domino-agents-langgraph:a666dd37ec5d` | langgraph 1.2.16, ag-ui-langgraph 0.0.47, domino-agui 0.2.0 | pass (3 of 3 checks) | pass (3 of 3 checks) |
+| CrewAI | `domino-agents-crewai:414fa79b03fa` | crewai 1.15.28, ag-ui-crewai 1.0.0, litellm 1.105.3, domino-agui 0.2.0 | pass (3 of 3 checks) | pass (3 of 3 checks) |
+| Anthropic SDK | `domino-agents-domino-agui:71d95ad2c406` | domino-agui 0.2.0, anthropic 2.1.0, openai 3.36.0 | pass (3 of 3 checks) | pass (3 of 3 checks) |
 
-A test passes when every one of its checks passes: 39 checks in each format, all passed. The certification took 95 seconds. The
-suite's own output names a commit of its copy of the code, not an AML commit. C9 passes with this agent's own text for an expired
-question, which differs from the platform's example (see "The agent" above).
+C1's checks: the task finishes and its result is the model's answer, the agent server started in the sandbox on the project's commit
+and the certified revision, and `/health` reports the versions. So each 1-line file loads in its framework's image and serves a turn.
+The suite's own output names a commit of its copy of the code, not an AML commit.
 
-Run it again with Docker running. The host needs Python 3 with the standard library only. `--code` is copied whole (only `.git`
-and `__pycache__` are left out), so give it a clean copy of the committed code, never a folder with `.venv/`. Keep `--out` outside
-the domino-agent-service clone; `PYTHONDONTWRITEBYTECODE=1` and `-B` keep the clone unchanged.
+On October 29, 2026, the hand-written LangGraph graph that `agent/graph.py` was then (AML commit `da10cd0`) passed C1 to C10 in both
+formats: 39 checks in each, in 95 seconds, on domino-agent-service `main` at `7561668`. That code is in this repo's git history.
+
+Run it again with Docker running, with domino-agent-service's own Python (its `.venv`). `--code` is copied whole (only `.git` and
+`__pycache__` are left out), so give it a clean copy of the committed code, never a folder with `.venv/`. Keep `--out` outside the
+domino-agent-service clone; `PYTHONDONTWRITEBYTECODE=1` and `-B` keep the clone unchanged. One run for each variant:
 
 ```
 mkdir /tmp/aml-code && git archive HEAD | tar -x -C /tmp/aml-code      # in this repo
 cd /path/to/domino-agent-service
-PYTHONDONTWRITEBYTECODE=1 python3 -B tests/certify/certify.py --framework langgraph --entrypoint agent/graph.py:build_graph \
-  --code /tmp/aml-code --out /tmp/aml-certify
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B tests/certify/certify.py --framework langgraph --entrypoint agent/graph.py:build_graph \
+  --code /tmp/aml-code --out /tmp/aml-certify-langgraph
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B tests/certify/certify.py --framework crewai --entrypoint agent/flow.py:build_flow \
+  --code /tmp/aml-code --out /tmp/aml-certify-crewai
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -B tests/certify/certify.py --framework domino-agui --entrypoint agent/handler.py:handler \
+  --code /tmp/aml-code --out /tmp/aml-certify-domino-agui
 ```
 
-For one test in one format, add `--only C5 --formats openai`. Run it again when the agent's code changes, or when the certified
-LangGraph Environment gets a new revision.
+For one test in one format, add `--only C5 --formats openai`. Run it again when an entry point changes, or when a certified
+Environment gets a new revision.
 
 ## Create the agent
 
 Create the agent in the platform App's wizard. `agent/register.py` does the same through the App's API, from the definition file
-`agent/definition.json`: use it when you want the definition in git, or when you don't use the UI. Both ways make the same agent:
-the framework lane, LangGraph at `agent/graph.py:build_graph`, the tool server `aml`, the client-side tools `aml_close_alert` and
-`aml_escalate_to_sar`, a Claude alias, a Domino Job on the certified LangGraph Environment, one required project input, project
-access `read`, data access `none`, the identity `triggering_user`, restricted access, and the AML rules as its system prompt.
+`agent/definition.json`: use it when you want the definition in git, or when you don't use the UI. Create one variant, or all three:
+each variant is its own agent, with its own name.
+
+| Variant | Name | Framework (in the wizard) | Entry point | `register.py --framework` |
+|---|---|---|---|---|
+| LangGraph | `AML alert triage` | LangGraph | `agent/graph.py:build_graph` | `langgraph` (the default) |
+| CrewAI | `AML alert triage (CrewAI)` | CrewAI | `agent/flow.py:build_flow` | `crewai` |
+| Anthropic SDK | `AML alert triage (Domino AG-UI SDK)` | Domino AG-UI SDK | `agent/handler.py:handler` | `domino-agui` |
+
+The LangGraph variant keeps the name and the entry point that it had, so the agent that exists stays that variant. The name's
+suffix is the wizard's name for the framework.
+
+Both ways make the same agent for a variant: the framework lane, the variant's framework and entry point, the tool server `aml`,
+the client-side tools `aml_close_alert` and `aml_escalate_to_sar`, a Claude alias, a Domino Job on an Environment certified for
+the framework, one required project input, project access `read`, data access `none`, the identity `triggering_user`, restricted
+access, and the AML rules as its system prompt. Only the name, the framework, the entry point and the Environment differ between
+the variants.
 
 The platform App (`agent-framework-smoke`) has extended identity (domino-agent-service #138): each person opens it as themselves,
 with no view-as switch and no console command.
@@ -305,23 +336,31 @@ with no view-as switch and no console command.
    agent's owner and editors, minus the analyst who asked. Any one of them approves or denies: one decision is enough.
 3. Each reviewer can open the platform App. When its access is "Invited users only", invite them. The first time a person opens
    the App, Domino shows a consent page: they allow it.
+4. The platform App has an Environment certified for the variant's framework, on a revision with the ready-made agents
+   (domino-agui 0.2.0; see "The agent"). The wizard lists the certified Environments, and the script asks the App for them
+   (`GET api/platform/certified-environments`). On cloud-dogfood, domino-agent-service #155 certifies the new revisions of the
+   three Environments. Until then, CrewAI has no certified Environment there, so the CrewAI variant can't be created.
 
 ### In the wizard
 
-Open the platform App as the analyst. You are the agent's owner.
+Open the platform App as the analyst. You are the agent's owner. Do these steps once for each variant that you create, with the
+variant's name, framework and entry point from the table above.
 
 1. **Agents > New agent.**
-2. **Basics.** Click "Your own agent code" (the framework lane). Name: `AML alert triage`. Where can it work: Any project. Keep
-   "Project required as trigger input" on. Next.
+2. **Basics.** Click "Your own agent code" (the framework lane). Name: the variant's name, for example `AML alert triage (CrewAI)`.
+   Where can it work: Any project. Keep "Project required as trigger input" on. Next.
 3. **Model & runtime.**
-   - Framework: LangGraph. Entry point: `agent/graph.py:build_graph`.
-   - Environment: the certified LangGraph Environment (on cloud-dogfood, `6ae24cb24abd2d2682011252`). It is already selected.
+   - Framework: the variant's framework (LangGraph, CrewAI or Domino AG-UI SDK). Entry point: the variant's, for example
+     `agent/flow.py:build_flow`. The field's example is the same path.
+   - Environment: the Environment certified for that framework. When the App has exactly one, it is already selected. With none,
+     the list is empty and Next stays off (see "Before you create it").
    - Model: `sonnet`. Model access: Whoever triggers it.
    - Max minutes per Job: 30. Max model calls per Job: 20. Wait for answers: 0 (a question to the analyst ends the Job at once,
      and the answer starts a new Job).
    - Next.
 4. **Instructions & behaviors.**
-   - System prompt: paste the AML rules. They are the definition file's `systemPrompt`. To print them, run this in the repo:
+   - System prompt: paste the AML rules. They are the definition file's `systemPrompt`, the same for each variant. To print them,
+     run this in the repo:
 
      ```
      python3 -c "import json; print(json.load(open('agent/definition.json'))['systemPrompt'])"
@@ -338,10 +377,11 @@ Open the platform App as the analyst. You are the agent's owner.
    - Tool servers: tick `aml` (All tools).
    - Client-side tools: the wizard picks `aml_escalate_to_sar` by itself, because it needs approval. Add `aml_close_alert`.
    - Next.
-7. **Review.** The Framework card shows LangGraph, `agent/graph.py:build_graph`, the Environment and its revision, and both
-   client-side tools. Click **Create agent**. The agent's page opens.
+7. **Review.** The Framework card shows the framework, the entry point, the Environment and its revision, and both client-side
+   tools. Click **Create agent**. The agent's page opens.
 
-To change the agent later, open its page and click Edit. The lane and the framework can't change after the agent is created.
+To change the agent later, open its page and click Edit. The lane and the framework can't change after the agent is created: for
+another framework, create that variant.
 
 ### Created in the wizard, November 10, 2026
 
@@ -364,30 +404,39 @@ The operator walked these steps on cloud-dogfood. Every step passed.
 
 ### With the API: `register.py`
 
-The agent's definition is one file in git: `agent/definition.json`. It is the body that the platform App's `POST api/agents` takes.
-A change to the definition is a commit, and the agent page shows the system prompt.
+The agent's definition is one file in git: `agent/definition.json`, for the three variants. It is the body that the platform App's
+`POST api/agents` takes, less what the script sets for a variant: the name's suffix, the framework block's name and entry point, and
+the Environment. A change to the definition is a commit, and the agent page shows the system prompt.
 
-`agent/register.py` creates the agent on the platform App, or updates it when the App has an agent with its name. It uses the stdlib
-only, so it runs on the Domino Standard Environment. Do the steps of "Before you create it" first.
+`agent/register.py` creates one variant on the platform App, or updates it when the App has an agent with the variant's name. It uses
+the stdlib only, so it runs on the Domino Standard Environment. Do the steps of "Before you create it" first.
 
 #### Run it
 
 In a Domino Workspace, in this repo:
 
 ```
-python agent/register.py --print --reviewer <reviewer>
+python agent/register.py --print --reviewer <reviewer> --framework crewai
 python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer>
+python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer> --framework crewai
+python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer> --framework domino-agui
 python agent/register.py --app https://<apps host>/apps-internal/<App ID> --reviewer <reviewer 1> --reviewer <reviewer 2>
 ```
 
+- `--framework langgraph|crewai|domino-agui` is the variant (the table in "Create the agent"): the name's suffix, and the framework
+  block's name and entry point. The client-side tools are the same for each. Without it, the script creates or updates the
+  LangGraph variant, `AML alert triage`, as before.
+
 - `--reviewer` is required. Give it once for each reviewer. Each run sets the whole `editors` list, so name every reviewer each
   time: a reviewer that you leave out is no longer an editor. An editor can also change the agent, not only approve.
-- `--print` shows the agent body that the script sends (the file, with you in its `users` list, the reviewers in its `editors`
-  list, and the overrides). It calls nothing.
+- `--print` shows the agent body that the script sends (the file as the variant, with you in its `users` list, the reviewers in its
+  `editors` list, and the overrides). It calls nothing, so it doesn't ask the App for the Environment: without `--environment`, the
+  Environment is a placeholder that names `GET api/platform/certified-environments`.
 - `--app` is the platform App's URL as Domino gives it. A vanity URL set through the API doesn't route. A URL that you copy from
   the browser (with `#/...`) works too.
 - `--model <alias>` uses another LLM Gateway alias. The default is `sonnet`. The smoke test runs on `haiku`.
-- `--environment <ID>` uses another certified LangGraph Environment. The default is `6ae24cb24abd2d2682011252`.
+- `--environment <ID>` uses that Environment, and the script doesn't ask the App for one. It must be certified for the variant's
+  framework. Without it, the script takes the certified one that the App lists (step 2 below).
 - `--view-as` is for a platform App without extended identity (`smoke.py deploy --no-extended-identity`). The Apps proxy then
   changes your token on its way to the App, so the script also sends your user name in the header `X-Prototype-View-As`, and the
   App's view-as switch must be on: set the project variable `SMOKE_ALLOW_VIEW_AS=1` in the project that holds the App, then
@@ -398,9 +447,13 @@ that Domino accepts. Your name comes from `DOMINO_STARTING_USERNAME`, else from 
 
 1. `GET api/me`: the App knows you by your token (with `--view-as`: by the header, with its view-as switch on). The script prints
    how the App knows you.
-2. `GET api/agents`: it finds the agent by its name.
-3. `POST api/agents` when there is none, else `PUT api/agents/<id>`, with the whole body.
-4. It prints the agent's ID and its page: `<App URL>/#/agents/<id>`.
+2. `GET api/platform/certified-environments` (not with `--environment`): the App's certified Environments, one entry for each
+   Environment and framework. The script takes the last one listed for the variant's framework (for a revision, the App also takes
+   the last one listed), and prints its name, ID and revision. When the App lists none for the framework, the script stops and
+   prints the App's answer.
+3. `GET api/agents`: it finds the agent by the variant's name.
+4. `POST api/agents` when there is none, else `PUT api/agents/<id>`, with the whole body.
+5. It prints the agent's ID and its page: `<App URL>/#/agents/<id>`.
 
 The person who runs the script is the analyst: it puts you in the agent's `users` list. You are also the agent's owner when the
 script creates it. The reviewers are in its `editors` list.
@@ -415,7 +468,9 @@ script creates it. The reviewers are in its `editors` list.
 | With `--view-as`: the App didn't take the header | Something between you and the App drops `X-Prototype-View-As`. Tell the platform team |
 | A redirect (the Apps proxy's sign-in or consent page) | Open the App once in your browser, then run the script again |
 | `toolServers names aml, which isn't in the tool server list` | Add the tool server `aml` (step 1 of "Before you create it"), then run the script again |
-| `Environment ... isn't certified for langgraph` | Run it again with `--environment` and an ID that the App lists |
+| The App has no Environment certified for the framework (it prints the App's list) | An operator certifies an Environment revision for that framework and adds it to `AGENT_CERTIFIED_ENVIRONMENTS` (on cloud-dogfood, domino-agent-service #155). Then run the script again |
+| The App didn't list its certified Environments | The App is older than the list (`GET api/platform/certified-environments`): publish the current one, or give `--environment` |
+| `Environment ... isn't certified for <framework>` (with `--environment`) | Run it again without `--environment`: the script then takes the certified one |
 | Two agents with its name | Delete all but one on the App, then run the script again |
 | An agent with its name that you can't change | Ask its owner to add you as an editor, or to delete it |
 | Any other refusal | The script prints the App's reason (`{"detail": ...}`) |
@@ -431,8 +486,9 @@ The script follows the platform App (domino-agent-service `origin/main`):
   `acting` uses the LLM Gateway grants of the identity that the agent acts as (the analyst), and needs no stored token.
 - **The tool server first.** The App refuses the agent until `aml` is on its tool server list. So the operator adds `aml` on the Tool
   servers page before the script runs.
-- **The Environment's revision.** The definition names only the Environment ID. The App picks the revision from its certified list
-  (`AGENT_CERTIFIED_ENVIRONMENTS`), so a revision in the file would do nothing.
+- **The Environment and its revision.** The definition names no Environment: the script sets the variant's Environment ID, from the
+  App's certified list (or `--environment`). The App picks the revision from its certified list (`AGENT_CERTIFIED_ENVIRONMENTS`), so
+  a revision in the body would do nothing.
 - **An update keeps old keys.** `PUT api/agents/<id>` replaces each key that the body has, and keeps the others. The script sends the
   whole file, so every key in it is replaced. A key that you remove from the file stays on the App.
 - **Names aren't unique.** The App allows two agents with one name. The script stops when it finds two.
@@ -448,11 +504,14 @@ python tests/check_registration.py
 ```
 
 A stdlib script, one line per case, with a non-zero exit code on any failure. It checks every field of the definition and every AML
-rule in its system prompt, the print mode, and the script's calls to a small fake App on 127.0.0.1: create and update with your
-token only (extended identity) and with `--view-as`, a 401 in each way, the App that sees another person, the view-as switch off
-(both answers), the header dropped, a redirect, a refused request, two agents with one name, an agent you can't change, and your
-name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host. The
-real calls are proven in the live check.
+rule in its system prompt, each entry point's one line (and that the repo has no other agent code), the print mode for each
+`--framework` (with a placeholder Environment, and no call), and the script's calls to a small fake App on 127.0.0.1: create and
+update with your token only (extended identity) and with `--view-as`, each variant with the Environment that the App lists last for
+its framework, `--environment` (no list asked), no certified Environment, an App without the list, an update found by the variant's
+name, a 401 in each way, the App that sees another person, the view-as switch off (both answers), the header dropped, a redirect, a
+refused request (with the hint for an Environment that isn't certified), two agents with one name, an agent you can't change, and
+your name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host.
+The real calls are proven in the live check.
 
 ## Live check
 

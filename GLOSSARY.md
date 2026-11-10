@@ -1,7 +1,7 @@
 # AML alert triage
 
-A reference workflow for the Domino Agent Service: a LangGraph agent triages transaction monitoring alerts with a fake
-case-management system, and an escalation needs a second person.
+A reference workflow for the Domino Agent Service: an agent (on LangGraph, CrewAI or the Anthropic SDK) triages transaction
+monitoring alerts with a fake case-management system, and an escalation needs a second person.
 
 ## Language
 
