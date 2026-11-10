@@ -168,7 +168,7 @@ def certified_environment(base, view_as, framework):
     status, data = call(base, view_as, "GET", CERTIFIED)
     if status != 200 or not isinstance(data, list):
         raise Stop(f"The App didn't list its certified Environments (GET {CERTIFIED}: {reason(status, data)}). Run this again with "
-                   "--environment and the ID of an Environment that the App certifies for " + f"{framework}.")
+                   f"--environment and the ID of an Environment that the App certifies for {framework}.")
     listed = [c for c in data if isinstance(c, dict) and c.get("framework") == framework and c.get("environmentId")]
     if not listed:
         raise Stop(f"The App has no Environment certified for {framework}, so it can't run this variant. GET {CERTIFIED} answered:\n"
