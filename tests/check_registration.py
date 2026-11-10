@@ -373,6 +373,18 @@ check("with an agent of its name, it updates that one: PUT api/agents/<id> with 
       code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000aa", body_with(model="haiku"))], (code, writes(log), err[:300]))
 check("...and it prints that agent's ID and page URL (an App URL copied from the browser works too)",
       f"{APP}/#/agents/agt_00000000aa" in out, out)
+variants = [{"id": "agt_00000000ee", "name": "AML alert triage (CrewAI)", "canEdit": True},
+            {"id": "agt_00000000aa", "name": "AML alert triage", "canEdit": True}]
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"agents": variants})
+check("with no --framework, it updates the agent that exists (the LangGraph one, named 'AML alert triage'), not the CrewAI variant",
+      code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000aa", body_with())], (code, writes(log), err[:300]))
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", state={"agents": variants})
+check("--framework crewai updates the CrewAI variant, found by its own name",
+      code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000ee", body_with(framework="crewai"))],
+      (code, writes(log), err[:300]))
+code, out, err, log = register("--app", APP, "--framework", "domino-agui", "--reviewer", "reviewer1", state={"agents": variants})
+check("--framework domino-agui with no agent of its name: it creates one, and changes neither of the others",
+      code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(framework="domino-agui"))], (code, writes(log), err[:300]))
 
 DOMINO_401 = (401, {"detail": "Domino didn't accept that token. Send a current JWT or PAT as Authorization: Bearer <token>, "
                               "or an API key as X-Domino-Api-Key."})
