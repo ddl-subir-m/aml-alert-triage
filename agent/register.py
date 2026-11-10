@@ -41,7 +41,8 @@ NO_EXTENDED_IDENTITY = ("It does that when the App runs without extended identit
 HINTS = [   # (a part of the App's reason, what to do)
     ("isn't in the tool server list", "Add the case-management App as the tool server aml on the App's Tool servers page first "
                                       "(README, Create the agent), then run this again."),
-    ("isn't certified for langgraph", "Run this again with --environment and one of the Environment IDs that the App lists."),
+    ("isn't certified for", "Run this again without --environment: the script then takes the one that the App certifies "
+                            f"(GET {CERTIFIED})."),
 ]
 
 
@@ -234,7 +235,7 @@ def main():
     ap.add_argument("--framework", choices=list(VARIANTS), default="langgraph",
                     help="the variant to create: its framework and entry point, and its name's suffix (default: langgraph, no suffix)")
     ap.add_argument("--model", help="an LLM Gateway alias, instead of the file's")
-    ap.add_argument("--environment", help="a certified LangGraph Environment's ID, instead of the file's")
+    ap.add_argument("--environment", help="the ID of an Environment certified for the framework, instead of the one the App lists last")
     ap.add_argument("--view-as", action="store_true",
                     help="the App runs without extended identity: send your name in its view-as header (its view-as switch must be on)")
     ap.add_argument("--print", action="store_true", dest="print_only", help="show the agent body, and call nothing")

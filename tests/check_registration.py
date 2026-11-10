@@ -351,6 +351,18 @@ check("no certified Environment for the framework: it stops, says so, prints the
 code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", state={"certified": (200, [])})
 check("...an empty list: it stops the same way, and shows the empty answer",
       code == 1 and "crewai" in err and "[]" in err and not writes(log), (code, err[:600], writes(log)))
+OWN = ("--environment", "6ae2ffffffffffffffffffff")
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", *OWN)
+check("--environment names the Environment: it doesn't ask GET api/platform/certified-environments, and sends that ID",
+      code == 0 and app_calls(log) == [c for c in CREATE if "certified" not in c[1]]
+      and writes(log) == [("POST", "/app/api/agents", body_with(framework="crewai", environment="6ae2ffffffffffffffffffff"))],
+      (code, app_calls(log), writes(log), err[:300]))
+NOT_CERTIFIED = ("Environment 6ae2ffffffffffffffffffff isn't certified for crewai: set execution.environment.id to one that "
+                 "AGENT_CERTIFIED_ENVIRONMENTS lists for it (6ae2cccccccccccccccccccc).")   # the App's text (framework.py)
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", *OWN,
+                               state={"refuse": (400, {"detail": NOT_CERTIFIED})})
+check("...and when the App refuses it as not certified: it stops with the App's reason, and says to run it without --environment",
+      code == 1 and NOT_CERTIFIED in err and "without --environment" in err, (code, err[:600]))
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"certified": (404, {"detail": "Not Found"})})
 check("the App doesn't answer GET api/platform/certified-environments (404): it stops with the App's reason, and writes nothing",
       code == 1 and "certified-environments" in err and "404" in err and not writes(log), (code, err[:600], writes(log)))
