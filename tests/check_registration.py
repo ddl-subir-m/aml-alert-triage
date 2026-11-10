@@ -97,6 +97,32 @@ gateway = {"domino_", "get_project", "list_projects", "list_datasets", "get_data
 check("the prompt names no Domino gateway tool", not [g for g in gateway if g in prompt], [g for g in gateway if g in prompt])
 
 
+# ------------------------------------------------------------------------------------------------------------------- the entry points
+def text(path):
+    try:
+        return path.read_text()
+    except OSError as e:
+        return f"<{e}>"
+
+
+ENTRY_POINTS = {   # the file: its one line, the ready-made agent of domino-agui (the helper library) for one framework
+    "graph.py": "from domino_agui.langgraph import build_graph\n",
+    "flow.py": "from domino_agui.crewai import build_flow\n",
+    "handler.py": "from domino_agui.loop import handler\n",
+}
+for f, line in ENTRY_POINTS.items():
+    check(f"agent/{f} is one line: {line.strip()}", text(ROOT / "agent" / f) == line, text(ROOT / "agent" / f)[:300])
+agent_files = sorted(p.name for p in (ROOT / "agent").iterdir() if p.is_file() and not p.name.startswith("."))
+check("agent/ holds the three entry points, the definition and the script, and nothing else",
+      agent_files == sorted([*ENTRY_POINTS, "definition.json", "register.py"]), agent_files)
+FRAMEWORK_IMPORT = re.compile(r"^\s*(from|import)\s+(domino_agui|langgraph|langchain\w*|crewai|litellm|anthropic|openai|ag_ui\w*)\b", re.M)
+contract_code = sorted(str(p.relative_to(ROOT)) for p in ROOT.rglob("*.py")
+                       if not any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(ROOT).parts)
+                       and p.parent != ROOT / "agent" and FRAMEWORK_IMPORT.search(text(p)))
+check("no other Python file imports domino-agui or an agent framework (the repo has no other agent contract code)",
+      contract_code == [], contract_code)
+
+
 # ------------------------------------------------------------------------------------------------------------------- the fake App
 BEARER = "Authorization bearer (JWT or PAT, verified with Domino)"   # how the App knows you by your token (its api/me `source`)
 
