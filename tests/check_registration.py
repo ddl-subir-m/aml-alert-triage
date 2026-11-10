@@ -199,9 +199,21 @@ def register(*args, state=None, env=None):
     return r.returncode, r.stdout, r.stderr, list(Fake.log)
 
 
+CLIENT_TOOLS = ["aml_close_alert", "aml_escalate_to_sar"]
+VARIANTS = {   # --framework: the agent's name (the wizard's label for the framework as its suffix) and its framework block
+    "langgraph": ("AML alert triage",
+                  {"name": "langgraph", "entrypoint": "agent/graph.py:build_graph", "clientTools": CLIENT_TOOLS}),
+    "crewai": ("AML alert triage (CrewAI)",
+               {"name": "crewai", "entrypoint": "agent/flow.py:build_flow", "clientTools": CLIENT_TOOLS}),
+    "domino-agui": ("AML alert triage (Domino AG-UI SDK)",
+                    {"name": "domino-agui", "entrypoint": "agent/handler.py:handler", "clientTools": CLIENT_TOOLS}),
+}
+
+
 def body_with(**changes):
-    """The definition file with the people and the overrides the script must add (expected values, written out here)."""
+    """The definition file with the variant, the people and the overrides the script must add (expected values, written out here)."""
     b = json.loads(DEFINITION.read_text())
+    b["name"], b["framework"] = VARIANTS[changes.get("framework", "langgraph")]
     b["access"] = {"mode": "restricted", "users": changes.get("users", ["analyst1"]), "editors": changes.get("editors", ["reviewer1"])}
     if "model" in changes:
         b["model"] = {**b["model"], "models": [changes["model"]]}
@@ -239,6 +251,16 @@ check("...no reviewer can be you, even with others: it stops before any call, an
       code != 0 and "analyst1" in err and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", " ")
 check("...an empty --reviewer stops it", code != 0 and "empty" in err and not log and not out, (code, out[:200], err[:300]))
+for fw in ("crewai", "domino-agui", "langgraph"):
+    code, out, err, log = register("--print", "--framework", fw, "--reviewer", "reviewer1", "--environment", "6ae2ffffffffffffffffffff",
+                                   "--app", APP)
+    check(f"--print --framework {fw}: the name {VARIANTS[fw][0]!r}, the framework {fw} at {VARIANTS[fw][1]['entrypoint']} with the "
+          "same client-side tools, and the rest of the definition as it is; it calls nothing",
+          code == 0 and parsed(out) == body_with(framework=fw, environment="6ae2ffffffffffffffffffff") and log == [],
+          (code, out[:300], err[:300], log))
+code, out, err, log = register("--print", "--framework", "smolagents", "--reviewer", "reviewer1")
+check("--framework takes langgraph, crewai or domino-agui only: another one stops it (exit 2) before any call",
+      code == 2 and "--framework" in err and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print")
 check("the reviewer's name is required", code != 0 and "--reviewer" in err and not log, (code, err[:300]))
 code, out, err, log = register("--reviewer", "reviewer1")
@@ -281,6 +303,12 @@ code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--revie
 check("with two reviewers, it sends both in the agent's editors list, and prints both names",
       code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(editors=["reviewer1", "reviewer2"]))]
       and "reviewer1, reviewer2 as its editors" in out, (code, writes(log), out[:300], err[:300]))
+
+for fw in ("crewai", "domino-agui"):
+    code, out, err, log = register("--app", APP, "--framework", fw, "--reviewer", "reviewer1", "--environment", "6ae2ffffffffffffffffffff")
+    check(f"--framework {fw}: it creates the agent {VARIANTS[fw][0]!r} with the {fw} framework block and its entry point",
+          code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(framework=fw, environment="6ae2ffffffffffffffffffff"))],
+          (code, writes(log), err[:300]))
 
 agents = [{"id": "agt_00000000aa", "name": NAME, "canEdit": True}, {"id": "agt_00000000bb", "name": "Another agent", "canEdit": True}]
 code, out, err, log = register("--app", APP + "/#/agents", "--reviewer", "reviewer1", "--model", "haiku", state={"agents": agents})

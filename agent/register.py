@@ -27,6 +27,11 @@ import urllib.request
 from pathlib import Path
 
 DEFINITION = Path(__file__).resolve().parent / "definition.json"
+VARIANTS = {   # --framework -> (the name's suffix: the wizard's label for the framework, the 1-line file's entry point)
+    "langgraph": ("", "agent/graph.py:build_graph"),   # no suffix: the agent that exists keeps its name, so an update finds it
+    "crewai": (" (CrewAI)", "agent/flow.py:build_flow"),
+    "domino-agui": (" (Domino AG-UI SDK)", "agent/handler.py:handler"),
+}
 SWITCH_OFF = ("Turn on the App's view-as switch: in the project that holds the App (agent-framework-smoke), set the project variable "
               "SMOKE_ALLOW_VIEW_AS=1, then restart the App (publish a new version). The App's first log line then shows "
               "AGENT_ALLOW_VIEW_AS=1.")
@@ -43,9 +48,13 @@ class Stop(Exception):
     """Why the script stops, for the person who runs it."""
 
 
-def agent_body(reviewers, me, model=None, environment=None):
-    """The definition file, with you (the analyst) in its users list, the reviewers in its editors list, and the overrides."""
+def agent_body(reviewers, me, model=None, environment=None, framework="langgraph"):
+    """The definition file as the variant for `framework` (the name's suffix, the framework block's name and entry point), with you
+    (the analyst) in its users list, the reviewers in its editors list, and the overrides."""
     b = json.loads(DEFINITION.read_text())
+    suffix, entrypoint = VARIANTS[framework]
+    b["name"] += suffix
+    b["framework"] = {**b["framework"], "name": framework, "entrypoint": entrypoint}
     b["access"] = {**b["access"], "users": [me], "editors": list(reviewers)}
     if model:
         b["model"] = {**b["model"], "models": [model]}
@@ -198,6 +207,8 @@ def main():
     ap.add_argument("--app", help="the platform App's URL, as Domino gives it (https://<apps host>/apps-internal/<App ID>)")
     ap.add_argument("--reviewer", required=True, action="append",
                     help="a reviewer's Domino user name: an editor of the agent, who approves escalations. Give it once for each reviewer")
+    ap.add_argument("--framework", choices=list(VARIANTS), default="langgraph",
+                    help="the variant to create: its framework and entry point, and its name's suffix (default: langgraph, no suffix)")
     ap.add_argument("--model", help="an LLM Gateway alias, instead of the file's")
     ap.add_argument("--environment", help="a certified LangGraph Environment's ID, instead of the file's")
     ap.add_argument("--view-as", action="store_true",
@@ -217,7 +228,7 @@ def main():
         if me in reviewers:
             ap.error(f"a reviewer can't be you ({me}): an escalation needs a second person to approve it. Remove --reviewer {me}, and "
                      "name other Domino users.")
-        body = agent_body(reviewers, me, (a.model or "").strip(), (a.environment or "").strip())
+        body = agent_body(reviewers, me, (a.model or "").strip(), (a.environment or "").strip(), a.framework)
         if a.print_only:
             print(json.dumps(body, indent=2))
             return 0
