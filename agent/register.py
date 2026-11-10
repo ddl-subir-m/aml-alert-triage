@@ -1,7 +1,8 @@
 """Creates the AML alert triage agent on the platform App from agent/definition.json, or updates it when the App has an agent of that
-name. Run it in a Domino Workspace: it acts as you. It uses the stdlib only, so it runs on the Domino Standard Environment.
+name: the API way to do what the App's wizard does (README, Create the agent). Run it in a Domino Workspace: it acts as you. It uses
+the stdlib only, so it runs on the Domino Standard Environment.
 
-  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
+  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID] [--view-as]
   python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
 
 It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewers in its editors
@@ -9,12 +10,13 @@ list (the approvers of an escalation are the owner and the editors, minus the an
 --reviewer once for each reviewer. Each run sets the whole editors list, so name every reviewer each time. --print shows the agent body
 and calls nothing.
 
-How it calls the App: the Workspace's token (for the Apps proxy) and the header X-Prototype-View-As with your own Domino user name. With
-extended identity off, the Apps proxy changes the token, so the App must take your name from the header: its view-as switch must be on
-(SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, finds the agent by name (GET api/agents), then sends
-POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and page URL.
+How it calls the App: with the Workspace's token. The platform App has extended identity, so the Apps proxy gives it a token of yours
+that Domino accepts. --view-as is for an App without extended identity (smoke.py deploy --no-extended-identity): the Apps proxy then
+changes the token, so the script also sends your own Domino user name in the header X-Prototype-View-As, and the App's view-as switch
+must be on (SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, finds the agent by name (GET api/agents), then
+sends POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and page URL.
 
-Exit code: 0 when the agent is registered (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is wrong.
+Exit code: 0 when the agent is created or updated (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is wrong.
 """
 import argparse
 import json
@@ -28,9 +30,11 @@ DEFINITION = Path(__file__).resolve().parent / "definition.json"
 SWITCH_OFF = ("Turn on the App's view-as switch: in the project that holds the App (agent-framework-smoke), set the project variable "
               "SMOKE_ALLOW_VIEW_AS=1, then restart the App (publish a new version). The App's first log line then shows "
               "AGENT_ALLOW_VIEW_AS=1.")
+NO_EXTENDED_IDENTITY = ("It does that when the App runs without extended identity: publish it with extended identity (smoke.py deploy), "
+                        "or turn its view-as switch on and run this again with --view-as.")
 HINTS = [   # (a part of the App's reason, what to do)
     ("isn't in the tool server list", "Add the case-management App as the tool server aml on the App's Tool servers page first "
-                                      "(README, Register the agent), then run this again."),
+                                      "(README, Create the agent), then run this again."),
     ("isn't certified for langgraph", "Run this again with --environment and one of the Environment IDs that the App lists."),
 ]
 
@@ -120,9 +124,11 @@ def my_name():
 
 
 # ------------------------------------------------------------------------------------------------------------------------- the App
-def call(base, me, method, path, body=None):
-    """The platform App, as you: the Workspace's token for the Apps proxy, your name in the view-as header for the App."""
-    status, data, location = request(method, f"{base}/{path}", {"Authorization": f"Bearer {token()}", "X-Prototype-View-As": me}, body)
+def call(base, view_as, method, path, body=None):
+    """The platform App, as you: the Workspace's token and, for an App without extended identity, your name (`view_as`) in the view-as
+    header. `view_as` is None for an App with extended identity: it takes your token."""
+    headers = {"Authorization": f"Bearer {token()}", **({"X-Prototype-View-As": view_as} if view_as else {})}
+    status, data, location = request(method, f"{base}/{path}", headers, body)
     if 300 <= status < 400:
         raise Stop(f"{base} sent a redirect to {(location or '')[:150]}: that is the Apps proxy's sign-in or consent page. Open the "
                    "App once in your browser, then run this again.")
@@ -133,8 +139,22 @@ def page(base, agent_id):
     return f"{base}/#/agents/{agent_id}"
 
 
+def check_me(base, me):
+    """The App (with extended identity) knows you by your token. -> how it knows you (its `source`)"""
+    status, data = call(base, None, "GET", "api/me")
+    if status == 401:
+        raise Stop(f"Domino didn't accept the token that the Apps proxy gave the App for you (GET api/me: {reason(status, data)}). "
+                   f"{NO_EXTENDED_IDENTITY}")
+    if status != 200 or not isinstance(data, dict):
+        raise Stop(f"GET api/me didn't answer as the App does ({reason(status, data)}): check the App's URL, and that the App runs.")
+    if data.get("userName") != me:
+        raise Stop(f"The App sees you as {data.get('userName')!r} through {data.get('source')!r}, not as {me!r}: run this in a "
+                   "Workspace that you started.")
+    return data.get("source")
+
+
 def check_view_as(base, me):
-    """The App has its view-as switch on and knows you by your name. -> how it knows you (its `source`)"""
+    """With --view-as: the App has its view-as switch on and knows you by your name. -> how it knows you (its `source`)"""
     status, data = call(base, me, "GET", "api/me")
     if status == 401:
         raise Stop(f"The App checked your token instead of the view-as header (GET api/me: {reason(status, data)}). It does that "
@@ -149,9 +169,9 @@ def check_view_as(base, me):
     return data.get("source")
 
 
-def register(base, me, body):
+def register(base, view_as, body):
     """Creates the agent, or updates the one with its name. -> (verb, the App's answer)"""
-    status, data = call(base, me, "GET", "api/agents")
+    status, data = call(base, view_as, "GET", "api/agents")
     if status != 200 or not isinstance(data, list):
         raise Stop(f"The App didn't list its agents (GET api/agents: {reason(status, data)}).")
     same = [a for a in data if isinstance(a, dict) and a.get("name") == body["name"]]
@@ -163,9 +183,9 @@ def register(base, me, body):
         raise Stop(f"The agent {body['name']!r} exists ({page(base, same[0].get('id'))}), and you can't change it: ask {owner} to "
                    "add you as an editor, or to delete it.")
     if same:
-        verb, (status, data) = "Updated", call(base, me, "PUT", f"api/agents/{same[0]['id']}", body)
+        verb, (status, data) = "Updated", call(base, view_as, "PUT", f"api/agents/{same[0]['id']}", body)
     else:
-        verb, (status, data) = "Created", call(base, me, "POST", "api/agents", body)
+        verb, (status, data) = "Created", call(base, view_as, "POST", "api/agents", body)
     if status != 200 or not isinstance(data, dict) or not data.get("id"):
         why = reason(status, data)
         raise Stop(f"The App refused to {'update' if same else 'create'} the agent: {why}"
@@ -180,6 +200,8 @@ def main():
                     help="a reviewer's Domino user name: an editor of the agent, who approves escalations. Give it once for each reviewer")
     ap.add_argument("--model", help="an LLM Gateway alias, instead of the file's")
     ap.add_argument("--environment", help="a certified LangGraph Environment's ID, instead of the file's")
+    ap.add_argument("--view-as", action="store_true",
+                    help="the App runs without extended identity: send your name in its view-as header (its view-as switch must be on)")
     ap.add_argument("--print", action="store_true", dest="print_only", help="show the agent body, and call nothing")
     a = ap.parse_args()
     if not a.print_only and not a.app:
@@ -200,8 +222,9 @@ def main():
             print(json.dumps(body, indent=2))
             return 0
         base = a.app.split("#")[0].rstrip("/")
-        print(f"The App knows you as {me} (through the {check_view_as(base, me)}).", flush=True)
-        verb, agent = register(base, me, body)
+        source = check_view_as(base, me) if a.view_as else check_me(base, me)
+        print(f"The App knows you as {me} (through the {source}).", flush=True)
+        verb, agent = register(base, me if a.view_as else None, body)
     except Stop as e:
         print(e, file=sys.stderr)
         return 1
