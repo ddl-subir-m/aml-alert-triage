@@ -2,19 +2,26 @@
 name: the API way to do what the App's wizard does (README, Create the agent). Run it in a Domino Workspace: it acts as you. It uses
 the stdlib only, so it runs on the Domino Standard Environment.
 
-  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID] [--view-as]
-  python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
+  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--framework F] [--model ALIAS] [--environment ID] [--view-as]
+  python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--framework F] [--model ALIAS] [--environment ID]
+
+One definition, three variants: --framework langgraph (the default), crewai or domino-agui sets the framework block's name and entry
+point (agent/graph.py:build_graph, agent/flow.py:build_flow, agent/handler.py:handler: each a 1-line file that names the helper
+library's ready-made agent) and the name's suffix, the wizard's label for the framework: "AML alert triage" (no suffix for LangGraph,
+so an update finds the agent that exists), "AML alert triage (CrewAI)", "AML alert triage (Domino AG-UI SDK)".
 
 It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewers in its editors
 list (the approvers of an escalation are the owner and the editors, minus the analyst who asked: any one of them decides). Give
 --reviewer once for each reviewer. Each run sets the whole editors list, so name every reviewer each time. --print shows the agent body
-and calls nothing.
+and calls nothing: without --environment, its Environment is a placeholder.
 
 How it calls the App: with the Workspace's token. The platform App has extended identity, so the Apps proxy gives it a token of yours
 that Domino accepts. --view-as is for an App without extended identity (smoke.py deploy --no-extended-identity): the Apps proxy then
 changes the token, so the script also sends your own Domino user name in the header X-Prototype-View-As, and the App's view-as switch
-must be on (SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, finds the agent by name (GET api/agents), then
-sends POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and page URL.
+must be on (SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, then takes the Environment: --environment,
+else the last one that GET api/platform/certified-environments lists for the framework (it stops when there is none). It finds the
+agent by name (GET api/agents), then sends POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and
+page URL.
 
 Exit code: 0 when the agent is created or updated (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is wrong.
 """

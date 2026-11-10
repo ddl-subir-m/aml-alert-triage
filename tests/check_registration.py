@@ -1,8 +1,10 @@
-"""The agent's definition (agent/definition.json) and the script that creates the agent through the App's API (agent/register.py), seen
-from outside: the file as the platform App receives it, the script's print mode, and the script's calls to a small fake App, with
-extended identity (your token) and with --view-as (your name in the view-as header). No Domino host: the fake App on
-127.0.0.1 also serves the Workspace's token and Domino's /api/users/v1/self. The script runs with python -S (no site-packages), so a
-package outside the stdlib fails the check. The real calls are proven in the live check.
+"""The agent's definition (agent/definition.json), its three 1-line entry points, and the script that creates the agent through the
+App's API (agent/register.py), seen from outside: the file as the platform App receives it, each entry point's one line, the script's
+print mode for each --framework, and the script's calls to a small fake App, with extended identity (your token) and with --view-as
+(your name in the view-as header), including its certified Environments (GET api/platform/certified-environments). No Domino host:
+the fake App on 127.0.0.1 also serves the Workspace's token and Domino's /api/users/v1/self. The script runs with python -S (no
+site-packages), so a package outside the stdlib fails the check. The real calls are proven in the live check. That the 1-line files
+load in the certified Environments is certification's part (README, Certification).
 
   python tests/check_registration.py
 """
