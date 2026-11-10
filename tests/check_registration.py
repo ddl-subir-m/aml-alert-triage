@@ -1,5 +1,6 @@
-"""The agent's definition (agent/definition.json) and its registration script (agent/register.py), seen from outside: the file as the
-platform App receives it, the script's print mode, and the script's calls to a small fake App. No Domino host: the fake App on
+"""The agent's definition (agent/definition.json) and the script that creates the agent through the App's API (agent/register.py), seen
+from outside: the file as the platform App receives it, the script's print mode, and the script's calls to a small fake App, with
+extended identity (your token) and with --view-as (your name in the view-as header). No Domino host: the fake App on
 127.0.0.1 also serves the Workspace's token and Domino's /api/users/v1/self. The script runs with python -S (no site-packages), so a
 package outside the stdlib fails the check. The real calls are proven in the live check.
 
@@ -97,9 +98,13 @@ check("the prompt names no Domino gateway tool", not [g for g in gateway if g in
 
 
 # ------------------------------------------------------------------------------------------------------------------- the fake App
+BEARER = "Authorization bearer (JWT or PAT, verified with Domino)"   # how the App knows you by your token (its api/me `source`)
+
+
 class Fake(BaseHTTPRequestHandler):
     """The platform App behind its Apps path /app, the Workspace's token at /access-token, and Domino's /api/users/v1/self. `state` says
-    how the App answers; `log` holds each request: (method, path, headers, body)."""
+    how the App answers; `log` holds each request: (method, path, headers, body). Its api/me knows you by the view-as header when the
+    request has one (the switch on), else by your token (extended identity: the token's owner is Domino's /self)."""
     state, log = {}, []
 
     def log_message(self, *a):
@@ -125,8 +130,10 @@ class Fake(BaseHTTPRequestHandler):
         if self.path == "/api/users/v1/self":
             return self.answer(200, {"user": {"userName": s.get("self", "analyst1")}})
         if self.path == "/app/api/me":
-            return self.answer(*s.get("me", (200, {"userName": self.headers.get("X-Prototype-View-As"), "viewAsEnabled": True,
-                                                  "source": "prototype view-as switch"})))
+            view_as = self.headers.get("X-Prototype-View-As")
+            mine = ((200, {"userName": view_as, "viewAsEnabled": True, "source": "prototype view-as switch"}) if view_as
+                    else (200, {"userName": s.get("self", "analyst1"), "viewAsEnabled": False, "source": BEARER}))
+            return self.answer(*s.get("me", mine))
         if self.command == "GET" and self.path == "/app/api/agents":
             return self.answer(200, s.get("agents", []))
         if self.command in ("POST", "PUT") and s.get("refuse"):
@@ -228,10 +235,20 @@ check("with no agent of its name, it creates one: GET api/me, GET api/agents, th
       (code, app_calls(log), err[:300]))
 check("...with the whole agent body (you, the analyst, in its users list, the reviewer in its editors list)",
       writes(log) == [("POST", "/app/api/agents", body_with())], writes(log))
-check("...each call with the Workspace's token for the Apps proxy and your name in the view-as header",
-      all(h.get("authorization") == "Bearer tok-123" and h.get("x-prototype-view-as") == "analyst1"
-          for _, p, h, _ in log if p.startswith("/app/")), [(p, h.get("authorization"), h.get("x-prototype-view-as")) for _, p, h, _ in log])
+check("...each call with the Workspace's token and no view-as header (the App has extended identity: it takes your token)",
+      all(h.get("authorization") == "Bearer tok-123" and "x-prototype-view-as" not in h for _, p, h, _ in log if p.startswith("/app/")),
+      [(p, h.get("authorization"), h.get("x-prototype-view-as")) for _, p, h, _ in log])
 check("...and it prints the agent's ID and page URL", "agt_0123456789" in out and f"{APP}/#/agents/agt_0123456789" in out, out)
+check("...and how the App knows you (by your token)", BEARER in out, out)
+
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--view-as")
+check("--view-as (an App without extended identity): the same calls and body, each with the Workspace's token and your name in the "
+      "view-as header",
+      code == 0 and app_calls(log) == [("GET", "/app/api/me"), ("GET", "/app/api/agents"), ("POST", "/app/api/agents")]
+      and writes(log) == [("POST", "/app/api/agents", body_with())]
+      and all(h.get("authorization") == "Bearer tok-123" and h.get("x-prototype-view-as") == "analyst1"
+              for _, p, h, _ in log if p.startswith("/app/")),
+      (code, app_calls(log), [(p, h.get("x-prototype-view-as")) for _, p, h, _ in log], err[:300]))
 check("...and how the App knows you (the live check records it: the view-as switch)", "prototype view-as switch" in out, out)
 
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--reviewer", "reviewer2")
@@ -249,15 +266,25 @@ check("...and it prints that agent's ID and page URL (an App URL copied from the
 DOMINO_401 = (401, {"detail": "Domino didn't accept that token. Send a current JWT or PAT as Authorization: Bearer <token>, "
                               "or an API key as X-Domino-Api-Key."})
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"me": DOMINO_401})
-check("view-as switch off (the App checks the changed token: 401): it stops, says to set SMOKE_ALLOW_VIEW_AS=1, and sends nothing more",
+check("the App without extended identity (Domino refuses the changed token: 401): it stops, says to publish the App with extended "
+      "identity or use --view-as, and sends nothing more",
+      code == 1 and "extended identity" in err and "--view-as" in err and app_calls(log) == [("GET", "/app/api/me")],
+      (code, err[:400], app_calls(log)))
+other = {"me": (200, {"userName": "publisher", "viewAsEnabled": False, "source": "domino-username header (app)"})}
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state=other)
+check("the App sees you as someone else: it stops, names who, and writes nothing",
+      code == 1 and "publisher" in err and not writes(log), (code, err[:400], app_calls(log)))
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--view-as", state={"me": DOMINO_401})
+check("--view-as, the switch off (the App checks the changed token: 401): it stops, says to set SMOKE_ALLOW_VIEW_AS=1, and sends "
+      "nothing more",
       code == 1 and "SMOKE_ALLOW_VIEW_AS=1" in err and app_calls(log) == [("GET", "/app/api/me")], (code, err[:400], app_calls(log)))
-off = {"me": (200, {"userName": "analyst1", "viewAsEnabled": False, "source": "Authorization bearer (JWT or PAT, verified with Domino)"})}
-code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state=off)
-check("view-as switch off (api/me says viewAsEnabled false): it stops the same way",
+off = {"me": (200, {"userName": "analyst1", "viewAsEnabled": False, "source": BEARER})}
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--view-as", state=off)
+check("--view-as, the switch off (api/me says viewAsEnabled false): it stops the same way",
       code == 1 and "SMOKE_ALLOW_VIEW_AS=1" in err and app_calls(log) == [("GET", "/app/api/me")], (code, err[:400], app_calls(log)))
 dropped = {"me": (200, {"userName": "publisher", "viewAsEnabled": True, "source": "domino-username header (app)"})}
-code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state=dropped)
-check("the App didn't take the view-as header: it stops, names the header, and writes nothing",
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--view-as", state=dropped)
+check("--view-as, the App didn't take the view-as header: it stops, names the header, and writes nothing",
       code == 1 and "X-Prototype-View-As" in err and not writes(log), (code, err[:400], app_calls(log)))
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1",
                                state={"me": (302, None, [("Location", "https://apps.example/login?next=app")])})
@@ -284,7 +311,7 @@ code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"
 self_calls = [h.get("authorization") for m, p, h, _ in log if p == "/api/users/v1/self"]
 check("without DOMINO_STARTING_USERNAME, your name comes from Domino (GET /api/users/v1/self with the Workspace's token)",
       code == 0 and self_calls == ["Bearer tok-123"] and writes(log) == [("POST", "/app/api/agents", body_with(users=["analyst2"]))]
-      and all(h.get("x-prototype-view-as") == "analyst2" for _, p, h, _ in log if p.startswith("/app/")),
+      and all("x-prototype-view-as" not in h for _, p, h, _ in log if p.startswith("/app/")),
       (code, self_calls, err[:300]))
 
 print(f"\n{len(failed)} failed: {', '.join(failed)}" if failed else "\nall checks passed")

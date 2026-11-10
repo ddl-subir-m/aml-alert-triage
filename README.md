@@ -172,9 +172,8 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    `/mcp/` with a redirect that loses the App's path.
    The App's URL itself (without `mcp`) is the case board: open it in your browser to watch the alerts change.
 3. **Add the tool server.** Only the platform App's owner can change its tool server list: anyone else gets a 403. The owner is
-   the owner of the project that holds the App, or, on `agent-framework-smoke` with the view-as switch on, the person who
-   published it (domino-agent-service #82). So the owner does this step and the next two, in the browser, as themselves (the
-   list refuses the view-as switch). Open the platform App's Tool servers page. Add a tool server with the name `aml`, the MCP
+   the owner of the project that holds the App. So the owner does this step and the next two, in the browser. Open the platform
+   App's Tool servers page. Add a tool server with the name `aml`, the MCP
    URL from step 2, and no secret. Save it, reload the page, then edit `aml`: the form lists a tool server's tools only after
    it is saved. The URL is on this deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each
    call carries a short-lived token for the acting identity, and the Apps proxy checks that identity's access to the App. The
@@ -183,9 +182,9 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
 4. **Mark the tools.** On the same page, mark the three read tools as `read` (`get_alert`, `get_customer_profile`,
    `get_transactions`) and the two write tools as `write` (`close_alert`, `escalate_to_sar`).
 5. **Turn approval on for `escalate_to_sar` only.** An escalation then waits for a reviewer (maker-checker). A close needs no
-   approval. The approvers are the agent's owner and editors, minus the analyst who asked: see "Register the agent" below.
+   approval. The approvers are the agent's owner and editors, minus the analyst who asked: see "Create the agent" below.
 
-Then register the agent (below).
+Then create the agent (below).
 
 To load the seed again on Domino, call `POST /reset` on the App, from a Workspace in a project that can open it:
 
@@ -196,11 +195,6 @@ curl -s -X POST "https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/r
 
 #### Where the platform differs from these steps
 
-- **The platform App in a new browser tab.** `agent-framework-smoke` runs without extended identity. So in a new tab, each of its
-  pages except Tool servers answers "Domino didn't accept that token", and the view-as switch isn't on the page. Set the switch
-  once in each tab: on the App's page, open the browser's console and run
-  `sessionStorage.setItem('viewAs', '<your Domino user name>'); location.reload()`. The switch then shows at the top right, and
-  you can change it there (domino-agent-service #90).
 - **The Workspace token.** The `POST /reset` call above works: the live check (#7) measured that the Apps proxy takes a
   Workspace's token for an App with extended identity off.
 
@@ -291,29 +285,92 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B tests/certify/certify.py --framework langgr
 For one test in one format, add `--only C5 --formats openai`. Run it again when the agent's code changes, or when the certified
 LangGraph Environment gets a new revision.
 
-## Register the agent
+## Create the agent
 
-The agent's definition is one file in git: `agent/definition.json`. It is the body that the platform App's `POST api/agents` takes:
+Create the agent in the platform App's wizard. `agent/register.py` does the same through the App's API, from the definition file
+`agent/definition.json`: use it when you want the definition in git, or when you don't use the UI. Both ways make the same agent:
 the framework lane, LangGraph at `agent/graph.py:build_graph`, the tool server `aml`, the client-side tools `aml_close_alert` and
 `aml_escalate_to_sar`, a Claude alias, a Domino Job on the certified LangGraph Environment, one required project input, project
-access `read`, data access `none`, the identity `triggering_user`, restricted access, and the AML rules as its system prompt. A
-change to the definition is a commit, and the agent page shows the system prompt.
+access `read`, data access `none`, the identity `triggering_user`, restricted access, and the AML rules as its system prompt.
+
+The platform App (`agent-framework-smoke`) has extended identity (domino-agent-service #138): each person opens it as themselves,
+with no view-as switch and no console command.
+
+### Before you create it
+
+1. The case-management App is on the platform App's tool server list with the name `aml`, with its tools marked and approval on
+   `escalate_to_sar` (steps 3 to 5 of "Set it up on Domino"). The wizard offers only the tool servers on the list, and the App
+   refuses an agent that names another one.
+2. You know the Domino user name of each reviewer. A reviewer must be another person: the approvers of an escalation are the
+   agent's owner and editors, minus the analyst who asked. Any one of them approves or denies: one decision is enough.
+3. Each reviewer can open the platform App. When its access is "Invited users only", invite them. The first time a person opens
+   the App, Domino shows a consent page: they allow it.
+
+### In the wizard
+
+Open the platform App as the analyst. You are the agent's owner.
+
+1. **Agents > New agent.**
+2. **Basics.** Click "Your own agent code" (the framework lane). Name: `AML alert triage`. Where can it work: Any project. Keep
+   "Project required as trigger input" on. Next.
+3. **Model & runtime.**
+   - Framework: LangGraph. Entry point: `agent/graph.py:build_graph`.
+   - Environment: the certified LangGraph Environment (on cloud-dogfood, `6ae24cb24abd2d2682011252`). It is already selected.
+   - Model: `sonnet`. Model access: Whoever triggers it.
+   - Max minutes per Job: 30. Max model calls per Job: 20. Wait for answers: 0 (a question to the analyst ends the Job at once,
+     and the answer starts a new Job).
+   - Next.
+4. **Instructions & behaviors.**
+   - System prompt: paste the AML rules. They are the definition file's `systemPrompt`. To print them, run this in the repo:
+
+     ```
+     python3 -c "import json; print(json.load(open('agent/definition.json'))['systemPrompt'])"
+     ```
+
+     The label says "(optional)", but this agent needs the prompt: the AML rules are in the prompt, not in the code (see "The
+     agent").
+   - Error recovery: Fail and report.
+   - Next.
+5. **Identity & sharing.** Acts as: Whoever triggers it. Editors: add each reviewer. Next.
+6. **Tools & permissions.**
+   - Project files: Read only. Project datasets: No access. Other resources attached to the task: Read only. Not attached: No
+     access.
+   - Tool servers: tick `aml` (All tools).
+   - Client-side tools: the wizard picks `aml_escalate_to_sar` by itself, because it needs approval. Add `aml_close_alert`.
+   - Next.
+7. **Review.** The Framework card shows LangGraph, `agent/graph.py:build_graph`, the Environment and its revision, and both
+   client-side tools. Click **Create agent**. The agent's page opens.
+
+To change the agent later, open its page and click Edit. The lane and the framework can't change after the agent is created.
+
+### Created in the wizard, November 10, 2026
+
+The operator walked these steps on cloud-dogfood. Every step passed.
+
+| | |
+|---|---|
+| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, with extended identity, from domino-agent-service PR #144 (`ce294da`, merged as `a728409`) |
+| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, after `POST /reset` |
+| Agent | `AML alert triage (wizard)`, model alias `sonnet`, LangGraph Environment `6ae24cb24abd2d2682011252` revision `6ae24cbd4abd2d2682011256` |
+| Analyst | `subir_mansukhani`, the agent's owner |
+| Reviewer | `subir_mansukhani_test`, an editor, in a second browser profile |
+
+| Step | Result |
+|---|---|
+| The wizard | The framework list showed LangGraph, CrewAI and Domino AG-UI SDK. CrewAI had no certified Environment, and Next stayed off. An entry point without `:build_graph` showed an error. The wizard picked `aml_escalate_to_sar` by itself. The Review step showed the Framework card. |
+| A-1001 | 3 reads, then `aml_close_alert`. Decision: closed. The case board showed A-1001 closed. |
+| A-1002 | 3 reads, then `aml_escalate_to_sar` waited for approval. The reviewer approved it in the Inbox, and the next Job sent it. Decision: escalated, with a SAR case ID. The case board showed A-1002 escalated. |
+| Edit | The wizard opened with the lane and the framework greyed. Max model calls per Job changed from 20 to 25, and both client-side tools stayed. |
+
+### With the API: `register.py`
+
+The agent's definition is one file in git: `agent/definition.json`. It is the body that the platform App's `POST api/agents` takes.
+A change to the definition is a commit, and the agent page shows the system prompt.
 
 `agent/register.py` creates the agent on the platform App, or updates it when the App has an agent with its name. It uses the stdlib
-only, so it runs on the Domino Standard Environment.
+only, so it runs on the Domino Standard Environment. Do the steps of "Before you create it" first.
 
-### Before you register
-
-1. The platform App (`agent-framework-smoke`) has its view-as switch on. In the project that holds the App, set the project variable
-   `SMOKE_ALLOW_VIEW_AS=1`, then restart the App (publish a new version). The App's first log line then shows
-   `AGENT_ALLOW_VIEW_AS=1`. A project's `AGENT_ALLOW_VIEW_AS` does nothing on that App.
-2. The case-management App is on the platform App's tool server list with the name `aml` (the Tool servers page, in your browser).
-   The App refuses an agent whose `toolServers` names a tool server that isn't on the list. Only the App's owner can change
-   that list, and it doesn't take the view-as switch, so this script can't add it (step 3 of "Set it up on Domino").
-3. You know the Domino user name of each reviewer. A reviewer must be another person: the approvers of an escalation are the
-   agent's owner and editors, minus the analyst who asked. Any one of them approves or denies: one decision is enough.
-
-### Run it
+#### Run it
 
 In a Domino Workspace, in this repo:
 
@@ -325,19 +382,22 @@ python agent/register.py --app https://<apps host>/apps-internal/<App ID> --revi
 
 - `--reviewer` is required. Give it once for each reviewer. Each run sets the whole `editors` list, so name every reviewer each
   time: a reviewer that you leave out is no longer an editor. An editor can also change the agent, not only approve.
-
 - `--print` shows the agent body that the script sends (the file, with you in its `users` list, the reviewers in its `editors`
   list, and the overrides). It calls nothing.
 - `--app` is the platform App's URL as Domino gives it. A vanity URL set through the API doesn't route. A URL that you copy from
   the browser (with `#/...`) works too.
 - `--model <alias>` uses another LLM Gateway alias. The default is `sonnet`. The smoke test runs on `haiku`.
 - `--environment <ID>` uses another certified LangGraph Environment. The default is `6ae24cb24abd2d2682011252`.
+- `--view-as` is for a platform App without extended identity (`smoke.py deploy --no-extended-identity`). The Apps proxy then
+  changes your token on its way to the App, so the script also sends your user name in the header `X-Prototype-View-As`, and the
+  App's view-as switch must be on: set the project variable `SMOKE_ALLOW_VIEW_AS=1` in the project that holds the App, then
+  publish the App again. The live check (#7) ran this way.
 
-The script calls the App as you. Each call has the Workspace's token (for the Apps proxy) and the header `X-Prototype-View-As` with
-your own Domino user name (for the App). Your name comes from `DOMINO_STARTING_USERNAME`, else from Domino
-(`GET /api/users/v1/self`). The steps:
+The script calls the App as you, with the Workspace's token. With extended identity, the Apps proxy gives the App a token of yours
+that Domino accepts. Your name comes from `DOMINO_STARTING_USERNAME`, else from Domino (`GET /api/users/v1/self`). The steps:
 
-1. `GET api/me`: the App has its view-as switch on, and knows you by your name. The script prints how the App knows you.
+1. `GET api/me`: the App knows you by your token (with `--view-as`: by the header, with its view-as switch on). The script prints
+   how the App knows you.
 2. `GET api/agents`: it finds the agent by its name.
 3. `POST api/agents` when there is none, else `PUT api/agents/<id>`, with the whole body.
 4. It prints the agent's ID and its page: `<App URL>/#/agents/<id>`.
@@ -345,30 +405,30 @@ your own Domino user name (for the App). Your name comes from `DOMINO_STARTING_U
 The person who runs the script is the analyst: it puts you in the agent's `users` list. You are also the agent's owner when the
 script creates it. The reviewers are in its `editors` list.
 
-### When it stops
+#### When it stops
 
 | What it says | What to do |
 |---|---|
-| The App checked your token instead of the view-as header (401), or the view-as switch is off | Set `SMOKE_ALLOW_VIEW_AS=1` and restart the App (step 1 above) |
-| The App didn't take the view-as header | Something between you and the App drops `X-Prototype-View-As`. Tell the platform team |
+| Domino didn't accept the token that the Apps proxy gave the App (401) | The App runs without extended identity. Publish it with extended identity (`smoke.py deploy`), or use `--view-as` (above) |
+| The App sees you as another person | Run the script in a Workspace that you started |
+| With `--view-as`: the App checked your token instead of the header (401), or its view-as switch is off | Set `SMOKE_ALLOW_VIEW_AS=1` and publish the App again |
+| With `--view-as`: the App didn't take the header | Something between you and the App drops `X-Prototype-View-As`. Tell the platform team |
 | A redirect (the Apps proxy's sign-in or consent page) | Open the App once in your browser, then run the script again |
-| `toolServers names aml, which isn't in the tool server list` | Add the tool server `aml` (step 2 above), then run the script again |
+| `toolServers names aml, which isn't in the tool server list` | Add the tool server `aml` (step 1 of "Before you create it"), then run the script again |
 | `Environment ... isn't certified for langgraph` | Run it again with `--environment` and an ID that the App lists |
 | Two agents with its name | Delete all but one on the App, then run the script again |
 | An agent with its name that you can't change | Ask its owner to add you as an editor, or to delete it |
 | Any other refusal | The script prints the App's reason (`{"detail": ...}`) |
 
-Exit code: 0 when the agent is registered (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is wrong.
+Exit code: 0 when the agent is created or updated (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is
+wrong.
 
-### Where the platform differs from spec #1
+#### Where the platform differs from spec #1
 
 The script follows the platform App (domino-agent-service `origin/main`):
 
 - **The model.** The spec says "a Claude alias". The App takes `{"source": "gateway", "models": ["<alias>"], "access": "acting"}`.
   `acting` uses the LLM Gateway grants of the identity that the agent acts as (the analyst), and needs no stored token.
-- **The view-as switch off.** The spec says to check `viewAsEnabled`. With extended identity off, an App with the switch off doesn't
-  answer `viewAsEnabled: false`: it ignores the header, checks the token that the Apps proxy changed, and answers 401 ("Domino didn't
-  accept that token"). The script reads that 401 as "the switch is off". It also stops on `viewAsEnabled: false`.
 - **The tool server first.** The App refuses the agent until `aml` is on its tool server list. So the operator adds `aml` on the Tool
   servers page before the script runs.
 - **The Environment's revision.** The definition names only the Environment ID. The App picks the revision from its certified list
@@ -377,28 +437,27 @@ The script follows the platform App (domino-agent-service `origin/main`):
   whole file, so every key in it is replaced. A key that you remove from the file stays on the App.
 - **Names aren't unique.** The App allows two agents with one name. The script stops when it finds two.
 
-The Apps proxy passes `X-Prototype-View-As` to an App with extended identity off: in the live check (#7), the script printed "The App
-knows you as subir_mansukhani (through the prototype view-as switch)".
-
 The definition's other values are choices, not platform rules: at most 30 minutes and 20 model turns for each Job; `idleWaitMin: 0`
 (a question to the analyst ends the Job at once, and the answer starts a new Job); `onError: fail`; and the guardrails' `named: read`
 and `other: none` (as the smoke test has them).
 
-### The check
+#### The check
 
 ```
 python tests/check_registration.py
 ```
 
 A stdlib script, one line per case, with a non-zero exit code on any failure. It checks every field of the definition and every AML
-rule in its system prompt, the print mode, and the script's calls to a small fake App on 127.0.0.1: create, update, the view-as switch
-off (both answers), the header dropped, a redirect, a refused request, two agents with one name, an agent you can't change, and your
-name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host. The real
-calls are proven in the live check.
+rule in its system prompt, the print mode, and the script's calls to a small fake App on 127.0.0.1: create and update with your
+token only (extended identity) and with `--view-as`, a 401 in each way, the App that sees another person, the view-as switch off
+(both answers), the header dropped, a redirect, a refused request, two agents with one name, an agent you can't change, and your
+name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host. The
+real calls are proven in the live check.
 
 ## Live check
 
-The live check (#7) ran the workflow on cloud-dogfood on October 29, 2026, with the steps above.
+The live check (#7) ran the workflow on cloud-dogfood on October 29, 2026, with the steps above as they were then: `register.py`
+through the view-as switch (`--view-as` today).
 
 | | |
 |---|---|
