@@ -1,8 +1,10 @@
-"""The agent's definition (agent/definition.json) and the script that creates the agent through the App's API (agent/register.py), seen
-from outside: the file as the platform App receives it, the script's print mode, and the script's calls to a small fake App, with
-extended identity (your token) and with --view-as (your name in the view-as header). No Domino host: the fake App on
-127.0.0.1 also serves the Workspace's token and Domino's /api/users/v1/self. The script runs with python -S (no site-packages), so a
-package outside the stdlib fails the check. The real calls are proven in the live check.
+"""The agent's definition (agent/definition.json), its three 1-line entry points, and the script that creates the agent through the
+App's API (agent/register.py), seen from outside: the file as the platform App receives it, each entry point's one line, the script's
+print mode for each --framework, and the script's calls to a small fake App, with extended identity (your token) and with --view-as
+(your name in the view-as header), including its certified Environments (GET api/platform/certified-environments). No Domino host:
+the fake App on 127.0.0.1 also serves the Workspace's token and Domino's /api/users/v1/self. The script runs with python -S (no
+site-packages), so a package outside the stdlib fails the check. The real calls are proven in the live check. That the 1-line files
+load in the certified Environments is certification's part (README, Certification).
 
   python tests/check_registration.py
 """
@@ -43,8 +45,8 @@ check("the model is one Claude alias from the LLM Gateway, with the acting ident
       model.get("source") == "gateway" and len(model.get("models") or []) == 1 and model.get("access") == "acting"
       and (model.get("models") or [""])[0] in ("sonnet", "opus", "haiku"), model)
 ex = d.get("execution") or {}
-check("it runs as a Job on the cloud-dogfood certified LangGraph Environment",
-      ex.get("runtime") == "job" and ex.get("environment") == {"id": "6ae24cb24abd2d2682011252"}, ex)
+check("it runs as a Job, and the file names no Environment (the script sets the certified one for the variant it creates)",
+      ex.get("runtime") == "job" and "environment" not in ex, ex)
 check("it has one input: a required project", d.get("inputs") == [{"name": "project", "type": "project", "required": True}],
       d.get("inputs"))
 access = (d.get("guardrails") or {}).get("access") or {}
@@ -97,8 +99,44 @@ gateway = {"domino_", "get_project", "list_projects", "list_datasets", "get_data
 check("the prompt names no Domino gateway tool", not [g for g in gateway if g in prompt], [g for g in gateway if g in prompt])
 
 
+# ------------------------------------------------------------------------------------------------------------------- the entry points
+def text(path):
+    try:
+        return path.read_text()
+    except OSError as e:
+        return f"<{e}>"
+
+
+ENTRY_POINTS = {   # the file: its one line, the ready-made agent of domino-agui (the helper library) for one framework
+    "graph.py": "from domino_agui.langgraph import build_graph\n",
+    "flow.py": "from domino_agui.crewai import build_flow\n",
+    "handler.py": "from domino_agui.loop import handler\n",
+}
+for f, line in ENTRY_POINTS.items():
+    check(f"agent/{f} is one line: {line.strip()}", text(ROOT / "agent" / f) == line, text(ROOT / "agent" / f)[:300])
+agent_files = sorted(p.name for p in (ROOT / "agent").iterdir() if p.is_file() and not p.name.startswith("."))
+check("agent/ holds the three entry points, the definition and the script, and nothing else",
+      agent_files == sorted([*ENTRY_POINTS, "definition.json", "register.py"]), agent_files)
+FRAMEWORK_IMPORT = re.compile(r"^\s*(from|import)\s+(domino_agui|langgraph|langchain\w*|crewai|litellm|anthropic|openai|ag_ui\w*)\b", re.M)
+contract_code = sorted(str(p.relative_to(ROOT)) for p in ROOT.rglob("*.py")
+                       if not any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(ROOT).parts)
+                       and p.parent != ROOT / "agent" and FRAMEWORK_IMPORT.search(text(p)))
+check("no other Python file imports domino-agui or an agent framework (the repo has no other agent contract code)",
+      contract_code == [], contract_code)
+
+
 # ------------------------------------------------------------------------------------------------------------------- the fake App
 BEARER = "Authorization bearer (JWT or PAT, verified with Domino)"   # how the App knows you by your token (its api/me `source`)
+CERTIFIED = [   # the App's GET api/platform/certified-environments: one entry per certified (Environment, framework) pair, in its order
+    {"environmentId": "6ae2aaaaaaaaaaaaaaaaaaaa", "revisionId": "6ae2a1a1a1a1a1a1a1a1a1a1", "framework": "langgraph",
+     "name": "agent-langgraph (first)"},
+    {"environmentId": "6ae2cccccccccccccccccccc", "revisionId": "6ae2c1c1c1c1c1c1c1c1c1c1", "framework": "crewai", "name": "agent-crewai"},
+    {"environmentId": "6ae2bbbbbbbbbbbbbbbbbbbb", "revisionId": "6ae2b1b1b1b1b1b1b1b1b1b1", "framework": "langgraph",
+     "name": "agent-langgraph (second)"},
+    {"environmentId": "6ae2dddddddddddddddddddd", "revisionId": "6ae2d1d1d1d1d1d1d1d1d1d1", "framework": "domino-agui", "name": None},
+]
+CERTIFIED_ID = {   # the one the script must take for each framework: the last one listed (two for langgraph)
+    "langgraph": "6ae2bbbbbbbbbbbbbbbbbbbb", "crewai": "6ae2cccccccccccccccccccc", "domino-agui": "6ae2dddddddddddddddddddd"}
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -136,6 +174,8 @@ class Fake(BaseHTTPRequestHandler):
             return self.answer(*s.get("me", mine))
         if self.command == "GET" and self.path == "/app/api/agents":
             return self.answer(200, s.get("agents", []))
+        if self.command == "GET" and self.path == "/app/api/platform/certified-environments":
+            return self.answer(*s.get("certified", (200, CERTIFIED)))
         if self.command in ("POST", "PUT") and s.get("refuse"):
             return self.answer(*s["refuse"])
         if self.command == "POST" and self.path == "/app/api/agents":
@@ -173,15 +213,32 @@ def register(*args, state=None, env=None):
     return r.returncode, r.stdout, r.stderr, list(Fake.log)
 
 
+CLIENT_TOOLS = ["aml_close_alert", "aml_escalate_to_sar"]
+VARIANTS = {   # --framework: the agent's name (the wizard's label for the framework as its suffix) and its framework block
+    "langgraph": ("AML alert triage",
+                  {"name": "langgraph", "entrypoint": "agent/graph.py:build_graph", "clientTools": CLIENT_TOOLS}),
+    "crewai": ("AML alert triage (CrewAI)",
+               {"name": "crewai", "entrypoint": "agent/flow.py:build_flow", "clientTools": CLIENT_TOOLS}),
+    "domino-agui": ("AML alert triage (Domino AG-UI SDK)",
+                    {"name": "domino-agui", "entrypoint": "agent/handler.py:handler", "clientTools": CLIENT_TOOLS}),
+}
+
+
 def body_with(**changes):
-    """The definition file with the people and the overrides the script must add (expected values, written out here)."""
+    """The definition file with the variant, the people and the overrides the script must add (expected values, written out here)."""
     b = json.loads(DEFINITION.read_text())
+    b["name"], b["framework"] = VARIANTS[changes.get("framework", "langgraph")]
     b["access"] = {"mode": "restricted", "users": changes.get("users", ["analyst1"]), "editors": changes.get("editors", ["reviewer1"])}
     if "model" in changes:
         b["model"] = {**b["model"], "models": [changes["model"]]}
-    if "environment" in changes:
-        b["execution"] = {**b["execution"], "environment": {"id": changes["environment"]}}
+    b["execution"] = {**b["execution"],
+                      "environment": {"id": changes.get("environment", CERTIFIED_ID[changes.get("framework", "langgraph")])}}
     return b
+
+
+def shown_environment(body):
+    """The Environment ID in a printed body ("" when it has none)."""
+    return str((((body or {}).get("execution") or {}).get("environment") or {}).get("id", ""))
 
 
 def parsed(text):
@@ -193,9 +250,17 @@ def parsed(text):
 
 # ------------------------------------------------------------------------------------------------------------------- print mode
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--app", APP)
+shown = shown_environment(parsed(out))
 check("--print shows the definition with you (the analyst) in its users list and the reviewer in its editors list",
-      code == 0 and parsed(out) == body_with(), (code, out[:300], err[:300]))
+      code == 0 and parsed(out) == body_with(environment=shown), (code, out[:300], err[:300]))
 check("--print calls nothing, not even with --app", log == [], log)
+for fw in ("langgraph", "crewai", "domino-agui"):
+    code, out, err, log = register("--print", "--framework", fw, "--reviewer", "reviewer1", "--app", APP)
+    shown = shown_environment(parsed(out))
+    check(f"--print --framework {fw} without --environment: the Environment is a placeholder that names {fw} and "
+          "GET api/platform/certified-environments (not an ID), and it calls nothing",
+          code == 0 and "GET api/platform/certified-environments" in shown and fw in shown
+          and not re.fullmatch(r"[0-9a-f]{24}", shown) and log == [], (code, shown, err[:300], log))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--model", "haiku", "--environment", "6ae2ffffffffffffffffffff")
 check("--print shows the model alias and Environment overrides, and keeps the rest of the model and execution",
       code == 0 and parsed(out) == body_with(model="haiku", environment="6ae2ffffffffffffffffffff"), (code, out[:300], err[:300]))
@@ -204,15 +269,27 @@ check("the reviewer can't be you (maker-checker needs a second person): it stops
       code != 0 and "reviewer" in err.lower() and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "reviewer2")
 check("--reviewer given twice: --print shows both reviewers in its editors list, in the order given",
-      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"]), (code, out[:300], err[:300]))
+      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"], environment=shown_environment(parsed(out))),
+      (code, out[:300], err[:300]))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "reviewer2", "--reviewer", " reviewer1 ")
 check("...a reviewer named twice is in the editors list once",
-      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"]), (code, out[:300], err[:300]))
+      code == 0 and parsed(out) == body_with(editors=["reviewer1", "reviewer2"], environment=shown_environment(parsed(out))),
+      (code, out[:300], err[:300]))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", "analyst1")
 check("...no reviewer can be you, even with others: it stops before any call, and names you",
       code != 0 and "analyst1" in err and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print", "--reviewer", "reviewer1", "--reviewer", " ")
 check("...an empty --reviewer stops it", code != 0 and "empty" in err and not log and not out, (code, out[:200], err[:300]))
+for fw in ("crewai", "domino-agui", "langgraph"):
+    code, out, err, log = register("--print", "--framework", fw, "--reviewer", "reviewer1", "--environment", "6ae2ffffffffffffffffffff",
+                                   "--app", APP)
+    check(f"--print --framework {fw}: the name {VARIANTS[fw][0]!r}, the framework {fw} at {VARIANTS[fw][1]['entrypoint']} with the "
+          "same client-side tools, and the rest of the definition as it is; it calls nothing",
+          code == 0 and parsed(out) == body_with(framework=fw, environment="6ae2ffffffffffffffffffff") and log == [],
+          (code, out[:300], err[:300], log))
+code, out, err, log = register("--print", "--framework", "smolagents", "--reviewer", "reviewer1")
+check("--framework takes langgraph, crewai or domino-agui only: another one stops it (exit 2) before any call",
+      code == 2 and "--framework" in err and not log and not out, (code, out[:200], err[:300]))
 code, out, err, log = register("--print")
 check("the reviewer's name is required", code != 0 and "--reviewer" in err and not log, (code, err[:300]))
 code, out, err, log = register("--reviewer", "reviewer1")
@@ -229,12 +306,17 @@ def writes(log):
 
 
 NAME = json.loads(DEFINITION.read_text())["name"]
+CREATE = [("GET", "/app/api/me"), ("GET", "/app/api/platform/certified-environments"), ("GET", "/app/api/agents"),
+          ("POST", "/app/api/agents")]
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1")
-check("with no agent of its name, it creates one: GET api/me, GET api/agents, then POST api/agents",
-      code == 0 and app_calls(log) == [("GET", "/app/api/me"), ("GET", "/app/api/agents"), ("POST", "/app/api/agents")],
-      (code, app_calls(log), err[:300]))
+check("with no agent of its name, it creates one: GET api/me, GET api/platform/certified-environments, GET api/agents, then "
+      "POST api/agents", code == 0 and app_calls(log) == CREATE, (code, app_calls(log), err[:300]))
 check("...with the whole agent body (you, the analyst, in its users list, the reviewer in its editors list)",
       writes(log) == [("POST", "/app/api/agents", body_with())], writes(log))
+check("...on the certified LangGraph Environment: of the two listed for langgraph, the last one",
+      shown_environment((writes(log) or [(0, 0, {})])[0][2]) == "6ae2bbbbbbbbbbbbbbbbbbbb", writes(log)[:1])
+check("...and it prints the Environment it took, with its name", "6ae2bbbbbbbbbbbbbbbbbbbb" in out and "agent-langgraph (second)" in out,
+      out)
 check("...each call with the Workspace's token and no view-as header (the App has extended identity: it takes your token)",
       all(h.get("authorization") == "Bearer tok-123" and "x-prototype-view-as" not in h for _, p, h, _ in log if p.startswith("/app/")),
       [(p, h.get("authorization"), h.get("x-prototype-view-as")) for _, p, h, _ in log])
@@ -244,8 +326,7 @@ check("...and how the App knows you (by your token)", BEARER in out, out)
 code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", "--view-as")
 check("--view-as (an App without extended identity): the same calls and body, each with the Workspace's token and your name in the "
       "view-as header",
-      code == 0 and app_calls(log) == [("GET", "/app/api/me"), ("GET", "/app/api/agents"), ("POST", "/app/api/agents")]
-      and writes(log) == [("POST", "/app/api/agents", body_with())]
+      code == 0 and app_calls(log) == CREATE and writes(log) == [("POST", "/app/api/agents", body_with())]
       and all(h.get("authorization") == "Bearer tok-123" and h.get("x-prototype-view-as") == "analyst1"
               for _, p, h, _ in log if p.startswith("/app/")),
       (code, app_calls(log), [(p, h.get("x-prototype-view-as")) for _, p, h, _ in log], err[:300]))
@@ -256,12 +337,56 @@ check("with two reviewers, it sends both in the agent's editors list, and prints
       code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(editors=["reviewer1", "reviewer2"]))]
       and "reviewer1, reviewer2 as its editors" in out, (code, writes(log), out[:300], err[:300]))
 
+for fw in ("crewai", "domino-agui"):
+    code, out, err, log = register("--app", APP, "--framework", fw, "--reviewer", "reviewer1")
+    check(f"--framework {fw}: it creates the agent {VARIANTS[fw][0]!r} with the {fw} framework block, its entry point, and the "
+          f"Environment certified for {fw} ({CERTIFIED_ID[fw]})",
+          code == 0 and app_calls(log) == CREATE and writes(log) == [("POST", "/app/api/agents", body_with(framework=fw))],
+          (code, app_calls(log), writes(log), err[:300]))
+check("...an Environment that Domino gives no name: it prints the ID", CERTIFIED_ID["domino-agui"] in out, out)
+
+no_crewai = (200, [c for c in CERTIFIED if c["framework"] != "crewai"])
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", state={"certified": no_crewai})
+check("no certified Environment for the framework: it stops, says so, prints the endpoint's answer, and writes nothing",
+      code == 1 and "crewai" in err and "6ae2bbbbbbbbbbbbbbbbbbbb" in err and "agent-langgraph (second)" in err and not writes(log),
+      (code, err[:600], writes(log)))
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", state={"certified": (200, [])})
+check("...an empty list: it stops the same way, and shows the empty answer",
+      code == 1 and "crewai" in err and "[]" in err and not writes(log), (code, err[:600], writes(log)))
+OWN = ("--environment", "6ae2ffffffffffffffffffff")
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", *OWN)
+check("--environment names the Environment: it doesn't ask GET api/platform/certified-environments, and sends that ID",
+      code == 0 and app_calls(log) == [c for c in CREATE if "certified" not in c[1]]
+      and writes(log) == [("POST", "/app/api/agents", body_with(framework="crewai", environment="6ae2ffffffffffffffffffff"))],
+      (code, app_calls(log), writes(log), err[:300]))
+NOT_CERTIFIED = ("Environment 6ae2ffffffffffffffffffff isn't certified for crewai: set execution.environment.id to one that "
+                 "AGENT_CERTIFIED_ENVIRONMENTS lists for it (6ae2cccccccccccccccccccc).")   # the App's text (framework.py)
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", *OWN,
+                               state={"refuse": (400, {"detail": NOT_CERTIFIED})})
+check("...and when the App refuses it as not certified: it stops with the App's reason, and says to run it without --environment",
+      code == 1 and NOT_CERTIFIED in err and "without --environment" in err, (code, err[:600]))
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"certified": (404, {"detail": "Not Found"})})
+check("the App doesn't answer GET api/platform/certified-environments (404): it stops with the App's reason, and writes nothing",
+      code == 1 and "certified-environments" in err and "404" in err and not writes(log), (code, err[:600], writes(log)))
+
 agents = [{"id": "agt_00000000aa", "name": NAME, "canEdit": True}, {"id": "agt_00000000bb", "name": "Another agent", "canEdit": True}]
 code, out, err, log = register("--app", APP + "/#/agents", "--reviewer", "reviewer1", "--model", "haiku", state={"agents": agents})
 check("with an agent of its name, it updates that one: PUT api/agents/<id> with the whole body, and no POST",
       code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000aa", body_with(model="haiku"))], (code, writes(log), err[:300]))
 check("...and it prints that agent's ID and page URL (an App URL copied from the browser works too)",
       f"{APP}/#/agents/agt_00000000aa" in out, out)
+variants = [{"id": "agt_00000000ee", "name": "AML alert triage (CrewAI)", "canEdit": True},
+            {"id": "agt_00000000aa", "name": "AML alert triage", "canEdit": True}]
+code, out, err, log = register("--app", APP, "--reviewer", "reviewer1", state={"agents": variants})
+check("with no --framework, it updates the agent that exists (the LangGraph one, named 'AML alert triage'), not the CrewAI variant",
+      code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000aa", body_with())], (code, writes(log), err[:300]))
+code, out, err, log = register("--app", APP, "--framework", "crewai", "--reviewer", "reviewer1", state={"agents": variants})
+check("--framework crewai updates the CrewAI variant, found by its own name",
+      code == 0 and writes(log) == [("PUT", "/app/api/agents/agt_00000000ee", body_with(framework="crewai"))],
+      (code, writes(log), err[:300]))
+code, out, err, log = register("--app", APP, "--framework", "domino-agui", "--reviewer", "reviewer1", state={"agents": variants})
+check("--framework domino-agui with no agent of its name: it creates one, and changes neither of the others",
+      code == 0 and writes(log) == [("POST", "/app/api/agents", body_with(framework="domino-agui"))], (code, writes(log), err[:300]))
 
 DOMINO_401 = (401, {"detail": "Domino didn't accept that token. Send a current JWT or PAT as Authorization: Bearer <token>, "
                               "or an API key as X-Domino-Api-Key."})

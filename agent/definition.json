@@ -11,7 +11,7 @@
   },
   "toolServers": [{"server": "aml"}],
   "model": {"source": "gateway", "models": ["sonnet"], "access": "acting"},
-  "execution": {"runtime": "job", "environment": {"id": "6ae24cb24abd2d2682011252"}, "maxRuntimeMin": 30, "maxTurns": 20, "idleWaitMin": 0},
+  "execution": {"runtime": "job", "maxRuntimeMin": 30, "maxTurns": 20, "idleWaitMin": 0},
   "inputs": [{"name": "project", "type": "project", "required": true}],
   "guardrails": {"access": {"project": "read", "data": "none", "named": "read", "other": "none"}},
   "identity": {"mode": "triggering_user"},

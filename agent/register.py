@@ -2,19 +2,26 @@
 name: the API way to do what the App's wizard does (README, Create the agent). Run it in a Domino Workspace: it acts as you. It uses
 the stdlib only, so it runs on the Domino Standard Environment.
 
-  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID] [--view-as]
-  python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--model ALIAS] [--environment ID]
+  python agent/register.py --app URL --reviewer NAME [--reviewer NAME ...] [--framework F] [--model ALIAS] [--environment ID] [--view-as]
+  python agent/register.py --print --reviewer NAME [--reviewer NAME ...] [--framework F] [--model ALIAS] [--environment ID]
+
+One definition, three variants: --framework langgraph (the default), crewai or domino-agui sets the framework block's name and entry
+point (agent/graph.py:build_graph, agent/flow.py:build_flow, agent/handler.py:handler: each a 1-line file that names the helper
+library's ready-made agent) and the name's suffix, the wizard's label for the framework: "AML alert triage" (no suffix for LangGraph,
+so an update finds the agent that exists), "AML alert triage (CrewAI)", "AML alert triage (Domino AG-UI SDK)".
 
 It puts you in the agent's users list (you are the analyst, and the agent's owner when it creates it) and the reviewers in its editors
 list (the approvers of an escalation are the owner and the editors, minus the analyst who asked: any one of them decides). Give
 --reviewer once for each reviewer. Each run sets the whole editors list, so name every reviewer each time. --print shows the agent body
-and calls nothing.
+and calls nothing: without --environment, its Environment is a placeholder.
 
 How it calls the App: with the Workspace's token. The platform App has extended identity, so the Apps proxy gives it a token of yours
 that Domino accepts. --view-as is for an App without extended identity (smoke.py deploy --no-extended-identity): the Apps proxy then
 changes the token, so the script also sends your own Domino user name in the header X-Prototype-View-As, and the App's view-as switch
-must be on (SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, finds the agent by name (GET api/agents), then
-sends POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and page URL.
+must be on (SMOKE_ALLOW_VIEW_AS=1 on agent-framework-smoke). It checks GET api/me first, then takes the Environment: --environment,
+else the last one that GET api/platform/certified-environments lists for the framework (it stops when there is none). It finds the
+agent by name (GET api/agents), then sends POST api/agents or PUT api/agents/<id> with the whole body. It prints the agent's ID and
+page URL.
 
 Exit code: 0 when the agent is created or updated (or printed), 1 when the App or the Workspace stopped it, 2 when an argument is wrong.
 """
@@ -27,6 +34,12 @@ import urllib.request
 from pathlib import Path
 
 DEFINITION = Path(__file__).resolve().parent / "definition.json"
+CERTIFIED = "api/platform/certified-environments"   # the App's certified Environments: one entry per (Environment, framework) pair
+VARIANTS = {   # --framework -> (the name's suffix: the wizard's label for the framework, the 1-line file's entry point)
+    "langgraph": ("", "agent/graph.py:build_graph"),   # no suffix: the agent that exists keeps its name, so an update finds it
+    "crewai": (" (CrewAI)", "agent/flow.py:build_flow"),
+    "domino-agui": (" (Domino AG-UI SDK)", "agent/handler.py:handler"),
+}
 SWITCH_OFF = ("Turn on the App's view-as switch: in the project that holds the App (agent-framework-smoke), set the project variable "
               "SMOKE_ALLOW_VIEW_AS=1, then restart the App (publish a new version). The App's first log line then shows "
               "AGENT_ALLOW_VIEW_AS=1.")
@@ -35,7 +48,8 @@ NO_EXTENDED_IDENTITY = ("It does that when the App runs without extended identit
 HINTS = [   # (a part of the App's reason, what to do)
     ("isn't in the tool server list", "Add the case-management App as the tool server aml on the App's Tool servers page first "
                                       "(README, Create the agent), then run this again."),
-    ("isn't certified for langgraph", "Run this again with --environment and one of the Environment IDs that the App lists."),
+    ("isn't certified for", "Run this again without --environment: the script then takes the one that the App certifies "
+                            f"(GET {CERTIFIED})."),
 ]
 
 
@@ -43,9 +57,13 @@ class Stop(Exception):
     """Why the script stops, for the person who runs it."""
 
 
-def agent_body(reviewers, me, model=None, environment=None):
-    """The definition file, with you (the analyst) in its users list, the reviewers in its editors list, and the overrides."""
+def agent_body(reviewers, me, model=None, environment=None, framework="langgraph"):
+    """The definition file as the variant for `framework` (the name's suffix, the framework block's name and entry point), with you
+    (the analyst) in its users list, the reviewers in its editors list, and the overrides."""
     b = json.loads(DEFINITION.read_text())
+    suffix, entrypoint = VARIANTS[framework]
+    b["name"] += suffix
+    b["framework"] = {**b["framework"], "name": framework, "entrypoint": entrypoint}
     b["access"] = {**b["access"], "users": [me], "editors": list(reviewers)}
     if model:
         b["model"] = {**b["model"], "models": [model]}
@@ -139,6 +157,29 @@ def page(base, agent_id):
     return f"{base}/#/agents/{agent_id}"
 
 
+def placeholder(framework):
+    """What --print shows as the Environment when --environment names none: it calls nothing, so it can't ask the App."""
+    return f"<the last Environment that GET {CERTIFIED} lists for {framework}>"
+
+
+def certified_environment(base, view_as, framework):
+    """The App's certified Environment for `framework`: of the entries that GET api/platform/certified-environments lists for it, the
+    last one, as the App does for a revision. -> its ID"""
+    status, data = call(base, view_as, "GET", CERTIFIED)
+    if status != 200 or not isinstance(data, list):
+        raise Stop(f"The App didn't list its certified Environments (GET {CERTIFIED}: {reason(status, data)}). Run this again with "
+                   f"--environment and the ID of an Environment that the App certifies for {framework}.")
+    listed = [c for c in data if isinstance(c, dict) and c.get("framework") == framework and c.get("environmentId")]
+    if not listed:
+        raise Stop(f"The App has no Environment certified for {framework}, so it can't run this variant. GET {CERTIFIED} answered:\n"
+                   f"{json.dumps(data, indent=2)}\nAn operator certifies an Environment revision for {framework} and adds it to "
+                   "AGENT_CERTIFIED_ENVIRONMENTS. Then run this again.")
+    c = listed[-1]
+    name = f"{c['name']} ({c['environmentId']})" if c.get("name") else c["environmentId"]
+    print(f"The Environment certified for {framework}: {name}, revision {c.get('revisionId')}.", flush=True)
+    return c["environmentId"]
+
+
 def check_me(base, me):
     """The App (with extended identity) knows you by your token. -> how it knows you (its `source`)"""
     status, data = call(base, None, "GET", "api/me")
@@ -198,8 +239,10 @@ def main():
     ap.add_argument("--app", help="the platform App's URL, as Domino gives it (https://<apps host>/apps-internal/<App ID>)")
     ap.add_argument("--reviewer", required=True, action="append",
                     help="a reviewer's Domino user name: an editor of the agent, who approves escalations. Give it once for each reviewer")
+    ap.add_argument("--framework", choices=list(VARIANTS), default="langgraph",
+                    help="the variant to create: its framework and entry point, and its name's suffix (default: langgraph, no suffix)")
     ap.add_argument("--model", help="an LLM Gateway alias, instead of the file's")
-    ap.add_argument("--environment", help="a certified LangGraph Environment's ID, instead of the file's")
+    ap.add_argument("--environment", help="the ID of an Environment certified for the framework, instead of the one the App lists last")
     ap.add_argument("--view-as", action="store_true",
                     help="the App runs without extended identity: send your name in its view-as header (its view-as switch must be on)")
     ap.add_argument("--print", action="store_true", dest="print_only", help="show the agent body, and call nothing")
@@ -217,14 +260,15 @@ def main():
         if me in reviewers:
             ap.error(f"a reviewer can't be you ({me}): an escalation needs a second person to approve it. Remove --reviewer {me}, and "
                      "name other Domino users.")
-        body = agent_body(reviewers, me, (a.model or "").strip(), (a.environment or "").strip())
+        model, environment = (a.model or "").strip(), (a.environment or "").strip()
         if a.print_only:
-            print(json.dumps(body, indent=2))
+            print(json.dumps(agent_body(reviewers, me, model, environment or placeholder(a.framework), a.framework), indent=2))
             return 0
-        base = a.app.split("#")[0].rstrip("/")
+        base, view_as = a.app.split("#")[0].rstrip("/"), (me if a.view_as else None)
         source = check_view_as(base, me) if a.view_as else check_me(base, me)
         print(f"The App knows you as {me} (through the {source}).", flush=True)
-        verb, agent = register(base, me if a.view_as else None, body)
+        environment = environment or certified_environment(base, view_as, a.framework)
+        verb, agent = register(base, view_as, agent_body(reviewers, me, model, environment, a.framework))
     except Stop as e:
         print(e, file=sys.stderr)
         return 1
