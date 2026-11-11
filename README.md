@@ -515,6 +515,10 @@ The real calls are proven in the live check.
 
 ## Live check
 
+To run it again, follow the runbook in domino-agent-service, `tests/live_framework/README.md`
+(https://github.com/etanlightstone/domino-agent-service/blob/main/tests/live_framework/README.md). It links to the steps in this
+README. The sections below are the records of each run.
+
 The live check (#7) ran the workflow on cloud-dogfood on October 29, 2026, with the steps above as they were then: `register.py`
 through the view-as switch (`--view-as` today).
 
