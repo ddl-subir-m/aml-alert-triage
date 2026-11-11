@@ -305,6 +305,9 @@ Environment gets a new revision.
 
 ## Create the agent
 
+These steps create this workflow's agent. The steps for any framework agent are in domino-agent-service's author guide,
+`docs/build-a-framework-agent.md` (https://github.com/etanlightstone/domino-agent-service/blob/main/docs/build-a-framework-agent.md).
+
 Create the agent in the platform App's wizard. `agent/register.py` does the same through the App's API, from the definition file
 `agent/definition.json`: use it when you want the definition in git, or when you don't use the UI. Create one variant, or all three:
 each variant is its own agent, with its own name.
