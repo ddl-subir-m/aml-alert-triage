@@ -246,8 +246,8 @@ The three ready-made agents do the same things for the platform (the agent contr
 Each variant uses only the packages of its framework's certified Environment (domino-agent-service's
 `environments/agent-<framework>.lock`). The repo has no requirements file at its root: Domino installs a root `requirements.txt` at
 the start of each Job, which would change the Environment's packages. The ready-made agents came with domino-agui 0.2.0, so a
-variant runs only on an Environment revision that has them. On an older revision, the import fails. On cloud-dogfood,
-domino-agent-service #155 builds and certifies those revisions.
+variant runs only on an Environment revision that has them. On an older revision, the import fails. On cloud-dogfood, revision #4
+of each Environment has them (domino-agent-service #155, November 11, 2026).
 
 ## Certification
 
@@ -258,8 +258,8 @@ test, so it doesn't test the AML judgment.
 
 The three entry points are the same lines as domino-agent-service's examples (`examples/langgraph/graph.py`,
 `examples/crewai/flow.py`, `examples/domino_agui/anthropic_agent.py`). So the platform's certification of each Environment covers
-this repo's code too: C1 to C11 pass in both formats for all three, on a laptop on November 10, 2026, and domino-agent-service #155
-certifies the new revisions in Domino Jobs. Its records are domino-agent-service's `docs/certification/<framework>.md`.
+this repo's code too: C1 to C11 pass in both formats for all three, on a laptop and in Domino Jobs on revision #4 of each Environment
+on cloud-dogfood (November 11, 2026, domino-agent-service #155). Its records are domino-agent-service's `docs/certification/<framework>.md`.
 
 On November 10, 2026, C1 ran on each variant, in both formats, in the new images (domino-agui 0.2.0):
 
@@ -597,3 +597,38 @@ Each was a new task, on an open A-1003.
 - **The platform App's store.** The platform App published from `8c34ea3` had a new store: no agent, and no tool server `aml`.
   The tool server `aml` was added again (step 3 of "Set it up on Domino"), and `register.py` created a new agent. The live
   check's agent `agt_8acd4c27ef` and its tasks aren't in that store.
+
+### Three frameworks, November 11, 2026
+
+The live check of domino-agent-service #155 ran the workflow on each variant (#15), on cloud-dogfood.
+
+| | |
+|---|---|
+| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, domino-agent-service `feat/148-ready-made-agents` at `50b5e86` (at `69bb8f7` for AGT-124), published with `smoke.py deploy`: extended identity on, the view-as switch off |
+| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, reset (`POST /reset`) before each variant |
+| Agents | AML `main` at `4e4f012`, registered with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph `agt_bcdeda48d8`, CrewAI `agt_c0824e63fe`, Anthropic SDK `agt_65272ade7c` |
+| Environments | revision #3 of each (domino-agui 0.2.0); revision #4 of `agent-service-ddl-agui` for AGT-124 |
+| Analyst | `subir_mansukhani`, the agents' owner, who started each task |
+| Reviewer | `subir_mansukhani_test`, an editor, as a second real person (no view-as) |
+
+| Step | LangGraph | CrewAI | Anthropic SDK |
+|---|---|---|---|
+| A-1001: close | AGT-110: closed, `false_positive` | AGT-114: closed, `explained_activity` | AGT-120: closed, `explained_activity` |
+| A-1002: escalate; the reviewer approves | AGT-111: SAR-5001 | AGT-115: SAR-5001 | AGT-121: SAR-5001 |
+| A-1003: the question expires (`expires_at` 3 minutes ahead, the reply after it) | AGT-117: left open, nothing written | AGT-116: left open, nothing written | AGT-122: left open, nothing written |
+| A-1003: the question is answered | AGT-113: closed, `explained_activity`, with the answer | AGT-118: decided to close with the answer (below) | AGT-123: FAIL on revision #3 (below); AGT-124: closed, `explained_activity`, with the answer, on revision #4 |
+
+All three variants pass. Notes:
+
+- **The expired question.** In each variant the reply came after `expiresAt`. The task showed "The reply didn't reach the agent as
+  its answer: the answer came after the question's expiresAt", the agent got the expired-question text, and its summary said that no
+  answer came (rule 7). AGT-112 (LangGraph) doesn't count: its reply came before `expiresAt`, so it was a real answer.
+- **The question path without a steer.** In each variant the agent asked on A-1003 by itself (rule 6), unlike the live check of
+  October 29.
+- **AGT-118 (CrewAI).** The case server refused its `close_alert`, because AGT-119 (one more LangGraph run, by the same analyst) had
+  closed A-1003 16 seconds before. The flow had decided with the answer, and its summary said that the alert was already closed.
+- **AGT-123 (Anthropic SDK): a platform defect, fixed.** The agent asked, and closed A-1003 with the answer. `aml_close_alert` is
+  client-side, so the summary came from the next AG-UI run, and that run had lost the question and the answer: the summary said that
+  the agent never asked and that the confirmation was "fabricated". The fix is in domino-agui (`run.remember()`, domino-agent-service
+  ADR 0009, amended). On revision #4, AGT-124 closed A-1003, and its summary cites the answer.
+- **A-1001's reason.** The model chose `false_positive` or `explained_activity`. Both close the alert.
