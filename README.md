@@ -219,7 +219,8 @@ that none of the server's tools resets the system.
 
 The agent is one definition, `agent/definition.json`, and three entry points: one for each framework. Each entry point is a 1-line
 file that names a ready-made agent of domino-agui, the platform's helper library (domino-agent-service ADR 0030). The repo has no
-other agent code.
+other agent code. The library is on PyPI (https://pypi.org/project/domino-agui/). Its source is on GitHub
+(https://github.com/ddl-subir-m/domino-agui).
 
 | Variant | Framework (as the wizard names it) | File: its one line | Entry point |
 |---|---|---|---|
