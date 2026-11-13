@@ -248,7 +248,8 @@ Each variant uses only the packages of its framework's certified Environment (do
 `environments/agent-<framework>.lock`). The repo has no requirements file at its root: Domino installs a root `requirements.txt` at
 the start of each Job, which would change the Environment's packages. The ready-made agents came with domino-agui 0.2.0, so a
 variant runs only on an Environment revision that has them. On an older revision, the import fails. On cloud-dogfood, revision #4
-of each Environment has them (domino-agent-service #155, November 11, 2026).
+and later of each Environment have them (domino-agent-service #155, November 11, 2026). Revision #7 installs domino-agui 0.2.0 from
+PyPI (domino-agent-service #193, November 13, 2026).
 
 ## Certification
 
@@ -259,8 +260,9 @@ test, so it doesn't test the AML judgment.
 
 The three entry points are the same lines as domino-agent-service's examples (`examples/langgraph/graph.py`,
 `examples/crewai/flow.py`, `examples/domino_agui/anthropic_agent.py`). So the platform's certification of each Environment covers
-this repo's code too: C1 to C11 pass in both formats for all three, on a laptop and in Domino Jobs on revision #4 of each Environment
-on cloud-dogfood (November 11, 2026, domino-agent-service #155). Its records are domino-agent-service's `docs/certification/<framework>.md`.
+this repo's code too: C1 to C11 pass in both formats for all three, on a laptop and in Domino Jobs on revision #7 of each Environment
+on cloud-dogfood (November 13, 2026, domino-agent-service #193), and before that on revision #4 (November 11, 2026, #155). Its
+records are domino-agent-service's `docs/certification/<framework>.md`.
 
 On November 10, 2026, C1 ran on each variant, in both formats, in the new images (domino-agui 0.2.0):
 
@@ -342,8 +344,8 @@ with no view-as switch and no console command.
    the App, Domino shows a consent page: they allow it.
 4. The platform App has an Environment certified for the variant's framework, on a revision with the ready-made agents
    (domino-agui 0.2.0; see "The agent"). The wizard lists the certified Environments, and the script asks the App for them
-   (`GET api/platform/certified-environments`). On cloud-dogfood, domino-agent-service #155 certifies the new revisions of the
-   three Environments. Until then, CrewAI has no certified Environment there, so the CrewAI variant can't be created.
+   (`GET api/platform/certified-environments`). On cloud-dogfood, the platform App `agent-framework-smoke` certifies revision #7
+   of the three Environments (domino-agent-service #193, November 13, 2026).
 
 ### In the wizard
 
@@ -640,3 +642,37 @@ All three variants pass. Notes:
   the agent never asked and that the confirmation was "fabricated". The fix is in domino-agui (`run.remember()`, domino-agent-service
   ADR 0009, amended). On revision #4, AGT-124 closed A-1003, and its summary cites the answer.
 - **A-1001's reason.** The model chose `false_positive` or `explained_activity`. Both close the alert.
+
+### Three frameworks on revision #7, November 13, 2026
+
+The live check of domino-agent-service #193 ran the workflow on each variant again, on revision #7 of each Environment. These
+images install domino-agui 0.2.0 from PyPI (https://pypi.org/project/domino-agui/), not from a copy in the platform's repo.
+
+| | |
+|---|---|
+| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, domino-agent-service `feat/182-domino-agui-pypi` at `adf271f`, published with `smoke.py deploy`: extended identity on, the view-as switch off |
+| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, reset (`POST /reset`) before each variant |
+| Agents | AML `main` at `50f1fe0`, registered again with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph `agt_bcdeda48d8`, CrewAI `agt_c0824e63fe`, Anthropic SDK `agt_65272ade7c` |
+| Environments | revision #7 of each (domino-agui 0.2.0 from PyPI), certified in Domino Jobs #271 to #274 |
+| Analyst | `subir_mansukhani`, the agents' owner, who started each task |
+| Reviewer | `subir_mansukhani_test`, an editor, as a second real person (no view-as) |
+
+| Step | LangGraph | CrewAI | Anthropic SDK |
+|---|---|---|---|
+| A-1001: close | AGT-127: closed, `explained_activity` | AGT-131: closed, `explained_activity` | AGT-135: closed, `explained_activity` |
+| A-1002: escalate; the reviewer approves | AGT-128: SAR-5001 | AGT-132: SAR-5001 | AGT-136: SAR-5001 |
+| A-1003: the question expires (`expires_at` 3 minutes ahead, the reply after it) | AGT-129: left open, nothing written | AGT-133: left open, nothing written | AGT-137: left open, nothing written |
+| A-1003: the question is answered | AGT-130: closed, `explained_activity`, with the answer | AGT-134: closed, `explained_activity`, with the answer | AGT-138: closed, `explained_activity`, with the answer |
+
+All three variants pass: 12 tasks of 12. Notes:
+
+- **The expired question.** In each variant the reply came after `expiresAt`. The task showed "The reply didn't reach the agent as
+  its answer: the answer came after the question's expiresAt", the agent got the expired-question text, not the reply, and its
+  summary said that no answer came (rule 7).
+- **The answered question.** In each variant the agent asked on A-1003 by itself (rule 6). With the analyst's answer (a house
+  purchase, and the analyst saw the contract) it closed A-1003, and its summary cites the answer. The Anthropic SDK variant's
+  summary comes from the next AG-UI run, so AGT-138 shows that the fix for AGT-123 works on revision #7 too.
+- **One task for each alert at a time.** Each A-1003 task started after the one before it ended, so no close collided (as AGT-118
+  did on November 11).
+- **AGT-129's instruction** lost its first letter when it was typed ("riage alert A-1003. ..."). The agent triaged A-1003 all the
+  same.
