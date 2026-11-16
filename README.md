@@ -3,7 +3,7 @@
 The AML alert triage reference workflow for the Domino Agent Service: an agent on the framework lane triages transaction monitoring
 alerts, through a fake case-management system that runs as a Domino-hosted tool server. Escalating an alert to a SAR case needs a
 reviewer's approval. The agent is one definition and three 1-line entry points: it runs on LangGraph, CrewAI or the Anthropic SDK
-(see "The agent").
+(see "The agent"). The same triage is also a harness agent, written as an agent folder (see "The harness agent").
 
 The data is fake. The spec is issue #1; the setup steps come with the build.
 
@@ -518,6 +518,128 @@ name, a 401 in each way, the App that sees another person, the view-as switch of
 refused request (with the hint for an Environment that isn't certified), two agents with one name, an agent you can't change, and
 your name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host.
 The real calls are proven in the live check.
+
+## The harness agent
+
+The same triage as a harness agent: opencode runs it (the wizard's "Domino Agent Harness (opencode)"), and it has no code. Its
+definition is an agent folder, `harness/` (domino-agent-service spec #220, ADR 0037): `domino-agent deploy` registers it from git.
+The framework agent in `agent/` stays. Set B of the agent folder's live check (domino-agent-service #246) runs the four alerts with
+it.
+
+| File | What it holds |
+|---|---|
+| `harness/definition.md` | The settings, as YAML between two `---` lines. Each field is on domino-agent-service's reference page, `docs/definition-file.md` (https://github.com/etanlightstone/domino-agent-service/blob/main/docs/definition-file.md). |
+| `harness/instructions.md` | The instructions: the AML rules. They become the agent's system prompt. |
+
+### Where it differs from the framework agent
+
+Where both lanes have a setting, the value is the framework agent's (`agent/definition.json`): the model `sonnet` with the acting
+identity's grants, the requester as the acting identity (`identity: requester`), the tool server `aml` with every tool, one required
+project input, project files read only, no project datasets, at most 30 minutes and 20 turns for each Job, no wait for an answer
+(`wait-minutes: 0`), and `on-error: fail`. The check compares them.
+
+- **The tool names.** A harness agent gets a tool server's tools through the relay, which is one MCP server, `domino`, in opencode.
+  So it sees `domino_aml_get_alert`, `domino_aml_get_customer_profile`, `domino_aml_get_transactions`, `domino_aml_close_alert` and
+  `domino_aml_escalate_to_sar`, not `aml_get_alert` and the others. The instructions use these names.
+- **No client-side tools.** The close and the escalation are calls through the tools route, in the Job. The approval on
+  `escalate_to_sar` (step 5 of "Set it up on Domino") holds the escalation, and the Job ends.
+- **The question.** The agent asks with `domino_ask_user`, which has no expiry. With no wait, the question ends the Job at once, and
+  the answer starts a new Job with the same conversation. The platform's operating rules tell a harness agent to ask before
+  anything that it can't undo, so rule 7 says the other side: when the evidence is clear, the agent closes or escalates with no
+  question.
+- **The summary.** The agent ends with `domino_report_result`: its summary is the four lines (Decision, Rationale, Evidence, Action
+  taken).
+- **Fewer tools.** No shell and no subagent (`tools: shell: false, subagents: false`). It has only the case-management tools and the
+  relay's.
+- **Starter prompts.** `Triage alert A-1001.` to `Triage alert A-1004.`: the four alerts of the seed. A person picks one when they
+  start a task.
+- **Who may use it.** The folder holds no user names. The person who deploys it is its owner, and at first only the owner can use
+  and edit it. A deploy never changes who may use or edit the agent.
+
+### Deploy it
+
+Before you deploy:
+
+1. The case-management App is on the platform App's tool server list as `aml`, with its tools marked and approval on
+   `escalate_to_sar` (steps 3 to 5 of "Set it up on Domino"). The agent service refuses a folder that names a tool server that isn't
+   on the list.
+2. The platform App has the Registration route (`POST /api/v1/registrations`): it is published from a commit of
+   domino-agent-service with spec #220.
+3. You have the `domino-agent` command. It isn't on PyPI yet (domino-agent-service #243): install it from a checkout of
+   domino-agent-service, with `pip install ./domino_agent`. It needs only `ruamel.yaml`.
+
+In a Domino Workspace, in this repo, on a commit (the folder must have no changes that aren't committed). The command signs in with
+the Workspace's token. On a laptop, also set `DOMINO_TOKEN` to your Domino token.
+
+```
+export AGENT_SERVICE_URL=https://<apps host>/apps-internal/<App ID>      # the platform App's URL, as Domino gives it
+domino-agent deploy --dry-run harness
+domino-agent deploy harness
+```
+
+- `--dry-run` runs every check, the agent service's too, and registers nothing: `Dry run: would create AML alert triage (harness)`.
+- `deploy` prints `Created AML alert triage (harness) (agt_...)`, the agent's page, what changed, and the commit that it records.
+  A deploy of the same folder again says `No change for ...`. A deploy after a change to the folder updates the same agent.
+- Then open the agent's page, click Edit, and in Identity & sharing add each reviewer as an editor. A reviewer must be another
+  person: the approvers of an escalation are the agent's owner and editors, minus the analyst who asked.
+
+| What it says | What to do |
+|---|---|
+| `aml is not on the tool server list` | Add the tool server (step 1 above), then deploy again |
+| `the folder has changes that are not committed` | Commit them, then deploy again |
+| `Sign-in problem, not about the agent folder` | Check `DOMINO_TOKEN`, or open the platform App once in your browser (the consent page) |
+| Another refusal of a field (`harness/definition.md:<line>: ...`) | The line names the field and the fix. The fields are on the reference page |
+
+### Run the four alerts
+
+Do these as the analyst: the agent's owner. Before an alert's run, load the seed again (`POST /reset`, in "Set it up on Domino")
+when an earlier run changed that alert. Start one task for each alert, and start the next task after the one before it ends. Each
+task names a project (any project where you can start Jobs) and the instruction, a starter prompt. It runs as a Domino Job in that
+project, as you.
+
+| Alert | Instruction | What happens | The result |
+|---|---|---|---|
+| A-1001 | `Triage alert A-1001.` | 3 reads, then `domino_aml_close_alert` with `false_positive` or `explained_activity`. No approval. | Decision: closed. The case board shows A-1001 closed, by you |
+| A-1002 | `Triage alert A-1002.` | 3 reads, then `domino_aml_escalate_to_sar`: it waits for approval, and the Job ends. The reviewer approves it in the Inbox (you can't approve your own call). Then you continue the task (Continue, or any message): the next Job sends the escalation once, as you, and the agent carries on | Decision: escalated. SAR-5001 is open, by you |
+| A-1002, rejected | `Triage alert A-1002.`, after `POST /reset` | As above, but the reviewer rejects the escalation, with a note. The task ends: "Not done: ... rejected aml_escalate_to_sar ..., so it never ran." To have the agent report it (rule 8), send a message to the task: the next Job tells the agent who rejected the call, and their note | No write. A-1002 stays open |
+| A-1003 | `Triage alert A-1003.` | 3 reads, then `domino_ask_user` about the wire to Cyprus, and the Job ends. Answer on the task: a new Job continues the conversation, and the agent decides with your answer | Closed with `explained_activity` when your answer explains the wire; else an escalation, as for A-1002 |
+| A-1004 | `Triage alert A-1004.` | 1 read. The agent reports that the alert is already closed (by `jordan.reyes`, `explained_activity`) | Decision: no action. No write |
+
+On each write, the case-management App should record you, the analyst, as who acted (`domino-username`, in "Who acted"), also
+for the escalation that a Job sends after the approval. The live run (#246) measures it. A model's judgment can differ from the
+expected triage, as for the framework agent.
+
+### The check
+
+```
+python tests/check_harness_agent.py
+AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_harness_agent.py
+```
+
+One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only: it checks the folder's two files and
+every AML rule in the instructions. The lines that don't depend on the lane must be the framework agent's lines, with the harness
+names of the tools.
+
+The rest needs the agent service's code: `AGENT_SERVICE_REPO` is the path of a domino-agent-service checkout with spec #220. Without
+it, the check prints a `SKIP:` line for the rest. With it, the check starts that agent service on 127.0.0.1 with a fake Domino (the
+service's seam helper, `tests/agent_folder_seam.py`), and commits the folder in a temporary clone. Then:
+
+- `domino-agent deploy --dry-run harness` is refused while `aml` isn't on the tool server list, and passes once it is. Nothing is
+  registered.
+- `domino-agent deploy harness` registers the agent: the tool server `aml`, the requester as the acting identity, the instructions
+  as its system prompt, and the framework agent's other settings.
+- A task starts a Domino Job as the analyst. The Job's spec has its session's tools route (only an agent with a tool server gets
+  one) and the instructions, at the top of the agent's rules.
+
+That part needs Linux: the service's app imports its sandbox. On a Mac, run it with Docker, in the image of the service's checks (in
+domino-agent-service, `./tests/linux_checks.sh` builds it once; `docker images domino-agent-service-checks` lists it):
+
+```
+docker run --rm -v /path/to/domino-agent-service:/service:ro -v "$PWD:/aml:ro" -w /aml -e AGENT_SERVICE_REPO=/service \
+  -e PYTHONDONTWRITEBYTECODE=1 domino-agent-service-checks:<tag> python tests/check_harness_agent.py
+```
+
+Nothing calls a Domino host. The live run is domino-agent-service #246.
 
 ## Live check
 
