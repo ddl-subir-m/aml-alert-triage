@@ -10,6 +10,7 @@ The entry point is governance/probe/graph.py:build_graph. The definition is gove
 """
 from pathlib import Path
 
+from domino_agui import contract
 from domino_agui.langgraph import agent, relay_tools
 
 ROOT = Path(__file__).resolve().parents[2]   # the project's root: this file is governance/probe/graph.py
@@ -64,4 +65,14 @@ async def run_from_code(command: str = "echo started-from-code") -> str:
     return str(answer)
 
 
-build_graph = agent(tools=[list_files, read_file, write_file, run_from_code])
+def probe_model(max_tokens=16000):
+    """The ready-made chat model, with room to answer. ChatAnthropic gives an alias that has no model profile (such as "sonnet") only
+    4,096 output tokens, and the probe's second answer ran out of them twice (AGT-112, AGT-113: the same 9,379 tokens each time)."""
+    if contract.alias_format() == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=contract.model_alias(), max_tokens=max_tokens)
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(model=contract.model_alias(), use_responses_api=False, max_tokens=max_tokens)
+
+
+build_graph = agent(model=probe_model(), tools=[list_files, read_file, write_file, run_from_code])
