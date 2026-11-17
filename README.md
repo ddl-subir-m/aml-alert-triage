@@ -172,8 +172,9 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
    `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
    The App's URL itself (without `mcp`) is the case board: open it in your browser to watch the alerts change.
-3. **Add the tool server.** Only the platform App's owner can change its tool server list: anyone else gets a 403. The owner is
-   the owner of the project that holds the App. So the owner does this step and the next two, in the browser. Open the platform
+3. **Add the tool server.** Only a tool server admin can change the platform App's tool server list: anyone else gets a 403. A
+   tool server admin is the owner of the project that holds the App, or a person that the owner made a tool server admin. So a
+   tool server admin does this step and the next two, in the browser. Open the platform
    App's Tool servers page. Add a tool server with the name `aml`, the MCP
    URL from step 2, and no secret. Save it, reload the page, then edit `aml`: the form lists a tool server's tools only after
    it is saved. The URL is on this deployment's Apps host, so the platform treats it as a Domino-hosted tool server: each
@@ -563,10 +564,9 @@ Before you deploy:
 1. The case-management App is on the platform App's tool server list as `aml`, with its tools marked and approval on
    `escalate_to_sar` (steps 3 to 5 of "Set it up on Domino"). The agent service refuses a folder that names a tool server that isn't
    on the list.
-2. The platform App has the Registration route (`POST /api/v1/registrations`): it is published from a commit of
-   domino-agent-service with spec #220.
-3. You have the `domino-agent` command. It isn't on PyPI yet (domino-agent-service #243): install it from a checkout of
-   domino-agent-service, with `pip install ./domino_agent`. It needs only `ruamel.yaml`.
+2. The platform App has the Registration route (`POST /api/v1/registrations`): it is published from `main` of
+   domino-agent-service (spec #220 is merged).
+3. You have the `domino-agent` command: `pip install domino-agent` (Python 3.10 or later). It needs only `ruamel.yaml`.
 
 In a Domino Workspace, in this repo, on a commit (the folder must have no changes that aren't committed). The command signs in with
 the Workspace's token. On a laptop, also set `DOMINO_TOKEN` to your Domino token.
@@ -620,7 +620,7 @@ One line per case, with a non-zero exit code on any failure. Its own part uses t
 every AML rule in the instructions. The lines that don't depend on the lane must be the framework agent's lines, with the harness
 names of the tools.
 
-The rest needs the agent service's code: `AGENT_SERVICE_REPO` is the path of a domino-agent-service checkout with spec #220. Without
+The rest needs the agent service's code: `AGENT_SERVICE_REPO` is the path of a checkout of domino-agent-service's `main`. Without
 it, the check prints a `SKIP:` line for the rest. With it, the check starts that agent service on 127.0.0.1 with a fake Domino (the
 service's seam helper, `tests/agent_folder_seam.py`), and commits the folder in a temporary clone. Then:
 
