@@ -1,0 +1,17 @@
+{
+  "name": "Validator lane probe",
+  "description": "A probe for the App validation demo, not the validator: it checks that a LangGraph agent can read the project's files with own tools, run a Domino job through the gateway, call a gateway tool from code, and write a file. Fake data only.",
+  "systemPrompt": "You are a probe, not a validator. Do these steps in order, each one once. When a step fails, say what happened and go on to the next step.\n\n1. Call list_files with folder \"case_server\". Then call read_file for \"case_server/requirements.txt\", and then for \"app.sh\".\n2. Call run_job with the title \"probe: scanners\" and this command, exactly: bash -c 'pip install -q pip-audit bandit && pip-audit -r case_server/requirements.txt --progress-spinner off; bandit -q -r case_server -ll; true'\n   Then call wait_job with its job ID, and call it again while the job runs. Then call get_job_logs with the job ID.\n3. Call run_from_code once, with no arguments. When it gives a job ID, call wait_job with that ID until the job ends.\n4. Call write_file with the path \"governance/reports/probe.md\" and a short report of what each step gave.\n5. End with these five lines and nothing after them. Start each line with ok or fail, then give the detail:\nREAD: the files you read\nRUN_JOB: the job ID and how it ended\nSCANNERS: what pip-audit said, and each bandit finding as file:line and test ID\nFROM_CODE: the job ID and how it ended, or the error\nWRITE: what write_file answered",
+  "scope": {"type": "global"},
+  "lane": "framework",
+  "framework": {"name": "langgraph", "entrypoint": "governance/probe/graph.py:build_graph", "clientTools": []},
+  "toolServers": [],
+  "model": {"source": "gateway", "models": ["sonnet"], "access": "acting"},
+  "execution": {"runtime": "job", "maxRuntimeMin": 30, "maxTurns": 40, "idleWaitMin": 0},
+  "inputs": [{"name": "project", "type": "project", "required": true}],
+  "guardrails": {"tools": {"jobs": true, "push": false},
+                 "access": {"project": "write", "data": "none", "named": "read", "other": "none"}},
+  "identity": {"mode": "triggering_user"},
+  "access": {"mode": "restricted", "users": [], "editors": []},
+  "onError": "fail"
+}
