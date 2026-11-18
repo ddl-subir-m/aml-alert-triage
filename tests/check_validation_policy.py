@@ -9,8 +9,15 @@ four fields, and the scripted check, with the placeholders that the live script 
 One line per case, with a non-zero exit code on any failure. The policy part needs PyYAML (`pip install pyyaml`). No Domino host and
 no App: the live check is domino-agent-service #270.
 """
+import json
+import os
 import re
+import subprocess
 import sys
+import tempfile
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -138,5 +145,152 @@ check("the placeholders are these four, and the file's head names each one", set
 check("the file is for a PUBLIC repo: no host name, no cloud-dogfood, no Domino object ID",
       not re.search(r"https?://|\.domino\.tech|cloud-dogfood|\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-", raw), "a host or an ID")
 check("no em dash", "—" not in raw)
+
+# ------------------------------------------------------------------------------------------------- the scripted check, on a fake App
+SCRIPT = ROOT / "governance" / "validation_status.py"
+check("the command's file, governance/validation_status.py, is in the repo", SCRIPT.is_file())
+if not SCRIPT.is_file():
+    sys.exit(1)
+
+BUNDLE = "0e5e1b7a-0000-4000-8000-000000000266"   # a made-up bundle ID
+PROJECT = "aml-validation-demo"                   # the demo project, as the Job's DOMINO_PROJECT_NAME names it
+TOKEN = "eyJhbGciOiJub25lIn0.eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhbWFyYSJ9.fake-signature-266"   # a fake JWT, for amara (the approver)
+FOLDER, LANGGRAPH = "App validator (agent folder)", "App validator (LangGraph)"   # the validators' agent names (#267, #268)
+APP = {"tasks": [], "calls": [], "answer": None, "readers": {"amara"}}
+PROXY = {"token": TOKEN, "calls": 0}
+
+
+def task(key, agent, status, summary=None, *, bundle=BUNDLE, created="2026-11-17T10:00:00Z", trigger="event", project=PROJECT,
+         waiting=None):
+    """A task as the agent service App's GET /api/tasks answers it: the task row (agent_service/service.py, create_task) plus what
+    app.py's _task_out adds (agentName, agentColor, sessionCount, openBlockers, tokens, costUsd, segmentKinds)."""
+    n = key.split("-")[1]
+    return {
+        "id": f"task_{n:0>10}", "key": key, "agentId": "agt_" + ("folder" if agent == FOLDER else "graph" if agent == LANGGRAPH else "other"),
+        "title": f"{agent}: validate bundle {bundle}", "instruction": f"Validate the App of bundle {bundle}.", "status": status,
+        "waitingReason": waiting,
+        "trigger": ({"type": "event", "triggerId": "trg_x", "name": "On Validation", "eventType": "governance.bundle.stage_changed",
+                     "publishedBy": "audit-poller"} if trigger == "event" else {"type": trigger, "via": "app", "triggerId": "trg_d", "name": "From the app"}),
+        "triggeredBy": {"userName": "olivia"}, "actingAs": {"mode": "service_account", "userName": "validator-sa", "kind": "service_account"},
+        "project": {"id": "p1", "name": project}, "resources": [], "inputs": {}, "context": {"bundle": {"id": bundle}},
+        "createdAt": created, "updatedAt": created, "completedAt": None, "summary": summary, "sessionIds": ["ses_1"],
+        "deliverTo": [], "deliveries": [], "live": None, "intake": None, "accessCaps": None, "resolution": None,
+        "agentName": agent, "agentColor": "#543FDE", "sessionCount": 1, "openBlockers": 0, "tokens": 1200, "costUsd": 0.02,
+        "segmentKinds": ["job"],
+    }
+
+
+DONE_FOLDER = ("The App is a small MCP server with an open reset route.\n\n**Verdict:** approve after fixes\n**Critical vulns:** yes\n"
+               "**Doc location:** agent/AGT-12 at 1a2b3c4, docs/validation/aml-case-management.md\n")
+DONE_GRAPH = ("Verdict: approve after fixes\nCritical vulns: yes\n"
+              "Doc location: dataset aml-validation-demo, snapshot 3, validation/aml-case-management.md\n")
+
+
+class Fake(BaseHTTPRequestHandler):
+    """The Domino API proxy of a Job (GET /access-token, as governance/trigger_probe.py of the trigger test read it) and the agent
+    service App's task search (GET /api/tasks): app.py's list_tasks, with its filters (agent_id, status, triggered_by, project,
+    trigger_type, q in the title or key, case aside), newest first, and only the tasks that the caller may read
+    (service.can_read_task: here, the people in APP["readers"])."""
+
+    def log_message(self, *a):
+        pass
+
+    def answer(self, code, body, ctype="application/json", headers=()):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_any(self):
+        url = urllib.parse.urlsplit(self.path)
+        if self.server.role == "proxy":
+            PROXY["calls"] += 1
+            return self.answer(200, PROXY["token"].encode(), "text/plain")
+        APP["calls"].append({"method": self.command, "path": url.path, "query": urllib.parse.parse_qs(url.query),
+                             "auth": self.headers.get("Authorization")})
+        if self.command != "GET" or url.path != "/api/tasks":
+            return self.answer(405 if self.command != "GET" else 404, {"detail": "Not Found"})
+        if APP["answer"]:
+            return self.answer(*APP["answer"])
+        if self.headers.get("Authorization") != "Bearer " + TOKEN:
+            return self.answer(401, {"detail": "Domino didn't accept that token."})
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+        statuses = set(q["status"].split(",")) if q.get("status") else None
+
+        def pred(t):
+            return ((not q.get("agent_id") or t["agentId"] == q["agent_id"]) and (not statuses or t["status"] in statuses)
+                    and (not q.get("triggered_by") or t["triggeredBy"]["userName"] == q["triggered_by"])
+                    and (not q.get("project") or (t.get("project") or {}).get("name") == q["project"])
+                    and (not q.get("trigger_type") or t["trigger"]["type"] == q["trigger_type"])
+                    and (not q.get("q") or q["q"].lower() in (t["title"] + " " + t["key"]).lower()))
+        rows = [t for t in APP["tasks"] if pred(t) and "amara" in APP["readers"]]
+        return self.answer(200, sorted(rows, key=lambda t: t["createdAt"], reverse=True))
+
+    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_any
+
+
+def serve(role):
+    s = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    s.role = role
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    return s
+
+
+app_server, proxy_server = serve("app"), serve("proxy")
+APP_URL = f"http://127.0.0.1:{app_server.server_port}"
+WORK = Path(tempfile.mkdtemp(prefix="check-validation-status-"))
+
+
+def run(bundle=BUNDLE, url=None, tasks=(), env=None):
+    """Runs the scripted check as Domino runs it ('governance/validation_status.py' '<bundle>' '<url>'), in a fresh working
+    folder, with python -S (so a package outside the stdlib fails it). Returns (exit code, stdout + stderr, the output file's text)."""
+    APP["tasks"], APP["calls"] = list(tasks), []
+    work = Path(tempfile.mkdtemp(dir=WORK))
+    full = {"PATH": os.environ.get("PATH", ""), "DOMINO_API_PROXY": f"http://127.0.0.1:{proxy_server.server_port}",
+            "DOMINO_PROJECT_NAME": PROJECT, "DOMINO_ARTIFACTS_DIR": str(work / "artifacts"), **(env or {})}
+    p = subprocess.run([sys.executable, "-S", str(SCRIPT), bundle, APP_URL if url is None else url], cwd=work, env=full,
+                       capture_output=True, text=True, timeout=60)
+    out = work / "validation_status.txt"
+    return p.returncode, p.stdout + p.stderr, out.read_text() if out.is_file() else None
+
+
+def block(out, title):
+    """The lines of one validator's block: from its title line to the next empty line."""
+    lines = out.splitlines()
+    if title not in lines:
+        return []
+    i = lines.index(title)
+    end = lines.index("", i) if "" in lines[i:] else len(lines)
+    return lines[i:end]
+
+
+code, out, _ = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER), task("AGT-13", LANGGRAPH, "review", DONE_GRAPH)])
+check("two finished validators: exit 0", code == 0, out)
+check("the head names the bundle", f"Validation status of bundle {BUNDLE}" in out.splitlines(), out)
+check("one block for the agent folder validator: agent, task key, status, verdict, critical vulns, doc location, task link",
+      block(out, "Validation (agent folder)") == [
+          "Validation (agent folder)",
+          f"  agent:          {FOLDER}",
+          f"  task:           AGT-12  {FOLDER}: validate bundle {BUNDLE}",
+          "  status:         review",
+          "  verdict:        approve after fixes",
+          "  critical vulns: yes",
+          "  doc location:   agent/AGT-12 at 1a2b3c4, docs/validation/aml-case-management.md",
+          f"  task link:      {APP_URL}/#/tasks/task_0000000012"], out)
+check("one block for the LangGraph validator, after it (the verdict lines without Markdown)",
+      block(out, "Validation (LangGraph)") == [
+          "Validation (LangGraph)",
+          f"  agent:          {LANGGRAPH}",
+          f"  task:           AGT-13  {LANGGRAPH}: validate bundle {BUNDLE}",
+          "  status:         review",
+          "  verdict:        approve after fixes",
+          "  critical vulns: yes",
+          "  doc location:   dataset aml-validation-demo, snapshot 3, validation/aml-case-management.md",
+          f"  task link:      {APP_URL}/#/tasks/task_0000000013"]
+      and out.index("Validation (agent folder)") < out.index("Validation (LangGraph)"), out)
 
 sys.exit(1 if failed else 0)
