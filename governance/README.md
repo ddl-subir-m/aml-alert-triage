@@ -8,7 +8,7 @@ on this page, so that the demo compares two lanes, not two jobs. All the data is
 |---|---|
 | [scan.py](scan.py) | The scan: pip-audit and bandit on the case server, in a Domino Job |
 | [validation-doc.md](validation-doc.md) | The template of the validation doc |
-| This page | The severity scale, the finding names and the rule for "critical vulns" |
+| This page | The severity scale, the finding names, the rule for "critical vulns" and the rule for a failed scan |
 
 There is no list of the expected findings. Each validator reads the code and the scan, and sorts the hits itself.
 
@@ -59,6 +59,18 @@ A validator files only the real findings. A false hit goes in the doc only, unde
 ## Critical vulns
 
 The doc's "Critical vulns" is `yes` when at least one real finding is S0, and `no` when none is.
+
+## A failed scan
+
+The scan failed when its Job did not end `Succeeded`, or when its summary's `result:` line is not `result: both tools ran` (a tool
+could not run). Then nobody checked the dependencies, and both validators do the same:
+
+- The verdict is `do not approve`: run the validation again when the scan runs.
+- No finding comes from the scan, so none is filed. The findings from the code are filed as usual.
+- Critical vulns stays `yes` or `no`: the policy's field has only these two values. It is `yes` when a finding from the code is S0.
+  Else it is `no`, and its reason starts with "No S0 finding; dependencies not scanned".
+- The evidence item's Summary, and the doc's "Scan results" and "What the validator could not check", say that the scan failed, and
+  why.
 
 ## The check
 

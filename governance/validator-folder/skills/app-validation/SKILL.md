@@ -8,7 +8,7 @@ The task's instruction names the bundle ID (`bundleId` below). Do the steps in o
 
 The project folder (its path is in the operating rules) holds the shared parts of the validators:
 
-- `governance/README.md`: the severity scale (S0 to S3), the finding names and the rule for "critical vulns".
+- `governance/README.md`: the severity scale (S0 to S3), the finding names, the rule for "critical vulns" and the rule for a failed scan.
 - `governance/validation-doc.md`: the template of the doc.
 - `governance/scan.py`: the scan, which you run in a Domino Job.
 
@@ -42,6 +42,8 @@ Done when: each fact for the doc's sections from "Purpose" to "Dependencies" has
 - `domino_wait_job(jobId)`. While it says that the Job is still running, call it again.
 - When the Job is finished, find the scan summary in the end of its output: the lines between `== scan summary ==` and `== end of scan summary ==`. Domino adds lines of its own after the summary. If the summary isn't there, `domino_get_job_logs(jobId)` gives more of the log.
 - The summary's `commit:` line is the commit that the scan read. Its `result:` line says whether both tools ran.
+
+When the Job did not end `Succeeded`, or the summary's `result:` line is not `result: both tools ran`, the scan failed. Then follow "A failed scan" in `governance/README.md` in the later steps: the verdict is `do not approve`, and there is no finding from the scan (file none). Critical vulns is `no` unless a finding from the code is S0, and its reason then starts with "No S0 finding; dependencies not scanned". The Summary (step 9) and could not check say that the scan failed, and why.
 
 Done when: you have the summary, or you know why there is none (the Job failed, or a tool could not run). A tool that could not run goes under could not check, and so does each part that the summary says was not checked (`- not audited: ...`, `- not scanned: ...`).
 

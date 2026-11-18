@@ -660,8 +660,9 @@ check("MAIN the model reads the scan's summary (each bandit hit), the App's code
       and (ROOT / "case_server" / "server.py").read_text()[:400] in said and "Bundle ID: " + BUNDLE["id"] in said, said[:300])
 check("MAIN the model reads the App's start script, app.sh, with its path (analyze.md's step 1 names it)",
       "### app.sh" in said and (ROOT / "app.sh").read_text().strip()[:400] in said, said[said.find("## The App's code"):][:300])
-check("MAIN the model reads the shared rules: the severity scale and the rule for critical vulns (governance/README.md)",
-      "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said, said[:300])
+check("MAIN the model reads the shared rules: the severity scale, the rule for critical vulns and the rule for a failed scan "
+      "(governance/README.md)", "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said
+      and "## A failed scan" in said, said[:300])
 shown = [e for e in ran["events"] if e.get("type", "").startswith(("TEXT_MESSAGE", "TOOL_CALL"))]
 check("MAIN the model's analysis stays out of the task's stream: no tool call, and no text but the result",
       not [e for e in shown if e["type"].startswith("TOOL_CALL")]
@@ -787,6 +788,11 @@ check("SCANFAIL the doc's real findings have no scanner finding, and what the va
 check("SCANFAIL the verdict is do not approve, because the scan did not run (and critical vulns comes from the real findings only)",
       lines[:2] == ["Verdict: do not approve", "Critical vulns: no"] and "Verdict: do not approve" in doc
       and "the dependencies' known vulnerabilities were not checked" in doc, lines[:3])
+critical = doc[doc.find("## Critical vulns"):doc.find("## Verdict for the approver")]
+check("SCANFAIL critical vulns is no only as 'No S0 finding; dependencies not scanned' (the shared rule): the doc's reason says that "
+      "their known vulnerabilities were not checked, and drops the model's claim about the scan",
+      "Critical vulns: no" in critical and "No S0 finding; dependencies not scanned" in critical and "not checked" in critical
+      and MAIN["critical_vulns_reason"] not in critical, critical)
 check("SCANFAIL the evidence item says so: do not approve, and its summary says that the scan did not run to its end",
       filled.get("Verdict") == "do not approve" and filled.get("Critical vulns") == "no"
       and "The scan did not run to its end" in (filled.get("Summary") or ""), filled)

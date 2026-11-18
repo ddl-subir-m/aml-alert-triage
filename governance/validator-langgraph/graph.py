@@ -53,7 +53,8 @@ MAX_TOKENS = 16000   # the model's output limit (domino-agui#1: the ready-made m
 VERDICTS = ("approve", "approve after fixes", "do not approve")   # the policy's Verdict values, exactly
 SEVERITIES = ("S0", "S1", "S2", "S3")   # write_governance_finding's scale (governance/README.md)
 PREFIX = "[LangGraph]"   # each finding's name starts with the validator's short name
-RULES = ("## The severity scale", "## Finding names", "## Critical vulns")   # the shared rules: sections of governance/README.md
+RULES = ("## The severity scale", "## Finding names", "## Critical vulns", "## A failed scan")   # the shared rules: sections of
+# governance/README.md
 README_CHARS = 15000   # the start of the project's README: the App's own part
 SNAPSHOT_EVERY, SNAPSHOTS = 5, 36   # get_dataset_snapshot every 5 s, at most 36 times (3 minutes), until the snapshot is active
 SNAPSHOT_ENDED = ("active", "failed", "markForDeletion", "deletionInProgress", "deleted")   # Domino's snapshot statuses that end the wait
@@ -322,18 +323,22 @@ def unanalyzed(state, why):
 
 def ruled(analysis, scan):
     """The shared rules on the model's analysis (governance/README.md): each finding's name starts with the validator's short name, and
-    critical vulns is yes when a real finding is S0. When the scan did not run to its end, no finding comes from it (one that says so is
-    left out), and the verdict is do not approve: the dependencies' known vulnerabilities were not checked."""
-    a = dict(analysis)
-    if not scan.get("ok"):
+    critical vulns is yes when a real finding is S0. A failed scan: no finding comes from it (one that says so is left out), the
+    verdict is do not approve, and critical vulns no says "No S0 finding; dependencies not scanned": nobody checked the dependencies."""
+    a, failed, why = dict(analysis), not scan.get("ok"), scan.get("why")
+    if failed:
         a["real_findings"] = [f for f in a["real_findings"] if f["source"] != "scan"]
         a["verdict"] = "do not approve"
-        a["verdict_reason"] = (f"The scan did not run to its end ({scan.get('why')}). So the dependencies' known vulnerabilities were "
-                               f"not checked: run the validation again. {a['verdict_reason']}").strip()
-        a["could_not_check"] = [f"The scan: {scan.get('why')}."] + a["could_not_check"]
-        a["summary"] = f"The scan did not run to its end: {scan.get('why')}. {a['summary']}".strip()
+        a["verdict_reason"] = (f"The scan did not run to its end ({why}). So the dependencies' known vulnerabilities were not checked: "
+                               f"run the validation again. {a['verdict_reason']}").strip()
+        a["could_not_check"] = [f"The scan: {why}."] + a["could_not_check"]
+        a["summary"] = f"The scan did not run to its end: {why}. {a['summary']}".strip()
     a["findings"] = [{**f, "name": PREFIX + " " + f["title"].removeprefix(PREFIX).strip()} for f in a["real_findings"]]
     a["critical_vulns"] = "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
+    if failed:   # the model's reason may speak of a scan that nobody read
+        unscanned = f"The scan did not run to its end ({why}), so the dependencies' known vulnerabilities were not checked."
+        a["critical_vulns_reason"] = (f"{a['critical_vulns_reason']} {unscanned}".strip() if a["critical_vulns"] == "yes" else
+                                      f"No S0 finding; dependencies not scanned. {unscanned}")
     return a
 
 

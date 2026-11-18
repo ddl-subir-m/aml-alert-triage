@@ -47,8 +47,10 @@ Where it can't do the whole job, it says so, in the doc ("What the validator cou
 in the result ("Not done"), and goes on:
 
 - **The Intake values.** No gateway tool reads a bundle's evidence values, so the doc's "Users and data class" says "Not read".
-- **The scan.** When the scan Job fails (or doesn't start, or doesn't end in about 20 minutes), the doc's scan results say why, the
-  verdict is `do not approve`, and no finding comes from the scan. The model still reviews the code.
+- **The scan.** When the scan Job fails (or doesn't start, or doesn't end in about 20 minutes), the graph follows "A failed scan" in
+  `governance/README.md`, as the agent folder validator does: the doc's scan results say why, the verdict is `do not approve`, no
+  finding comes from the scan, and critical vulns `no` says "No S0 finding; dependencies not scanned". The model still reviews the
+  code.
 - **The model's analysis.** An answer with no `validation_analysis` call is asked again once. When the second one can't be used
   either, the verdict is `do not approve`, and no finding is filed.
 - **The snapshot.** A snapshot that fails is not attached, and the doc's location says so.

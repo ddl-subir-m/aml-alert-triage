@@ -97,6 +97,10 @@ rule("run the shared scan script in a Domino Job", "domino_run_job", '"python go
 rule("wait for the Job, again while it still runs", "domino_wait_job", "still", "again")
 rule("find the scan summary by its two marker lines", "== scan summary ==", "== end of scan summary ==")
 rule("...with more of the log from get_job_logs", "domino_get_job_logs")
+rule("a failed scan follows the shared rule of governance/README.md: do not approve, and no finding from the scan", "the scan failed",
+     '"a failed scan"', "do not approve", "no finding from the scan")
+rule("...critical vulns is no only as 'No S0 finding; dependencies not scanned', and the summary says that the scan failed",
+     "no s0 finding; dependencies not scanned", "summary", "the scan failed")
 rule("the commit that was scanned is the summary's commit line", "commit:", "summary")
 rule("sort each hit: a real finding or a false hit", "each hit", "real finding", "false hit")
 rule("a false hit has the reason why it is false", "false hit", "reason")

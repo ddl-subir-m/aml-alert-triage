@@ -275,6 +275,12 @@ check("governance/README.md says that each finding's name starts with the valida
       "[folder]" in flat and "[LangGraph]" in flat and "starts with" in flat, flat[:300])
 check("governance/README.md says that critical vulns is yes when at least one real finding is S0",
       re.search(r"critical vulns.{0,40}yes.{0,80}at least one real finding is S0", flat, re.I) is not None, flat[:300])
+failed_scan = " ".join(rules[rules.find("## A failed scan"):].split("\n## ")[0].split()) if "## A failed scan" in rules else ""
+check("governance/README.md has one rule for a failed scan, for both validators: do not approve, no finding from the scan, critical "
+      "vulns no only as 'No S0 finding; dependencies not scanned', and the summary and the doc say that the scan failed",
+      all(w in failed_scan for w in ("result: both tools ran", "`do not approve`", "No finding comes from the scan",
+                                     "No S0 finding; dependencies not scanned", "Summary", "What the validator could not check")),
+      failed_scan[:400] or "no section '## A failed scan'")
 
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
