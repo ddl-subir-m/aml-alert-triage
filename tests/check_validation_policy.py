@@ -329,4 +329,22 @@ code, out, _ = run(tasks=[task("AGT-23", FOLDER, "done", "All good, no verdict l
 check("a finished task with no verdict line in its result says so",
       "  verdict:        not in the task's result" in block(out, "Validation (agent folder)"), out)
 
+# The token: Domino's API proxy in the Job gives the token of the person who clicked Run.
+code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+check("it calls the App with the Job's token, from Domino's API proxy (DOMINO_API_PROXY/access-token)",
+      APP["calls"] and all(c["auth"] == "Bearer " + TOKEN for c in APP["calls"]), APP["calls"])
+check("the head says whose view it is: the person who clicked Run (the token's user name), not the token",
+      "Read as:   amara (the Job's token: the person who clicked Run)" in out.splitlines(), out)
+check("it never prints the token: not in the Job's log, not in its output file",
+      TOKEN not in out and TOKEN.split(".")[2] not in out and TOKEN not in (text or ""), "the token is in the output")
+PROXY["token"] = "Bearer " + TOKEN
+code, out, _ = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+check("a proxy answer of the form \"Bearer <token>\" works the same", code == 0 and APP["calls"] and APP["calls"][0]["auth"] == "Bearer " + TOKEN
+      and TOKEN not in out, APP["calls"])
+PROXY["token"] = TOKEN
+code, out, text = run(env={"DOMINO_API_PROXY": "http://127.0.0.1:9"})
+check("no token (no API proxy): it says so, exits 1, and calls no App",
+      code == 1 and not APP["calls"] and any(ln.startswith("No token: Domino's API proxy did not give the Job's token")
+                                             for ln in out.splitlines()), out)
+
 sys.exit(1 if failed else 0)

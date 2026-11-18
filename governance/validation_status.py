@@ -8,6 +8,7 @@ clicked (the Job's token), and prints one block for each validator: the agent, t
 and the task's link. Its lines go to stdout (the Job's log) and to validation_status.txt (the check's output, outputTypes txt). It
 sends only GET requests to the App: it never starts or changes an agent. It prints no token.
 """
+import base64
 import json
 import os
 import re
@@ -39,10 +40,19 @@ def token():
     return t[len("Bearer "):] if t.startswith("Bearer ") else t
 
 
-def get(app, path, query):
+def who(tok):
+    """The token's user name (its preferred_username claim), to say whose view this is. Not a check: the App checks the token."""
+    try:
+        part = tok.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))).get("preferred_username") or "unknown"
+    except Exception:
+        return "unknown (the token is not a JWT)"
+
+
+def get(app, path, query, tok):
     """GET <app><path>?<query> with the Job's token. Returns the JSON answer."""
     req = urllib.request.Request(f"{app}{path}?{urllib.parse.urlencode(query)}",
-                                 headers={"Authorization": "Bearer " + token(), "Accept": "application/json"})
+                                 headers={"Authorization": "Bearer " + tok, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read() or b"null")
 
@@ -93,8 +103,15 @@ def main(argv):
     bundle = (argv[1] if len(argv) > 1 else "").strip()
     app = (argv[2] if len(argv) > 2 else "").strip().rstrip("/")
     say(f"Validation status of bundle {bundle}")
+    try:
+        tok = token()
+    except Exception as e:
+        say(f"No token: Domino's API proxy did not give the Job's token ({e.__class__.__name__}). Run this check from the bundle's "
+            "Validation stage in Domino.")
+        return 1
+    say(f"Read as:   {who(tok)} (the Job's token: the person who clicked Run)")
     say()
-    tasks = get(app, "/api/tasks", {"q": bundle, "trigger_type": "event"})
+    tasks = get(app, "/api/tasks", {"q": bundle, "trigger_type": "event"}, tok)
     tasks = sorted(tasks, key=lambda t: t.get("createdAt") or "", reverse=True)   # newest first, as the route sorts them
     for title, agent in VALIDATORS:
         show(app, title, agent, [t for t in tasks if t.get("agentName") == agent])
