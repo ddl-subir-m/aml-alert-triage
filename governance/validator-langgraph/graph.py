@@ -279,8 +279,10 @@ def section(text, heading):
 
 
 def read_analysis(message):
-    """The model's answer -> (the analysis, None), or (None, why it can't be used)."""
-    if (message.response_metadata or {}).get("stop_reason") in ("max_tokens", "length"):
+    """The model's answer -> (the analysis, None), or (None, why it can't be used). An answer cut at its output limit has stop_reason
+    max_tokens (the Anthropic format) or finish_reason length (the OpenAI format)."""
+    meta = message.response_metadata or {}
+    if meta.get("stop_reason") == "max_tokens" or meta.get("finish_reason") == "length":
         return None, f"the model's answer stopped at its output limit ({MAX_TOKENS} tokens)"
     call = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)
     if not call:

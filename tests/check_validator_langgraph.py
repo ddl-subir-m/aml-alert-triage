@@ -485,58 +485,69 @@ class Relay:
 relay = Relay()
 model = fake_model.start()
 TMP = Path(tempfile.mkdtemp(prefix="v268-", dir="/tmp" if os.path.isdir("/tmp") else None))   # a short path: a Unix socket's limit
-SOCKET = str(TMP / "agui.sock")
-server_log = open(TMP / "serve.log", "w")
-(TMP / "state").mkdir()   # the state folder: the bootstrapper makes it, and the adapter keeps the checkpoint there
-env = {"PATH": os.environ.get("PATH", ""), "HOME": str(TMP), "PYTHONPATH": str(AGUI), "PYTHONDONTWRITEBYTECODE": "1",
-       "AGENT_SERVICE_URL": relay.url, "SESSION_TOKEN": RELAY_TOKEN, "AGENT_MODEL": "sonnet", "AGENT_MODEL_FORMAT": "anthropic",
-       "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{model.server_address[1]}/anthropic", "NO_PROXY": "127.0.0.1,localhost",
-       "TASK_KEY": "AGT-268"}
-agent_server = subprocess.Popen([sys.executable, str(SERVE), "--framework", "langgraph", "--entrypoint", ENTRYPOINT, "--socket", SOCKET,
-                                 "--code", str(ROOT), "--state", str(TMP / "state")], env=env, cwd=str(ROOT), stdout=server_log,
-                                stderr=subprocess.STDOUT)
+MODEL_URL = f"http://127.0.0.1:{model.server_address[1]}"
+FORMATS = {   # the model variables of a framework-lane Job, for each of the LLM Gateway's two formats (the fake model speaks both)
+    "anthropic": {"AGENT_MODEL_FORMAT": "anthropic", "ANTHROPIC_BASE_URL": f"{MODEL_URL}/anthropic"},
+    "openai": {"AGENT_MODEL_FORMAT": "openai", "OPENAI_BASE_URL": f"{MODEL_URL}/v1", "OPENAI_API_KEY": "fake-key-268"}}
+servers = {}   # format -> (the agent server's process, its socket)
 
 
-def healthy():
+def healthy(sock):
     """The agent server's /health answer, or None while nothing listens on the socket (client.health raises OSError then)."""
     try:
-        return client.health(SOCKET)
+        return client.health(sock)
     except (OSError, client.ClientError):
         return None
 
 
-for _ in range(300):
-    if agent_server.poll() is not None or healthy():
-        break
-    time.sleep(0.1)
-up = agent_server.poll() is None and (healthy() or {}).get("framework") == "langgraph"
-check("the platform's serve module loads the entry point from this repo and serves it with the LangGraph adapter", up,
-      (TMP / "serve.log").read_text()[-1500:])
+def serve_graph(fmt):
+    """The platform's serve module with the graph, as a framework-lane Job starts it, with the model in the format `fmt`: its own
+    socket, state folder (the bootstrapper makes it, and the adapter keeps the checkpoint there) and log. -> its socket, or None when
+    it didn't come up."""
+    sock, state = str(TMP / f"agui-{fmt}.sock"), TMP / f"state-{fmt}"
+    state.mkdir()
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(TMP), "PYTHONPATH": str(AGUI), "PYTHONDONTWRITEBYTECODE": "1",
+           "AGENT_SERVICE_URL": relay.url, "SESSION_TOKEN": RELAY_TOKEN, "AGENT_MODEL": "sonnet", "NO_PROXY": "127.0.0.1,localhost",
+           "TASK_KEY": "AGT-268", **FORMATS[fmt]}
+    proc = subprocess.Popen([sys.executable, str(SERVE), "--framework", "langgraph", "--entrypoint", ENTRYPOINT, "--socket", sock,
+                             "--code", str(ROOT), "--state", str(state)], env=env, cwd=str(ROOT),
+                            stdout=open(TMP / f"serve-{fmt}.log", "w"), stderr=subprocess.STDOUT)
+    servers[fmt] = (proc, sock)
+    for _ in range(300):
+        if proc.poll() is not None or healthy(sock):
+            break
+        time.sleep(0.1)
+    up = proc.poll() is None and (healthy(sock) or {}).get("framework") == "langgraph"
+    return sock if up else None
 
 
 def close():
-    agent_server.terminate()
-    try:
-        agent_server.wait(10)
-    except subprocess.TimeoutExpired:
-        agent_server.kill()
+    for proc, _ in servers.values():
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
     relay.server.shutdown()
     model.shutdown()
-    if os.environ.get("KEEP") == "1":   # KEEP=1 keeps the folder: the agent server's log and each case's doc
+    if os.environ.get("KEEP") == "1":   # KEEP=1 keeps the folder: the agent servers' logs and each case's doc
         print(f"     kept {TMP}", flush=True)
     else:
         shutil.rmtree(TMP, ignore_errors=True)
 
 
-if not up:
+SOCKET = serve_graph("anthropic")
+check("the platform's serve module loads the entry point from this repo and serves it with the LangGraph adapter", SOCKET is not None,
+      (TMP / "serve-anthropic.log").read_text()[-1500:])
+if not SOCKET:
     close()
     done()
 
 
-def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
+def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None, sock=None):
     """One AG-UI run of the task, as the framework lane's driver makes it: the instruction as the user message, the operating rules and
     the task brief as the context. -> {"result", "error", "events", "thread"}. `case` names the fake model's script ([certify <case>] in
-    the bundle's name, so in the instruction)."""
+    the bundle's name, so in the instruction). `sock`: the agent server (default: the Anthropic format's)."""
     relay.start(domino, task_key)
     fake_model.seen.clear()
     folder = TMP / f"data-{case}"   # the doc dataset's mount in the Job
@@ -550,7 +561,7 @@ def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
     body = th.run_input(f"run-{case}-{uuid.uuid4().hex[:6]}", tools=[], context=context)
     rules, tr, got, error = stream.Rules(), events.Translator(), [], None
     try:
-        for ev in client.run(SOCKET, body, deadline=time.time() + 120):
+        for ev in client.run(sock or SOCKET, body, deadline=time.time() + 120):
             got.append(ev)
             rules.see(ev)
             tr.feed(ev)
@@ -735,11 +746,11 @@ check("MAIN Domino got one Job, in the task's project, with the scan's command",
 
 
 
-def run_case(case, domino, analysis=None, script=None):
+def run_case(case, domino, analysis=None, script=None, sock=None):
     """One more task, with its own fake Domino and the model's script. -> (the run, its result's lines, the doc, the filed findings,
     the evidence item's content by label)"""
     fake_model.SCRIPTS[case] = script or analyst(analysis)
-    got = run_task(case, domino)
+    got = run_task(case, domino, sock=sock)
     got["result"] = got["result"] or ""
     files = sorted(got["folder"].iterdir())
     text = files[0].read_text() if len(files) == 1 else ""
@@ -846,6 +857,33 @@ bare = run_task("C268none", FakeDomino(), messages=th)
 check("NOBUNDLE an instruction with no line \"Bundle ID: ...\" fails the run, and says what the line must be, before any call",
       "The instruction names no bundle" in (bare["error"] or "") and "Bundle ID:" in (bare["error"] or "") and relay.calls == [],
       (bare["error"], tools(relay.calls)))
+
+# ---------------------------------------------------------------- the cases: the model in the OpenAI format, and an answer cut short
+# The LLM Gateway's other format (AGENT_MODEL_FORMAT openai): the graph's own ChatOpenAI, on chat completions.
+OPENAI = serve_graph("openai")
+check("OPENAI the serve module also serves the graph with the model in the OpenAI format", OPENAI is not None,
+      (TMP / "serve-openai.log").read_text()[-1500:])
+if OPENAI:
+    ran, lines, doc, filed, filled = run_case("C268openai", FakeDomino(snapshot_statuses=("active",)), MAIN, sock=OPENAI)
+    asked = [r for r in fake_model.seen if r.get("format") == "openai"]
+    check("OPENAI the model is asked in the OpenAI format, with an output limit of 16000 (chat completions' max_completion_tokens), "
+          "and its analysis gives the verdict",
+          ran["error"] is None and len(asked) == 1 and asked[0]["body"].get("max_completion_tokens") == 16000
+          and lines[:2] == ["Verdict: approve after fixes", "Critical vulns: no"], (ran["error"], len(asked), lines[:2]))
+    # An answer cut at its output limit: in the OpenAI format, the choice's finish_reason is "length" (the fake model's own answer,
+    # with only that changed), where the Anthropic format has stop_reason "max_tokens".
+    whole = fake_model._openai
+    fake_model._openai = lambda ans, model_name, streamed: (lambda ctype, data: (ctype, data.replace(
+        b'"finish_reason": "tool_calls"', b'"finish_reason": "length"')))(*whole(ans, model_name, streamed))
+    try:
+        ran, lines, doc, filed, filled = run_case("C268cut", FakeDomino(snapshot_statuses=("active",)), MAIN, sock=OPENAI)
+    finally:
+        fake_model._openai = whole
+    check("CUT an OpenAI-format answer that stopped at its output limit (finish_reason length) can't be used: asked again once, "
+          "then no finding and do not approve, and the result says why",
+          len(fake_model.seen) == 2 and not filed and lines[:1] == ["Verdict: do not approve"]
+          and "the model's answer stopped at its output limit (16000 tokens)" in ran["result"], (len(fake_model.seen), lines[:1],
+                                                                                                    ran["result"][-400:]))
 
 close()
 done()
