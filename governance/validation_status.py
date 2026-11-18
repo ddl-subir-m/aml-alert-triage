@@ -4,9 +4,14 @@ spec #260). An approver clicks Run on the bundle's Validation stage, and Domino 
   governance/validation_status.py <bundle ID> <the agent service App's own URL>
 
 It finds the validators' tasks with the App's task search (GET /api/tasks, q = the bundle ID, event trigger), as the person who
-clicked (the Job's token), and prints one block for each validator: the agent, the task, its status, its verdict, its doc's location
-and the task's link. Its lines go to stdout (the Job's log) and to validation_status.txt (the check's output, outputTypes txt). It
-sends only GET requests to the App: it never starts or changes an agent. It prints no token.
+clicked (the Job's token), and prints one block for each validator: the agent, the task, its status, its verdict, its critical vulns,
+its doc's location and the task's link. The bundle ID "newest" (the policy's default) shows the newest event task of each validator
+in the Job's project instead. Its lines go to stdout (the Job's log) and to validation_status.txt (the check's output, outputTypes
+txt). It sends only GET requests to the App: it never starts or changes an agent. It prints no token, and it sends the token only to
+an https URL.
+
+A validator is found by its agent's name (VALIDATORS). Its verdict, critical vulns and doc location are lines of its result (the
+task's summary): "Verdict: ...", "Critical vulns: ...", "Doc location: ..." (Markdown aside).
 """
 import base64
 import json
@@ -100,13 +105,13 @@ def facts(summary):
 ENDED = {"failed": "the task failed", "cancelled": "the task was cancelled"}
 
 
-def show(app, title, agent, tasks):
+def show(app, title, agent, tasks, where):
     """One validator's block. `tasks` are its tasks, newest first: the newest is the validation; a new stage move starts a new one."""
     say(title)
     field("agent", agent)
     if not tasks:
         field("status", "not started")
-        field("note", "no task of this agent names the bundle that you may read (only its owner and editors see all its tasks)")
+        field("note", f"no task of this agent {where} that you may read (only its owner and editors see all its tasks)")
         say()
         return
     t, status = tasks[0], tasks[0].get("status") or "unknown"
@@ -128,10 +133,27 @@ def show(app, title, agent, tasks):
     say()
 
 
+def safe_url(app):
+    """The token goes only to an https App, or to this machine (the repo's check runs a fake App on 127.0.0.1)."""
+    u = urllib.parse.urlsplit(app)
+    return bool(u.hostname) and (u.scheme == "https" or (u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")))
+
+
 def main(argv):
     bundle = (argv[1] if len(argv) > 1 else "").strip()
     app = (argv[2] if len(argv) > 2 else "").strip().rstrip("/")
-    say(f"Validation status of bundle {bundle}")
+    project = os.environ.get("DOMINO_PROJECT_NAME", "").strip()
+    if bundle in ("", "newest"):   # the policy's default: no bundle ID typed
+        scope = f"project {project}" if project else "any project"
+        query, where = {"trigger_type": "event", **({"project": project} if project else {})}, f"in {scope}"
+        say(f"Validation status: no bundle ID given, so the newest validation of each validator in {scope}")
+    else:
+        query, where = {"q": bundle, "trigger_type": "event"}, "names the bundle"
+        say(f"Validation status of bundle {bundle}")
+    if not safe_url(app):
+        say(f"No App URL: {app!r} is not the agent service App's https URL. The policy's service_url must be the App's own URL "
+            "(it ends in /apps-internal/<App ID>): ask your governance admin.")
+        return 1
     try:
         tok = token()
     except Exception as e:
@@ -141,13 +163,13 @@ def main(argv):
     say(f"Read as:   {who(tok)} (the Job's token: the person who clicked Run)")
     say()
     try:
-        tasks = get_tasks(app, {"q": bundle, "trigger_type": "event"}, tok)
+        tasks = get_tasks(app, query, tok)
     except AppError as e:
         say(f"App error: {e}")
         return 1
     tasks = sorted(tasks, key=lambda t: t.get("createdAt") or "", reverse=True)   # newest first, as the route sorts them
     for title, agent in VALIDATORS:
-        show(app, title, agent, [t for t in tasks if t.get("agentName") == agent])
+        show(app, title, agent, [t for t in tasks if t.get("agentName") == agent], where)
     return 0
 
 

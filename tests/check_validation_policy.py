@@ -401,4 +401,32 @@ code, out, _ = run(url="http://127.0.0.1:9")
 check("an App that can't be reached: printed, exit 1", code == 1 and any(ln.startswith("App error: no answer from the App (") for ln in out.splitlines())
       and "Traceback" not in out, out)
 
+# bundle_id "newest" (the policy's default): the newest validation of each validator in the Job's project.
+OTHER = "0e5e1b7a-0000-4000-8000-000000000999"
+newest = [task("AGT-30", FOLDER, "review", DONE_FOLDER, bundle=OTHER, created="2026-11-17T12:00:00Z"),
+          task("AGT-31", FOLDER, "review", "Verdict: approve", created="2026-11-17T08:00:00Z"),
+          task("AGT-32", LANGGRAPH, "running", bundle=OTHER, created="2026-11-17T12:01:00Z"),
+          task("AGT-33", LANGGRAPH, "review", "Verdict: approve", bundle=OTHER, project="another-project", created="2026-11-17T13:00:00Z")]
+code, out, _ = run(bundle="newest", tasks=newest)
+check("newest: one search for the event tasks of the Job's project (DOMINO_PROJECT_NAME), with no q",
+      [c["query"] for c in APP["calls"]] == [{"trigger_type": ["event"], "project": [PROJECT]}], [c["query"] for c in APP["calls"]])
+check("...the head says that no bundle ID was given, and which project it read",
+      f"Validation status: no bundle ID given, so the newest validation of each validator in project {PROJECT}" in out.splitlines(), out)
+check("...each block shows that validator's newest task in the project, whose title names its bundle",
+      "  task:           AGT-30  " + f"{FOLDER}: validate bundle {OTHER}" in block(out, "Validation (agent folder)")
+      and "  earlier tasks:  AGT-31 (review)" in block(out, "Validation (agent folder)")
+      and "  task:           AGT-32  " + f"{LANGGRAPH}: validate bundle {OTHER}" in block(out, "Validation (LangGraph)")
+      and "AGT-33" not in out, out)
+code, out, _ = run(bundle="", tasks=newest)
+check("an empty bundle ID is newest too", code == 0 and [c["query"] for c in APP["calls"]] == [{"trigger_type": ["event"], "project": [PROJECT]}],
+      [c["query"] for c in APP["calls"]])
+
+# The App's URL: the token goes only to an https App (or to this machine, for this check).
+for url, why in (("__AGENT_SERVICE_URL__", "the policy's placeholder"), ("", "no URL"), ("http://apps.example/apps-internal/x", "plain http")):
+    PROXY["calls"] = 0
+    code, out, text = run(url=url, tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+    check(f"an App URL that isn't https ({why}): it says so, exits 1, reads no token and calls nothing",
+          code == 1 and not APP["calls"] and PROXY["calls"] == 0 and any(ln.startswith("No App URL: ") for ln in out.splitlines())
+          and text is not None, out)
+
 sys.exit(1 if failed else 0)
