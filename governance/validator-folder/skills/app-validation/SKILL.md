@@ -20,8 +20,9 @@ When a call fails or is denied, go on with the steps that don't need its answer.
 - `domino_get_policy(bundleId)`: the policy that the bundle follows. In its stage named "Validation", find the evidence item whose name is exactly "Validation (agent folder)", and keep its `id`: that is your evidenceId.
 - In that item's `artifacts`, find each field by its `details.label` and keep its `id`: "Verdict", "Critical vulns", "Summary", "Doc location".
 - A radio field takes one of its `details.options` as its value: use the option's `value`, exactly.
+- The Intake values that the analyst filled: in the stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
 
-Done when: you have the evidenceId and the four artifact IDs, or you know which of them the policy doesn't have.
+Done when: you have the evidenceId and the four artifact IDs, or you know which of them the policy doesn't have, and you have the three Intake values (or know which ones are not filled).
 
 ## 2. Read the App
 
@@ -32,7 +33,7 @@ Read the App's code and its start script in the project folder: `README.md`, `ap
 - the architecture: the entry point, the routes or tools, where the state is, and who can call what;
 - each dependency, with its version or range and how it is installed: from a requirements file, by the start script when the App starts, or from the Domino Environment.
 
-The Intake values (users, data class) that the analyst filled are not readable: no gateway tool reads a bundle's evidence values. In the doc, write "Not read" with that reason, and name it under could not check.
+The doc's "Users and data class" are the Intake values (step 1), as the analyst filled them: write "not filled" for a field with no value. The doc's "Purpose" comes from the code and the README: say where it differs from the Intake's "Purpose".
 
 Done when: each fact for the doc's sections from "Purpose" to "Dependencies" has a file (and a line, where it is code) as its evidence.
 
@@ -66,7 +67,7 @@ Done when: each hit is a real finding or a false hit, each real finding has a se
 - `validator`: `App validator (agent folder)`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
 - `critical_vulns`: `yes` when at least one real finding is S0, else `no`. The reason names those findings, or says why no finding is S0.
 - `verdict`: exactly one of `approve`, `approve after fixes`, `do not approve`. The reason names the findings that decide it.
-- `could_not_check`: each limit of this review. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), what only the running App shows (the Apps proxy, the identity headers, who can open the App), and the Intake values. Also each tool that could not run, and each failed or denied call.
+- `could_not_check`: each limit of this review. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each tool that could not run, and each failed or denied call.
 
 Done when: the file has no `{{` and no `<!--` left, and each section has its text.
 

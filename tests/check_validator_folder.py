@@ -92,7 +92,15 @@ rule("find each field by its label: Verdict, Critical vulns, Summary, Doc locati
      '"summary"', '"doc location"')
 rule("a radio field takes one of its options' values", "radio", "details.options", "value")
 rule("read the App's code and its start script", "app.sh", "code", "read")
-rule("the Intake values: no gateway tool reads them, so say so", "intake", "no gateway tool", "could not check")
+rule("find the Intake values with get_policy: the stage Intake, its item Intake, and each field by its label", 'stage named "intake"',
+     '"purpose"', '"users"', '"data class"', "details.label")
+rule("...each field's value is its result.artifactContent, and a field with no result is not filled", "result.artifactcontent",
+     "no `result`", "not filled")
+rule("the doc's Users and data class are the Intake values, and the doc's purpose says where the code differs from the Intake's",
+     '"users and data class"', "intake", "not filled", '"purpose"', "differs")
+check("the skill no longer says that the Intake values can't be read, nor names them as a limit of every review",
+      not [ln for ln in lines if "intake" in ln and ("not readable" in ln or "no gateway tool" in ln or "always:" in ln)],
+      [ln for ln in lines if "intake" in ln and ("not readable" in ln or "no gateway tool" in ln or "always:" in ln)])
 rule("run the shared scan script in a Domino Job", "domino_run_job", '"python governance/scan.py"')
 rule("wait for the Job, again while it still runs", "domino_wait_job", "still", "again")
 rule("find the scan summary by its two marker lines", "== scan summary ==", "== end of scan summary ==")
@@ -236,6 +244,9 @@ rrule("...and pushes for real, else the push is a dry run and the doc isn't atta
 rrule("the demo project's default branch has the shared parts", "default branch", "governance/scan.py",
       "governance/validation-doc.md")
 rrule("how to run this check", "python tests/check_validator_folder.py")
+rrule("a task reads the Intake values that the analyst filled, with get_policy", "intake values", "analyst", "domino_get_policy")
+check("the folder's README no longer says that no gateway tool reads the Intake values",
+      not [ln for ln in rlines if "intake" in ln and "no gateway tool" in ln], [ln for ln in rlines if "intake" in ln])
 readme = text(ROOT / "README.md")
 check("the repo's README has a section for this validator that links to the folder's README",
       "\n## The agent folder validator\n" in readme and "governance/validator-folder/README.md" in readme)
