@@ -6,7 +6,7 @@
   "lane": "framework",
   "framework": {"name": "langgraph", "entrypoint": "governance/validator-langgraph/graph.py:build_graph", "clientTools": []},
   "toolServers": [],
-  "model": {"source": "gateway", "models": ["sonnet"], "access": "acting"},
+  "model": {"source": "gateway", "models": ["google/gemini-3.8-flash"], "access": "acting"},
   "execution": {"runtime": "job", "maxRuntimeMin": 45, "maxTurns": 10, "idleWaitMin": 0},
   "inputs": [{"name": "project", "type": "project", "required": true}],
   "guardrails": {"tools": {"jobs": true, "push": false},

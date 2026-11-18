@@ -10,7 +10,7 @@ description: >-
   Validates the App of a governance bundle that moved to the Validation stage: reads the App's code, scans it in a Domino Job,
   sorts the real findings from the false hits, commits a validation doc to its task branch, attaches the doc to the bundle, files
   the real findings, and fills the evidence item "Validation (agent folder)". Fake data only.
-model: sonnet
+model: google/gemini-3.8-flash   # not sonnet: Anthropic's cyber safeguards refuse this work (domino-agent-service#270)
 identity: service-account     # the owner adds the service account and its token (README.md): the file holds no user names
 inputs:
   - type: project             # a task runs as a Domino Job in the bundle's project: the event names it

@@ -281,6 +281,8 @@ if not sys.platform.startswith("linux"):
 sys.path.insert(0, str(service / "tests"))
 import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
 
+MODEL = "google/gemini-3.8-flash"   # definition.md's alias: an OpenAI-format model on the Gateway (sonnet is refused: domino-agent-service#270)
+seam.GATEWAY.append({"id": MODEL, "providerType": "openai", "capabilities": ["chat", "tools"]})   # the seam's catalog has no such alias
 seam.start()
 OWNER, ANALYST, APPROVER, SA = "olivia", "rita", "bob", "app-validator-sa"   # people the seam's fake Domino knows, and the account
 TITLE, PATH = "App validator (agent folder)", "governance/validator-folder"
@@ -322,7 +324,7 @@ check("a failure ends the task with a report (on-error: fail): nobody unblocks a
 check("its limits: 45 minutes, 120 turns, and no wait for an answer",
       {k: (a.get("execution") or {}).get(k) for k in ("maxRuntimeMin", "maxTurns", "idleWaitMin")}
       == {"maxRuntimeMin": 45, "maxTurns": 120, "idleWaitMin": 0}, a.get("execution"))
-check("its model is the LLM Gateway alias sonnet", (a.get("model") or {}).get("models") == ["sonnet"], a.get("model"))
+check(f"its model is the LLM Gateway alias {MODEL}", (a.get("model") or {}).get("models") == [MODEL], a.get("model"))
 check("its system prompt is instructions.md", a.get("systemPrompt") == instructions.strip(), (a.get("systemPrompt") or "")[:200])
 own = a.get("ownSkills") or []
 check("its own skill is app-validation, with its description and one file, SKILL.md (the API shows no text: the Job's spec has it)",
