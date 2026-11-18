@@ -14,6 +14,7 @@ GET requests; and it prints each App error with its status.
 One line per case, with a non-zero exit code on any failure. The policy part needs PyYAML (`pip install pyyaml`). No Domino host and
 no App: the live check is domino-agent-service #270.
 """
+import base64
 import json
 import os
 import re
@@ -161,7 +162,15 @@ if not SCRIPT.is_file():
 
 BUNDLE = "0e5e1b7a-0000-4000-8000-000000000266"   # a made-up bundle ID
 PROJECT = "aml-validation-demo"                   # the demo project, as the Job's DOMINO_PROJECT_NAME names it
-TOKEN = "eyJhbGciOiJub25lIn0.eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhbWFyYSJ9.fake-signature-266"   # a fake JWT, for amara (the approver)
+def fake_jwt(claims):
+    """A fake JWT with no signature (alg none) for these claims. It is made when the check runs, so the repo holds no text in the
+    shape of a token (a secret scanner reads one as a real secret)."""
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=").decode()
+    return f"{part({'alg': 'none'})}.{part(claims)}.fake-signature-266"
+
+
+TOKEN = fake_jwt({"preferred_username": "amara"})   # a fake JWT, for amara (the approver)
 FOLDER, LANGGRAPH = "App validator (agent folder)", "App validator (LangGraph)"   # the validators' agent names (#267, #268)
 APP = {"tasks": [], "calls": [], "answer": None}
 PROXY = {"token": TOKEN, "calls": 0}
