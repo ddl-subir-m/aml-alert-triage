@@ -112,12 +112,159 @@ check("it names no Domino resource: no 24-hex ID and no host", not re.search(r"\
       json.dumps(s)[:300])
 check("it has no default resource and no write-back", s.get("defaultResources") == [] and s.get("writeBack") == [], s)
 
-# --------------------------------------------------------------------------------------------- the graph, as the framework lane runs it
+# ----------------------------------------------------------------------------------- the shared parts of the service and graph checks
+PROJECT = {"id": "p-demo", "name": "aml-app-validation", "gitBased": True}   # the demo project: Git-based, as spec #260 decision 5
+BUNDLE = {"id": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9", "name": "aml-case-management v3"}   # Domino gives a bundle a UUID
+DATASET = {"id": "ds-validation-docs", "name": "validation-docs"}
+RELAY_TOKEN = "relay-token-268"
+
+
+def render(template, payload):
+    """{{dotted.path}} -> its value in the event's payload; a path that isn't there stays as it is (agent_service/service.py
+    render_template, which the service part compares with)."""
+    def one(m):
+        v = payload
+        for k in m.group(1).split("."):
+            v = v.get(k) if isinstance(v, dict) else None
+        return str(v) if v is not None else m.group(0)
+    return re.sub(r"{{\s*([\w.]+)\s*}}", one, template)
+
+
+def stage_change(bundle_name, project=None, to="Validation"):
+    """The payload of governance.bundle.stage_changed as the audit poller builds it (agent_service/audit_source.py to_payload)."""
+    project = project or PROJECT
+    return {"source": "domino-audit-trail", "triggeredBy": "analyst", "occurredAt": 1763380000000, "auditTraceId": "trace-268",
+            "bundle": {"id": BUNDLE["id"], "name": bundle_name}, "fromStage": "Intake", "toStage": to,
+            "policy": {"id": "pol-app", "name": "App deployment policy"}, "project": {"id": project["id"], "name": project["name"]}}
+
+
+def live_script(text, dataset_path, project=None):
+    """What the live script does to the subscription before it makes it: each placeholder replaced."""
+    return (text.replace("__DEMO_PROJECT_ID__", (project or PROJECT)["id"]).replace("__DOC_DATASET_ID__", DATASET["id"])
+            .replace("__DOC_DATASET_PATH__", str(dataset_path)))
+
+
+def instruction_for(bundle_name, dataset_path, project=None):
+    """The task's instruction: the subscription's template, its placeholders replaced, filled from the event."""
+    return render(live_script(s.get("instructionTemplate") or "", dataset_path, project), stage_change(bundle_name, project))
+
+
+def gateway_policy(task_key, project=None, bundle_name=None):
+    """The task's gateway policy, as harness.gateway_policy() builds it for this agent and an event task: the event names the bundle
+    and the project, so both are task resources (service.resources_from_context): the project as the task's project input, with
+    Project files, and the bundle with the row "Other resources attached to the task" (service.assign_access). The service part checks
+    it against the real one."""
+    a, project = {**g["access"], "inputs": {}}, project or PROJECT
+    return {"project": dict(project), "taskKey": task_key, "access": a,
+            "resources": [{"type": "project", "id": project["id"], "name": project["name"], "access": a["project"], "input": "project"},
+                          {"type": "bundle", "id": BUNDLE["id"], "name": bundle_name or BUNDLE["name"], "access": a["named"], "input": None}],
+            "tools": {"jobs": True, "push": False, "files": False}, "branchPushed": False, "planLock": False}
+
+
+
+# ------------------------------------------------------------------------------- the service: the wizard's create, and the event
+OWNER, SA = "alice", "svc-validator"   # the seam's person who makes the agent in the wizard, and the service account it acts as
+CERTIFIED = [{"environmentId": "env-langgraph", "revisionId": "rev-langgraph-7", "framework": "langgraph"}]
+
+
+def service_part(service):
+    """The definition through the service's own agent create, as the wizard sends it (POST /api/agents), and a stage-change event through
+    the subscription: the task, its title and instruction, and its Job's gateway policy. The service's seam helper runs the service over
+    real HTTP with a fake Domino (tests/agent_folder_seam.py). Linux only: the service's app imports its sandbox."""
+    if not (service / "tests" / "agent_folder_seam.py").is_file():
+        check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout with the seam helper (tests/agent_folder_seam.py)", False)
+        return
+    if not sys.platform.startswith("linux"):
+        print("SKIP: the service part needs Linux (the service's app imports its sandbox). On a Mac, run the check with Docker, in the "
+              "image of the service's checks (README, \"The LangGraph validator\")", flush=True)
+        return
+    try:
+        import requests  # noqa: F401  (the service's own packages: the image of its checks has them)
+        import fastapi  # noqa: F401
+    except ImportError as e:
+        print(f"SKIP: the service part needs the service's packages, and this Python has no {e.name} (README, \"The LangGraph "
+              "validator\")", flush=True)
+        return
+    sys.path.insert(0, str(service / "tests"))
+    import agent_folder_seam as seam
+    seam.start({"AGENT_CERTIFIED_ENVIRONMENTS": json.dumps(CERTIFIED)})
+    try:
+        service_checks(seam)
+    finally:
+        seam.close()
+
+
+def service_checks(seam):
+    from agent_service import domino
+    project = {"id": seam.PROJECT["id"], "name": seam.PROJECT["name"], "gitBased": True}
+    bundle_name = f"{BUNDLE['name']} [certify none]"
+    fake_get = domino.get
+
+    def get(path, params=None, cache=True, token=None, credential=None):   # the bundle, as Domino answers (guardrails.Bundle)
+        if path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
+            return {"id": BUNDLE["id"], "name": bundle_name, "projectId": project["id"], "projectName": project["name"],
+                    "policyId": "pol-app", "policyName": "App deployment policy", "stage": "Validation", "state": "Active"}
+        return fake_get(path, params, cache, token, credential)
+    domino.get = get
+    seam.add_person(SA)
+    wizard = {**d, "execution": {**d["execution"], "environment": {"id": CERTIFIED[0]["environmentId"]}},
+              "identity": {"mode": "service_account", "serviceAccount": {"userName": SA}}, "identityCredentialToken": seam.PEOPLE[SA]}
+    pushed = {**wizard, "name": "push on", "guardrails": {**g, "tools": {**g["tools"], "push": True}}}
+    r = seam.api("POST", "/api/agents", OWNER, json=pushed)
+    check("SERVICE the framework lane's rules run on the wizard's create: the same definition with Git push on is refused",
+          r.status_code == 400 and "Git push isn't in the framework lane" in r.text, (r.status_code, r.text[:300]))
+    r = seam.api("POST", "/api/agents", OWNER, json=wizard)
+    a = r.json() if r.status_code == 200 else {}
+    check("SERVICE the wizard's create (POST /api/agents) takes the definition: the framework lane's rules pass, on a certified "
+          "Environment, as a service account with its token", r.status_code == 200 and a.get("lane") == "framework"
+          and a.get("framework") == d["framework"] and (a.get("identityCredential") or {}).get("status") == "active", (r.status_code, r.text[:400]))
+    if not a.get("id"):
+        return
+    sub = json.loads(live_script(json.dumps(s), "/mnt/data/" + DATASET["name"], project))
+    r = seam.api("POST", f"/api/agents/{a['id']}/triggers", OWNER, json=sub)
+    trigger = r.json() if r.status_code == 200 else {}
+    check("SERVICE the agent takes the subscription (POST /api/agents/{id}/triggers), with its two templates",
+          r.status_code == 200 and trigger.get("titleTemplate") == s["titleTemplate"]
+          and trigger.get("instructionTemplate") == sub["instructionTemplate"], (r.status_code, r.text[:300]))
+    r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", OWNER, json={"payload": stage_change(bundle_name, project, "Approval")})
+    check("SERVICE a move to another stage starts no task", r.status_code == 200 and r.json().get("fired") == [], r.text[:300])
+    n = len(seam.JOBS)
+    r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", OWNER, json={"payload": stage_change(bundle_name, project)})
+    fired = (r.json().get("fired") or [{}]) if r.status_code == 200 else [{}]
+    check("SERVICE a move to Validation starts one task at once, acting as the service account, and its Domino Job with the account's token",
+          len(fired) == 1 and fired[0].get("actingAs") == SA and len(seam.JOBS) == n + 1
+          and seam.JOBS[-1]["credential"] == ("bearer", seam.PEOPLE[SA]), (r.text[:300], len(seam.JOBS) - n))
+    if len(seam.JOBS) != n + 1:
+        return
+    task = seam.api("GET", f"/api/tasks/{fired[0].get('taskId')}", OWNER).json()
+    check("SERVICE the task's title names the agent and the bundle ID", task.get("title") == f"{NAME}: bundle {BUNDLE['id']}", task.get("title"))
+    found = seam.api("GET", "/api/tasks", OWNER, params={"q": BUNDLE["id"]}).json()
+    found = found.get("tasks", found) if isinstance(found, dict) else found
+    check("SERVICE the App's task search with the bundle ID finds it, as the scripted check searches",
+          [x.get("id") for x in found or []] == [fired[0].get("taskId")], found)
+    import requests
+    job = seam.JOBS[-1]   # the Job's claim and its spec, as the Job's bootstrapper reads them (the seam's spec_of does the same)
+    tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {job['credential'][1]}"},
+                        json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
+    spec = requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok}, timeout=30).json()
+    check("SERVICE the Job's instruction is the template filled from the event: the graph's check runs this instruction",
+          spec.get("instruction") == instruction_for(bundle_name, "/mnt/data/" + DATASET["name"], project), spec.get("instruction"))
+    check("SERVICE the Job's gateway policy is the one the graph's check gives the relay: the event's bundle with the row Other "
+          "resources attached to the task, Read & write", spec.get("gateway") == gateway_policy(fired[0].get("taskKey"), project, bundle_name),
+          json.dumps(spec.get("gateway"))[:600])
+    check("SERVICE a Git-based project's datasets are mounted at /mnt/data, so the doc dataset's path is /mnt/data/<its name>",
+          (spec.get("layout") or {}).get("data") == "/mnt/data", spec.get("layout"))
+
+
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+service = Path(service).expanduser().resolve() if service else None
+if service:
+    service_part(service)
+
+# --------------------------------------------------------------------------------------------- the graph, as the framework lane runs it
 if not service:
-    done("AGENT_SERVICE_REPO is not set, so the graph wasn't run. Set it to a domino-agent-service checkout (README, \"The LangGraph "
-         "validator\")")
-service = Path(service).expanduser().resolve()
+    done("AGENT_SERVICE_REPO is not set, so the service and the graph weren't checked. Set it to a domino-agent-service checkout "
+         "(README, \"The LangGraph validator\")")
 SERVE = service / "agent_runtime" / "lanes" / "framework" / "serve.py"
 if not SERVE.is_file() or not (service / "tests" / "certify" / "fake_model.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout with the framework lane", False)
@@ -143,47 +290,6 @@ from agent_runtime.lanes.framework import client, events, stream, thread  # noqa
 gateway.LANE = "framework"   # as the framework lane's driver sets it: a denial names no harness tool
 gateway.WAIT_S, gateway.WAIT_EVERY = 0.3, 0.1   # wait_job waits up to 45 s for each call: here a fraction of a second
 AGUI = fetch_domino_agui.for_check()   # the folder with domino_agui/ in it: the pinned version from PyPI (cached)
-
-PROJECT = {"id": "p-demo", "name": "aml-app-validation", "gitBased": True}   # the demo project: Git-based, as spec #260 decision 5
-BUNDLE = {"id": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9", "name": "aml-case-management v3"}   # Domino gives a bundle a UUID
-DATASET = {"id": "ds-validation-docs", "name": "validation-docs"}
-RELAY_TOKEN = "relay-token-268"
-
-
-def render(template, payload):
-    """{{dotted.path}} -> its value in the event's payload; a path that isn't there stays as it is (agent_service/service.py
-    render_template, which the service part compares with)."""
-    def one(m):
-        v = payload
-        for k in m.group(1).split("."):
-            v = v.get(k) if isinstance(v, dict) else None
-        return str(v) if v is not None else m.group(0)
-    return re.sub(r"{{\s*([\w.]+)\s*}}", one, template)
-
-
-def stage_change(bundle_name):
-    """The payload of governance.bundle.stage_changed as the audit poller builds it (agent_service/audit_source.py to_payload)."""
-    return {"source": "domino-audit-trail", "triggeredBy": "analyst", "occurredAt": 1763380000000, "auditTraceId": "trace-268",
-            "bundle": {"id": BUNDLE["id"], "name": bundle_name}, "fromStage": "Intake", "toStage": "Validation",
-            "policy": {"id": "pol-app", "name": "App deployment policy"}, "project": {"id": PROJECT["id"], "name": PROJECT["name"]}}
-
-
-def instruction_for(bundle_name, dataset_path):
-    """The task's instruction: the subscription's template, filled from the event, with the live script's placeholders replaced."""
-    filled = render(s.get("instructionTemplate") or "", stage_change(bundle_name))
-    return filled.replace("__DOC_DATASET_ID__", DATASET["id"]).replace("__DOC_DATASET_PATH__", str(dataset_path))
-
-
-def gateway_policy(task_key):
-    """The task's gateway policy, as harness.gateway_policy() builds it for this agent and an event task: the event names the bundle
-    and the project, so both are task resources (service.resources_from_context), the bundle with the row "Other resources attached
-    to the task" and the project with Project files (service.assign_access). The service part compares it with the real one."""
-    a = {**g["access"], "inputs": {}}
-    return {"project": dict(PROJECT), "taskKey": task_key, "access": a,
-            "resources": [{"type": "project", "id": PROJECT["id"], "name": PROJECT["name"], "access": a["project"], "input": None},
-                          {"type": "bundle", "id": BUNDLE["id"], "name": BUNDLE["name"], "access": a["named"], "input": None}],
-            "tools": {"jobs": True, "push": False, "files": False}, "branchPushed": False, "planLock": False}
-
 
 # ------------------------------------------------------------------------------------------------- the fake Domino, in Domino's shape
 POLICY_YAML = yaml.safe_load((ROOT / "governance" / "app-deployment-policy.yaml").read_text())
