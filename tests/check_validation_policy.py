@@ -4,6 +4,11 @@ domino-agent-service spec #260 (ticket #266), seen from outside.
 The policy: the YAML parses, and it has the three stages (Intake, Validation, Approval), the two validators' evidence items with their
 four fields, and the scripted check, with the placeholders that the live script fills.
 
+The scripted check: it runs as Domino runs it (with python -S, so only the stdlib), against a fake agent service App on 127.0.0.1
+(the task search GET /api/tasks, in the shape of app.py's list_tasks answer) and a fake Domino API proxy (the Job's token). From the
+fake answer it prints one block for each validator; it reads and never prints the token; it writes its output file; it sends only
+GET requests; and it prints each App error with its status.
+
   python tests/check_validation_policy.py
 
 One line per case, with a non-zero exit code on any failure. The policy part needs PyYAML (`pip install pyyaml`). No Domino host and
@@ -12,6 +17,7 @@ no App: the live check is domino-agent-service #270.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -157,7 +163,7 @@ BUNDLE = "0e5e1b7a-0000-4000-8000-000000000266"   # a made-up bundle ID
 PROJECT = "aml-validation-demo"                   # the demo project, as the Job's DOMINO_PROJECT_NAME names it
 TOKEN = "eyJhbGciOiJub25lIn0.eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJhbWFyYSJ9.fake-signature-266"   # a fake JWT, for amara (the approver)
 FOLDER, LANGGRAPH = "App validator (agent folder)", "App validator (LangGraph)"   # the validators' agent names (#267, #268)
-APP = {"tasks": [], "calls": [], "answer": None, "readers": {"amara"}}
+APP = {"tasks": [], "calls": [], "answer": None}
 PROXY = {"token": TOKEN, "calls": 0}
 
 
@@ -190,8 +196,8 @@ DONE_GRAPH = ("Verdict: approve after fixes\nCritical vulns: yes\n"
 class Fake(BaseHTTPRequestHandler):
     """The Domino API proxy of a Job (GET /access-token, as governance/trigger_probe.py of the trigger test read it) and the agent
     service App's task search (GET /api/tasks): app.py's list_tasks, with its filters (agent_id, status, triggered_by, project,
-    trigger_type, q in the title or key, case aside), newest first, and only the tasks that the caller may read
-    (service.can_read_task: here, the people in APP["readers"])."""
+    trigger_type, q in the title or key, case aside), newest first. Who may read a task is the App's rule (service.can_read_task):
+    here the caller may read every task, and a task that the caller may not read is one that the answer doesn't hold."""
 
     def log_message(self, *a):
         pass
@@ -210,6 +216,8 @@ class Fake(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         if self.server.role == "proxy":
             PROXY["calls"] += 1
+            if self.command != "GET" or url.path != "/access-token":
+                return self.answer(404, b"", "text/plain")
             return self.answer(200, PROXY["token"].encode(), "text/plain")
         APP["calls"].append({"method": self.command, "path": url.path, "query": urllib.parse.parse_qs(url.query),
                              "auth": self.headers.get("Authorization")})
@@ -228,7 +236,7 @@ class Fake(BaseHTTPRequestHandler):
                     and (not q.get("project") or (t.get("project") or {}).get("name") == q["project"])
                     and (not q.get("trigger_type") or t["trigger"]["type"] == q["trigger_type"])
                     and (not q.get("q") or q["q"].lower() in (t["title"] + " " + t["key"]).lower()))
-        rows = [t for t in APP["tasks"] if pred(t) and "amara" in APP["readers"]]
+        rows = [t for t in APP["tasks"] if pred(t)]
         return self.answer(200, sorted(rows, key=lambda t: t["createdAt"], reverse=True))
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_any
@@ -430,4 +438,5 @@ for url, why in (("__AGENT_SERVICE_URL__", "the policy's placeholder"), ("", "no
           code == 1 and not APP["calls"] and PROXY["calls"] == 0 and any(ln.startswith("No App URL: ") for ln in out.splitlines())
           and text is not None, out)
 
+shutil.rmtree(WORK, ignore_errors=True)
 sys.exit(1 if failed else 0)
