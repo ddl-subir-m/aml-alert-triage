@@ -2,8 +2,8 @@
 
 On Domino it runs as the App aml-case-management: app.sh starts it on port 8888. Locally:
   mkdir -p /tmp/aml && AML_DB_PATH=/tmp/aml/cases.db PORT=8890 python case_server/server.py
-Then the MCP URL is http://localhost:8890/mcp. POST /reset (not one of the server's tools) loads the seed again, and GET / is the
-case board: a read-only page with the alerts and SAR cases (case_server/board.py).
+Then the MCP URL is http://localhost:8890/mcp. POST /reset (not one of the server's tools) loads the seed again, POST /upload reads
+an uploaded YAML file of alerts, and GET / is the case board: a read-only page with the alerts and SAR cases (case_server/board.py).
 
 Settings (environment variables):
   AML_DB_PATH    the SQLite state file (required). Its folder must exist; the server never makes it.
@@ -131,6 +131,18 @@ def build_server(store: CaseStore, host: str, port: int) -> FastMCP:
         alerts = store.reset()
         log.info("reset: made the tables again and loaded the seed %s", store.seed_path)
         return JSONResponse({"result": "loaded the seed", "alerts": alerts})
+
+    # Not one of the server's tools either. It changes nothing: it reads an uploaded YAML file of alerts, for a test of a new seed.
+    @mcp.custom_route("/upload", methods=["POST"])
+    async def upload(request: Request) -> JSONResponse:
+        """Read an uploaded YAML file ({"alerts": [...]}) and answer with how many alerts it holds."""
+        import yaml   # pyyaml (case_server/requirements.txt). Only this route needs it.
+
+        data = yaml.full_load(await request.body())
+        alerts = data.get("alerts") if isinstance(data, dict) else None
+        count = len(alerts) if isinstance(alerts, list) else 0
+        log.info("upload: read %d alert(s)", count)
+        return JSONResponse({"result": "read the upload", "alerts": count})
 
     # Not one of the server's tools either. Read only: it changes nothing, so a person can leave it open while agents work.
     @mcp.custom_route("/", methods=["GET"])
