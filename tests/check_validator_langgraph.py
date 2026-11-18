@@ -206,6 +206,41 @@ def published_policy():
             "gates": [], "taxonomyTags": [], "taxonomyProperties": []}
 
 
+def scan_module():
+    """governance/scan.py as a module: its summary lines come from its own code. Each tool's version is the tested one (its --version
+    would run the tool, which this Python may not have)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("governance_scan", ROOT / "governance" / "scan.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.version = {"pip_audit": "2.10.1", "bandit": "1.9.4"}.get
+    return mod
+
+
+SCAN = scan_module()
+SCANNED = "4c9e1f0a7b3d2e6f8a1b0c9d8e7f6a5b4c3d2e1f"   # the commit that the scan Job read
+
+
+def scan_log(fixture="clean", fail=None):
+    """The stdout of the scan Job, as governance/scan.py prints it in a Domino Job, with the fixtures' pip-audit and bandit answers
+    (tests/fixtures/scan/): its progress lines, its summary between the two markers, and the lines Domino adds after the command.
+    `fail`: the tool that could not run (scan.py then exits 1, and Domino's Job fails)."""
+    out = "/mnt/artifacts/governance-scan"
+    folder = ROOT / "tests" / "fixtures" / "scan" / fixture
+    audit = (None, "could not run (exit 1): ERROR: No matching distribution found") if fail == "pip-audit" else \
+        (json.loads((folder / "pip-audit.json").read_text()), "")
+    bandit = (json.loads((folder / "bandit.json").read_text()), "")
+    result = f"result: {fail} could not run (its messages: {fail}.log)" if fail else "result: both tools ran"
+    return "\n".join([f"scan: pip-audit and bandit on case_server (governance/scan.py), output in {out}",
+                      "scan: running pip-audit on case_server/requirements.txt", "scan: running bandit on case_server",
+                      SCAN.START, f"commit: {SCANNED}", *SCAN.pip_audit_lines(*audit), *SCAN.bandit_lines(*bandit),
+                      f"JSON: {out}/bandit.json" if fail else f"JSON: {out}/pip-audit.json, {out}/bandit.json", result, SCAN.END,
+                      "Evaluating cleanup command on EXIT ...", "Caught termination signal!"])
+
+
+JOB_SECONDS = 0.45   # how long the scan Job runs: longer than one wait_job call (gateway.WAIT_S), shorter than two
+
+
 class FakeDomino:
     """The Job's sidecar for one case: Domino's APIs as the specs have them (reference_materials/domino-api-specs in the service repo).
     Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, POST /findings (guardrails.Finding), POST
@@ -213,14 +248,14 @@ class FakeDomino:
     {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
     holds each request: (method, path, query, body)."""
 
-    def __init__(self, job_statuses=("Running", "Succeeded"), log="", snapshot_statuses=("pending", "active")):
+    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active")):
         self.policy = published_policy()
         self.bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": PROJECT["id"], "projectName": PROJECT["name"],
                        "projectOwner": "analyst", "policyId": "pol-app", "policyName": "App deployment policy", "policyVersionId": "pv-1",
                        "policyVersion": "1", "stage": "Validation", "state": "Active", "createdAt": "2026-11-17T10:00:00Z",
                        "createdBy": {"id": "u-analyst", "userName": "analyst"}, "attachments": [], "stages": [], "policies": []}
-        self.job_statuses, self.log, self.snapshot_statuses = list(job_statuses), log, list(snapshot_statuses)
-        self.calls, self.snapshots = [], {}
+        self.job_end, self.log, self.snapshot_statuses = job_end, scan_log() if log is None else log, list(snapshot_statuses)
+        self.calls, self.snapshots, self.job, self.job_started = [], {}, None, None
 
     def http(self, method, path, query=None, body=None, raw=False, ctype=None, headers=None):
         self.calls.append((method, path, query, body))
@@ -229,7 +264,26 @@ class FakeDomino:
             return 200, self.bundle
         if method == "GET" and path == "/api/governance/v1/policies/pol-app":
             return 200, self.policy
+        if method == "POST" and path == "/api/jobs/v1/jobs":
+            self.job_started = time.time()
+            self.job = {"id": "job-1", "number": 41, "title": body.get("title"), "runCommand": body.get("runCommand"),
+                        "projects": [{"projectId": body.get("projectId"), "commitId": SCANNED}], "status": self.job_status("Queued")}
+            return 200, {"job": self.job, "metadata": {"requestId": "rq-job", "notices": []}}
+        if method == "GET" and path == "/api/jobs/beta/jobs/job-1":
+            # the Job runs for JOB_SECONDS: a wait_job call (WAIT_S) ends before that, so the graph must call it again
+            status = self.job_end if time.time() - self.job_started >= JOB_SECONDS else "Running"
+            return 200, {"job": {**self.job, "status": self.job_status(status)}, "metadata": {"requestId": "rq-get", "notices": []}}
+        if method == "GET" and path == "/api/jobs/beta/jobs/job-1/logs":
+            text = self.log if (query or {}).get("logType") == "stdout" else "Pulling image ...\nContainer started"
+            return 200, {"logs": {"isComplete": True, "logContent": [
+                {"log": line, "logType": query["logType"], "size": len(line), "timestamp": "2026-11-17T11:00:00Z"}
+                for line in text.splitlines()]}, "metadata": {"requestId": "rq-logs", "notices": []}}
         return 404, {"message": f"{path} not found"}
+
+    @staticmethod
+    def job_status(status):
+        return {"executionStatus": status, "isCompleted": status in ("Succeeded", "Failed", "Stopped", "Error"), "isArchived": False,
+                "isScheduled": False}
 
 
 # ------------------------------------------------------------------------------------------------------ the relay, as a Job sets it up
@@ -355,6 +409,28 @@ check("MAIN the run ends with no error", ran["error"] is None, ran["error"])
 check("MAIN collect: the graph first reads the bundle and its policy (get_bundle, then get_policy), with the event's bundle ID",
       relay.calls[:2] == [("get_bundle", {"bundleId": BUNDLE["id"]}), ("get_policy", {"bundleId": BUNDLE["id"]})], relay.calls[:3])
 check("MAIN the task has a result, which names the bundle", BUNDLE["id"] in (ran["result"] or ""), ran["result"])
+
+
+def scan_calls(calls):
+    """The scan step's calls: run_job, then each wait_job, then get_job_logs. -> (run_job's arguments, the number of wait_job calls,
+    whether get_job_logs came right after them for the same Job), or None when the calls aren't in that shape."""
+    names = tools(calls)
+    if "run_job" not in names:
+        return None
+    i = names.index("run_job")
+    n = next((k for k, name in enumerate(names[i + 1:]) if name != "wait_job"), len(names) - i - 1)
+    after = calls[i + 1 + n] if i + 1 + n < len(calls) else (None, None)
+    return calls[i][1], n, after == ("get_job_logs", {"jobId": "job-1"}) and all(a == {"jobId": "job-1"} for _, a in calls[i + 1:i + 1 + n])
+
+
+check("MAIN scan: right after the policy, run_job with the shared scan's command, then wait_job until the Job is done (it still runs "
+      "at the first wait, so two calls or more), then get_job_logs",
+      tools(relay.calls).index("run_job") == 2 and scan_calls(relay.calls)[0] == {"command": "python governance/scan.py",
+                                                                                 "title": "App validation scan (LangGraph)"}
+      and scan_calls(relay.calls)[1] >= 2 and scan_calls(relay.calls)[2], relay.calls[2:8])
+started = [b for m, p, q, b in dom.calls if (m, p) == ("POST", "/api/jobs/v1/jobs")]
+check("MAIN Domino got one Job, in the task's project, with the scan's command",
+      len(started) == 1 and started[0]["runCommand"] == "python governance/scan.py" and started[0]["projectId"] == PROJECT["id"], started)
 
 close()
 done()

@@ -2,6 +2,7 @@
 run does the same steps in the same order:
 
   collect   own tools read the App's code (list_files, read_file, as the probe did); get_bundle, get_policy
+  scan      run_job with the shared scan (governance/scan.py), wait_job until the Job is done, get_job_logs: the scan's summary
   findings  the task's result, streamed as the last text: the verdict, critical vulns and the doc's location
 
 The gateway tools are called from this code through the relay (domino_agui.contract.relay(): a ToolResult with is_error, so a denial
@@ -28,6 +29,9 @@ SKIP = {".git", "__pycache__", ".venv", "node_modules"}
 LIMIT = 200
 APP = ("app.sh", "case_server")   # the App under validation: its start script and its server
 EVIDENCE = "Validation (LangGraph)"   # the evidence item this validator fills, and no other
+SCAN = "python governance/scan.py"   # the shared scan, as both validators run it (governance/README.md)
+SUMMARY = ("== scan summary ==", "== end of scan summary ==")   # its summary's markers: Domino adds lines after it, so not the last line
+WAITS = 30   # wait_job calls before the graph stops waiting for the scan: each one waits up to 45 s, so about 20 minutes
 
 
 def list_files(folder: str = ".") -> str:
@@ -62,6 +66,7 @@ class Validation(State, total=False):
     bundle: dict      # get_bundle's answer
     evidence: dict    # this validator's evidence item: {"id", "fields": {label: artifact ID}}
     code: dict        # {path: text}: the App's files
+    scan: dict        # {"ok", "jobId", "number", "status", "summary", "why"}: the scan Job and its summary
     problems: list    # what a step could not do, for the result and the doc
     result: str
 
@@ -123,6 +128,39 @@ def evidence_item(policy):
     return {}
 
 
+async def scan(state):
+    """The shared scan in a Domino Job: run_job, then wait_job until the Job is done, then get_job_logs for its summary. The scan ran
+    only when the Job succeeded and its summary says that both tools ran."""
+    ok, text = await call("run_job", command=SCAN, title="App validation scan (LangGraph)")
+    job_id = ((answer(text) or {}).get("job") or {}).get("id") if ok else None
+    if not job_id:
+        return {"scan": {"ok": False, "why": f"the scan Job didn't start: {text[:300]}"}}
+    done = None
+    for _ in range(WAITS):
+        ok, text = await call("wait_job", jobId=job_id)
+        done = re.match(r"Job (\S+) finished: (\w+)\.", text) if ok else None
+        if done or not ok or not text.startswith(f"Job "):
+            break
+    if not done:
+        why = f"wait_job: {text[:300]}" if not ok else f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job"
+        return {"scan": {"ok": False, "jobId": job_id, "why": why}}
+    number, status = done.groups()
+    ok, logs = await call("get_job_logs", jobId=job_id)
+    summary = scan_summary(logs if ok else "") or scan_summary(text)
+    result = next((ln for ln in (summary or "").splitlines() if ln.startswith("result:")), "")
+    ran = status == "Succeeded" and result == "result: both tools ran"
+    why = None if ran else (f"the scan Job {number} ended {status}" + (f" ({result})" if result else "")
+                            + ("" if summary else ", and its log has no scan summary"))
+    return {"scan": {"ok": ran, "jobId": job_id, "number": number, "status": status, "summary": summary, "why": why}}
+
+
+def scan_summary(log):
+    """The scan's summary in a Job's log: the last block between its two markers, with them. None when there is none."""
+    end = (log or "").rfind(SUMMARY[1])
+    start = log.rfind(SUMMARY[0], 0, end) if end >= 0 else -1
+    return log[start:end + len(SUMMARY[1])] if start >= 0 else None
+
+
 async def findings(state, config):
     """The task's result, streamed as the run's last text (the task's result is the run's last text: a message in the state is not
     sent)."""
@@ -136,8 +174,10 @@ def build_graph(checkpointer):
     """The compiled graph, with the checkpointer that the platform's adapter gives (the thread lives in the state folder)."""
     g = StateGraph(Validation)
     g.add_node("collect", collect)
+    g.add_node("scan", scan)
     g.add_node("findings", findings)
     g.add_edge(START, "collect")
-    g.add_edge("collect", "findings")
+    g.add_edge("collect", "scan")
+    g.add_edge("scan", "findings")
     g.add_edge("findings", END)
     return g.compile(checkpointer=checkpointer)
