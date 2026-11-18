@@ -243,13 +243,14 @@ def serve(role):
 app_server, proxy_server = serve("app"), serve("proxy")
 APP_URL = f"http://127.0.0.1:{app_server.server_port}"
 WORK = Path(tempfile.mkdtemp(prefix="check-validation-status-"))
+LAST = {}   # the last run's working folder
 
 
 def run(bundle=BUNDLE, url=None, tasks=(), env=None):
     """Runs the scripted check as Domino runs it ('governance/validation_status.py' '<bundle>' '<url>'), in a fresh working
     folder, with python -S (so a package outside the stdlib fails it). Returns (exit code, stdout + stderr, the output file's text)."""
     APP["tasks"], APP["calls"] = list(tasks), []
-    work = Path(tempfile.mkdtemp(dir=WORK))
+    work = LAST["work"] = Path(tempfile.mkdtemp(dir=WORK))
     full = {"PATH": os.environ.get("PATH", ""), "DOMINO_API_PROXY": f"http://127.0.0.1:{proxy_server.server_port}",
             "DOMINO_PROJECT_NAME": PROJECT, "DOMINO_ARTIFACTS_DIR": str(work / "artifacts"), **(env or {})}
     p = subprocess.run([sys.executable, "-S", str(SCRIPT), bundle, APP_URL if url is None else url], cwd=work, env=full,
@@ -346,5 +347,19 @@ code, out, text = run(env={"DOMINO_API_PROXY": "http://127.0.0.1:9"})
 check("no token (no API proxy): it says so, exits 1, and calls no App",
       code == 1 and not APP["calls"] and any(ln.startswith("No token: Domino's API proxy did not give the Job's token")
                                              for ln in out.splitlines()), out)
+check("...and its output file says so too", text is not None and "No token: Domino's API proxy" in text, text)
+
+
+# The output file: Domino shows it to approvers (outputTypes txt).
+def copy():
+    f = LAST["work"] / "artifacts" / "validation_status.txt"
+    return f.read_text() if f.is_file() else None
+
+
+code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER), task("AGT-16", LANGGRAPH, "running")])
+check("it writes validation_status.txt in its working folder, with the lines of the Job's log",
+      text is not None and text.splitlines() == out.splitlines() and "Validation (LangGraph)" in text, text)
+check("...and a copy in the Job's artifacts folder (DOMINO_ARTIFACTS_DIR: a Git-based project keeps the Job's results there)",
+      text is not None and copy() == text, copy())
 
 sys.exit(1 if failed else 0)

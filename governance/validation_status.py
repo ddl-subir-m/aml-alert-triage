@@ -21,7 +21,8 @@ import urllib.request
 VALIDATORS = (("Validation (agent folder)", "App validator (agent folder)"),
               ("Validation (LangGraph)", "App validator (LangGraph)"))
 WIDTH = 16   # the label column: "critical vulns: " is the longest label
-LINES = []
+OUTPUT = "validation_status.txt"
+LINES = []   # every line said, for the output file
 
 
 def say(line=""):
@@ -118,5 +119,23 @@ def main(argv):
     return 0
 
 
+def write_output():
+    """validation_status.txt, the check's output (outputTypes txt): in the working folder, and in the Job's artifacts folder, where
+    a Git-based project keeps a Job's results (DOMINO_ARTIFACTS_DIR, else /mnt/artifacts, as the service's tests/certify does)."""
+    artifacts = os.environ.get("DOMINO_ARTIFACTS_DIR") or ("/mnt/artifacts" if os.access("/mnt/artifacts", os.W_OK) else "")
+    folders = [os.getcwd()] + ([artifacts] if artifacts and os.path.abspath(artifacts) != os.getcwd() else [])
+    for folder in folders:
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, OUTPUT), "w") as f:
+                f.write("\n".join(LINES) + "\n")
+        except OSError as e:
+            print(f"Could not write {OUTPUT} in {folder}: {e}", flush=True)
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        code = main(sys.argv)
+    finally:
+        write_output()
+    sys.exit(code)
