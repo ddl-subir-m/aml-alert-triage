@@ -92,10 +92,11 @@ ANALYSIS = {   # the model's structured output: the one tool it calls
 
 
 def list_files(folder: str = ".") -> str:
-    """The files under a folder of the project, as paths relative to the project's root, one on each line (at most 200)."""
+    """The files under a folder of the project, as paths relative to the project's root, one on each line (at most 200). A file's
+    path gives that file (rglob on a file gives nothing)."""
     base = _inside(folder)
-    files = sorted(str(p.relative_to(ROOT)) for p in base.rglob("*")
-                   if p.is_file() and not SKIP & set(p.relative_to(ROOT).parts))
+    found = [base] if base.is_file() else base.rglob("*")
+    files = sorted(str(p.relative_to(ROOT)) for p in found if p.is_file() and not SKIP & set(p.relative_to(ROOT).parts))
     if not files:
         return f"No files under {folder}"
     more = f"\n... and {len(files) - LIMIT} more" if len(files) > LIMIT else ""

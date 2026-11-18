@@ -644,6 +644,8 @@ said = asked[0]["conv"].text() if asked else ""
 check("MAIN the model reads the scan's summary (each bandit hit), the App's code and the task's instruction",
       SCAN.START in said and "B608 hardcoded_sql_expressions at case_server/store.py:215" in said
       and (ROOT / "case_server" / "server.py").read_text()[:400] in said and "Bundle ID: " + BUNDLE["id"] in said, said[:300])
+check("MAIN the model reads the App's start script, app.sh, with its path (analyze.md's step 1 names it)",
+      "### app.sh" in said and (ROOT / "app.sh").read_text().strip()[:400] in said, said[said.find("## The App's code"):][:300])
 check("MAIN the model reads the shared rules: the severity scale and the rule for critical vulns (governance/README.md)",
       "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said, said[:300])
 shown = [e for e in ran["events"] if e.get("type", "").startswith(("TEXT_MESSAGE", "TOOL_CALL"))]
