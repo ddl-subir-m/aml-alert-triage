@@ -7,7 +7,9 @@ run does the same steps in the same order:
             call (the structured output); the code then applies the shared rules (governance/README.md)
   write     renders the doc from the shared template (governance/validation-doc.md), writes it to the doc dataset's mount,
             write_dataset_snapshot, get_dataset_snapshot until the snapshot is active, write_bundle_attachment (DatasetSnapshotFile)
-  findings  the task's result, streamed as the last text: the verdict, critical vulns and the doc's location
+  findings  write_governance_finding for each real finding ("[LangGraph] <title>"), then write_policy_result for the evidence item
+            "Validation (LangGraph)" only; then the task's result, streamed as the last text: its first lines are "Verdict: ...",
+            "Critical vulns: ..." and "Doc location: ...", which the scripted check reads (governance/validation_status.py)
 
 The gateway tools are called from this code through the relay (domino_agui.contract.relay(): a ToolResult with is_error, so a denial
 is seen as one), never by the model. The instruction is the event subscription's (subscription.json): the graph reads the bundle ID
@@ -40,6 +42,7 @@ SKIP = {".git", "__pycache__", ".venv", "node_modules"}
 LIMIT = 200
 APP = ("app.sh", "case_server")   # the App under validation: its start script and its server
 EVIDENCE = "Validation (LangGraph)"   # the evidence item this validator fills, and no other
+FIELDS = ("Verdict", "Critical vulns", "Summary", "Doc location")   # its fields' labels (governance/app-deployment-policy.yaml)
 SCAN = "python governance/scan.py"   # the shared scan, as both validators run it (governance/README.md)
 SUMMARY = ("== scan summary ==", "== end of scan summary ==")   # its summary's markers: Domino adds lines after it, so not the last line
 WAITS = 30   # wait_job calls before the graph stops waiting for the scan: each one waits up to 45 s, so about 20 minutes
@@ -140,9 +143,10 @@ def answer(text):
     return got if isinstance(got, dict) else None
 
 
-async def call(name, **args):
-    """One gateway tool call through the relay. -> (ok, the answer's text). A denial or Domino's error is not ok."""
-    got = await contract.relay().call(name, args)
+async def call(tool, /, **args):
+    """One gateway tool call through the relay. -> (ok, the answer's text). A denial or Domino's error is not ok. (`tool` is positional
+    only: write_governance_finding has an argument `name`.)"""
+    got = await contract.relay().call(tool, args)
     return not got.is_error, got.text
 
 
@@ -429,15 +433,39 @@ def scan_results(scan):
 
 
 async def findings(state, config):
-    """The task's result, streamed as the run's last text (the task's result is the run's last text: a message in the state is not
-    sent)."""
-    a = state.get("analysis") or {}
-    doc = state.get("doc") or {}
-    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", f"Doc location: {doc.get('location')}", "",
-                        f"Bundle: {state['bundle_id']}. {a.get('summary') or ''}".strip()])
+    """Each real finding on the bundle, then this validator's evidence item, then the task's result. The result is streamed as the
+    run's last text: the task's result is the run's last text, and a message that a node only puts in the state is not sent."""
+    a, doc, bundle_id = state.get("analysis") or {}, state.get("doc") or {}, state["bundle_id"]
+    filed, problems = [], []
+    for f in a.get("findings") or []:
+        description = "\n\n".join(x for x in [f.get("description"), f"Evidence: {f['evidence']}", f"Fix: {f['fix']}",
+                                               f"Filed by the App validator (LangGraph), from {'the scan' if f['source'] == 'scan' else 'the code'}."] if x)
+        ok, text = await call("write_governance_finding", bundleId=bundle_id, name=f["name"], severity=f["severity"], description=description)
+        filed.append(f["name"]) if ok else problems.append(f"write_governance_finding ({f['name']}): {text[:200]}")
+    summary = " ".join(x for x in [a.get("summary"), f"Real findings filed: {len(filed)}.", f"False hits: {len(a.get('false_hits') or [])}.",
+                                   (f"Not done: {'; '.join(state.get('problems') or [])}." if state.get("problems") else "")] if x)
+    item, location = state.get("evidence") or {}, doc.get("location") or "not written"
+    fields = item.get("fields") or {}
+    if item.get("id") and all(fields.get(label) for label in FIELDS):
+        content = {fields["Verdict"]: a.get("verdict"), fields["Critical vulns"]: a.get("critical_vulns"), fields["Summary"]: summary,
+                   fields["Doc location"]: location}
+        ok, text = await call("write_policy_result", bundleId=bundle_id, evidenceId=item["id"], content=content)
+        filled = "filled" if ok else "not filled"
+        if not ok:
+            problems.append(f"write_policy_result: {text[:300]}")
+    else:
+        filled = "not filled"
+        problems.append(f"write_policy_result: the bundle's policy has no evidence item {EVIDENCE!r} with the fields {', '.join(FIELDS)}")
+    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", f"Doc location: {location}", "",
+                        f"Bundle: {bundle_id}. {a.get('summary') or ''}".strip(), "",
+                        f"Findings filed ({len(filed)}): {'; '.join(filed) or 'none'}",
+                        f"False hits ({len(a.get('false_hits') or [])}): {'; '.join(h['hit'] for h in a.get('false_hits') or []) or 'none'}",
+                        f"Evidence item {EVIDENCE}: {filled}."]
+                       + ([("Not done:"), *(f"- {x}" for x in (state.get("problems") or []) + problems)]
+                          if state.get("problems") or problems else []))
     message_id = f"msg-{uuid.uuid4().hex[:16]}"
     await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
-    return {"result": result, "messages": [AIMessage(result, id=message_id)]}
+    return {"result": result, "messages": [AIMessage(result, id=message_id)], "problems": problems}
 
 
 def build_graph(checkpointer):

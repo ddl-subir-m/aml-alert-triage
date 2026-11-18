@@ -289,11 +289,27 @@ class FakeDomino:
         if method == "GET" and parts[:4] == ["api", "datasetrw", "v1", "snapshots"] and parts[4:] and parts[4] in self.snapshots:
             status = self.snapshot_statuses.pop(0) if len(self.snapshot_statuses) > 1 else self.snapshot_statuses[0]
             return 200, self.snapshot(parts[4], status)
+        if method == "POST" and path == "/api/governance/v1/findings":
+            return 200, {"id": f"fnd-{len(self.posted('/api/governance/v1/findings'))}", "status": "ToDo", **body,
+                         "createdAt": "2026-11-17T11:06:00Z", "createdBy": {"id": "u-sa", "userName": "svc_validator"}}
+        if method == "POST" and path == "/api/governance/v1/rpc/submit-result-to-policy":
+            if body.get("policyId") != "pol-app" or body.get("bundleId") != BUNDLE["id"]:
+                return 400, {"message": "the policy isn't the bundle's"}
+            results = [{"id": f"res-{aid}", "artifactId": aid, "artifactContent": v, "bundleId": BUNDLE["id"], "evidenceId": body["evidenceId"],
+                        "createdAt": "2026-11-17T11:07:00Z", "createdBy": {"id": "u-sa", "userName": "svc_validator"}, "isLatest": True}
+                       for aid, v in (body.get("content") or {}).items()]
+            return 200, {"bundle": self.bundle, "policy": self.policy, "results": results, "approvals": [], "bundleStages": [],
+                         "drafts": [], "commentsInfo": {"bundleCommentsCount": 0}, "findingsInfo": {"bundleFindingsCount": 2},
+                         "isUserApprover": False}
         if method == "POST" and path == f"/api/governance/v1/bundles/{BUNDLE['id']}/attachments":
             return 200, {"id": "att-1", "type": body["type"], "identifier": body["identifier"], "source": "MANUAL",
                          "createdAt": "2026-11-17T11:05:00Z", "createdBy": {"id": "u-sa", "userName": "svc_validator"},
                          "approvalTimelineMap": {}}
         return 404, {"message": f"{path} not found"}
+
+    def posted(self, path):
+        """The bodies of the POSTs that Domino got on this path."""
+        return [b for m, p, q, b in self.calls if (m, p) == ("POST", path)]
 
     @staticmethod
     def snapshot(sid, status):
@@ -464,6 +480,7 @@ fake_model.SCRIPTS["C268main"] = analyst(MAIN)
 fake_model.BEFORE["C268main"] = lambda conv: before_model.append(tools(relay.calls))
 dom = FakeDomino()
 ran = run_task("C268main", dom)
+ran["result"] = ran["result"] or ""
 check("MAIN the run ends with no error", ran["error"] is None, ran["error"])
 check("MAIN collect: the graph first reads the bundle and its policy (get_bundle, then get_policy), with the event's bundle ID",
       relay.calls[:2] == [("get_bundle", {"bundleId": BUNDLE["id"]}), ("get_policy", {"bundleId": BUNDLE["id"]})], relay.calls[:3])
@@ -547,6 +564,40 @@ check("MAIN the Intake fields say Not read (no gateway tool reads a bundle's res
       "could not check", "Not read" in doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
       and "Intake" in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc,
       doc[doc.find("## Users and data class"):][:300])
+item = next(e for st in dom.policy["stages"] for e in st["evidenceSet"] if e["name"] == EVIDENCE)
+field = {(x["details"] or {}).get("label"): x["id"] for x in item["artifacts"]}
+filed = [a for n, a in relay.calls if n == "write_governance_finding"]
+check("MAIN findings: one write_governance_finding for each real finding, named [LangGraph] <title>, with its severity, and its "
+      "evidence and fix in the description",
+      [(a["bundleId"], a["name"], a["severity"]) for a in filed] == [(BUNDLE["id"], "[LangGraph] " + f["title"], f["severity"])
+                                                                      for f in MAIN["real_findings"]]
+      and all(f["evidence"] in a.get("description", "") and f["fix"] in a.get("description", "") for f, a in zip(MAIN["real_findings"], filed)),
+      filed)
+check("MAIN Domino got each finding on the bundle, with the bundle's policy version (the gateway fills it)",
+      [(b["bundleId"], b["name"], b["policyVersionId"]) for b in dom.posted("/api/governance/v1/findings")]
+      == [(BUNDLE["id"], "[LangGraph] " + f["title"], "pv-1") for f in MAIN["real_findings"]], dom.posted("/api/governance/v1/findings"))
+result_call = relay.calls[-1] if relay.calls else (None, {})
+content = result_call[1].get("content") or {}
+check("MAIN last, write_policy_result for the evidence item Validation (LangGraph) only, found by its name in the policy",
+      result_call[0] == "write_policy_result" and result_call[1].get("bundleId") == BUNDLE["id"]
+      and result_call[1].get("evidenceId") == item["id"] and tools(relay.calls).count("write_policy_result") == 1, result_call)
+check("MAIN its content fills the four fields, each by its label's artifact ID: the verdict and critical vulns as the radios' values, "
+      "the summary, and the doc's location",
+      set(content) == set(field.values()) and content[field["Verdict"]] == "approve after fixes" and content[field["Critical vulns"]] == "no"
+      and MAIN["summary"] in content[field["Summary"]] and content[field["Doc location"]] == lines[2].split(": ", 1)[-1], content)
+check("MAIN Domino got the result with the bundle's policy (the gateway fills it)",
+      [(b["bundleId"], b["policyId"], b["evidenceId"]) for b in dom.posted("/api/governance/v1/rpc/submit-result-to-policy")]
+      == [(BUNDLE["id"], "pol-app", item["id"])], dom.posted("/api/governance/v1/rpc/submit-result-to-policy"))
+ORDER = re.compile(r"get_bundle get_policy run_job( wait_job)+ get_job_logs write_dataset_snapshot( get_dataset_snapshot)+ "
+                   r"write_bundle_attachment( write_governance_finding)* write_policy_result")
+check("MAIN the gateway calls, in the ticket's order: get_bundle, get_policy, run_job, wait_job until done, get_job_logs, "
+      "write_dataset_snapshot, the snapshot wait, write_bundle_attachment, the findings, write_policy_result, and no other",
+      ORDER.fullmatch(" ".join(tools(relay.calls))) is not None, tools(relay.calls))
+steps = [e.get("stepName") for e in ran["events"] if e.get("type") == "STEP_STARTED"]
+check("MAIN the graph's five steps run once each, in order: collect, scan, analyze, write, findings",
+      steps == ["collect", "scan", "analyze", "write", "findings"], steps)
+check("MAIN the result names the findings it filed and the false hits",
+      all("[LangGraph] " + f["title"] in ran["result"] for f in MAIN["real_findings"]) and "False hits (2)" in ran["result"], ran["result"])
 started = [b for m, p, q, b in dom.calls if (m, p) == ("POST", "/api/jobs/v1/jobs")]
 check("MAIN Domino got one Job, in the task's project, with the scan's command",
       len(started) == 1 and started[0]["runCommand"] == "python governance/scan.py" and started[0]["projectId"] == PROJECT["id"], started)
