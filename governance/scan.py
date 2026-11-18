@@ -44,6 +44,15 @@ def version(module):
     return words[-1] if p.returncode == 0 and words else "(version unknown)"
 
 
+def commit():
+    """The commit that was scanned: the project's HEAD (a Git-based project's Job has the repo at its root)."""
+    try:
+        p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+    except OSError:
+        return "unknown (no git)"
+    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else "unknown (not a git checkout)"
+
+
 def read_json(path):
     try:
         return json.loads(Path(path).read_text())
@@ -101,7 +110,8 @@ def main():
     say(f"scan: running bandit on {SOURCE}")
     run([sys.executable, "-m", "bandit", "-r", SOURCE, "-f", "json", "-o", str(out / "bandit.json")], out / "bandit.log")
 
-    say("\n".join([START, *pip_audit_lines(out), *bandit_lines(out), END]))
+    say("\n".join([START, f"commit: {commit()}", *pip_audit_lines(out), *bandit_lines(out),
+                   f"JSON: {out / 'pip-audit.json'}, {out / 'bandit.json'}", END]))
     return 0
 
 

@@ -36,12 +36,12 @@ def check(name, ok, detail=""):
 
 
 # ----------------------------------------------------------------------------------------------------------------- the fake tools
-# Each fake writes its arguments to $FAKE_SCAN_CALLS/<tool>.json, so a check can see what the scan asked of it.
+# Each fake adds its arguments to $FAKE_SCAN_CALLS/<tool>.jsonl, so a check can see what the scan asked of it.
 FAKE_PIP_AUDIT = '''import json, os, sys
 args = sys.argv[1:]
 calls = os.environ["FAKE_SCAN_CALLS"]
-with open(os.path.join(calls, "pip-audit.json"), "w") as f:
-    json.dump(args, f)
+with open(os.path.join(calls, "pip-audit.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\\n")
 if "--version" in args:
     print("pip-audit 2.10.1")   # the real line
     sys.exit(0)
@@ -65,8 +65,8 @@ print("No known vulnerabilities found", file=sys.stderr)
 FAKE_BANDIT = '''import json, os, shutil, sys
 args = sys.argv[1:]
 calls = os.environ["FAKE_SCAN_CALLS"]
-with open(os.path.join(calls, "bandit.json"), "w") as f:
-    json.dump(args, f)
+with open(os.path.join(calls, "bandit.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\\n")
 if "--version" in args:
     print("__main__.py 1.9.4")   # the real lines of `python -m bandit --version`
     print("  python version = 3.12.12")
@@ -83,8 +83,8 @@ sys.exit(1 if json.load(open(src))["results"] else 0)
 # A fake `python -m pip install ...`: it records the call and "installs" the fake scanners it is asked for into $FAKE_SCAN_SITE.
 FAKE_PIP = '''import json, os, shutil, sys
 args = sys.argv[1:]
-with open(os.path.join(os.environ["FAKE_SCAN_CALLS"], "pip.json"), "w") as f:
-    json.dump(args, f)
+with open(os.path.join(os.environ["FAKE_SCAN_CALLS"], "pip.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\\n")
 for spec in args:
     for name, module in (("pip-audit", "pip_audit"), ("bandit", "bandit")):
         if spec.startswith(name):
@@ -110,7 +110,7 @@ package(tmp / "pipdir", "pip", FAKE_PIP)
 
 def scan(fixture, *, installed=True, fail=None):
     """One run of the scan script as a Job runs it (python governance/scan.py, from the project's root), with fake scanners.
-    -> (exit code, stdout, stderr, calls {tool: argv}, out folder)"""
+    -> (exit code, stdout, stderr, calls {tool: [argv of each call]}, out folder)"""
     run = Path(tempfile.mkdtemp(dir=tmp))
     site, calls, out = run / "site", run / "calls", run / "out"
     site.mkdir()
@@ -124,7 +124,7 @@ def scan(fixture, *, installed=True, fail=None):
     if fail:
         env["FAKE_SCAN_FAIL"] = fail
     p = subprocess.run([PY, str(SCAN), "--out", str(out)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
-    seen = {f.stem: json.loads(f.read_text()) for f in calls.glob("*.json")}
+    seen = {f.stem: [json.loads(ln) for ln in f.read_text().splitlines()] for f in calls.glob("*.jsonl")}
     return p.returncode, p.stdout, p.stderr, seen, out
 
 
@@ -146,6 +146,20 @@ check("the summary names pip-audit with its version, and says it found no known 
 check("the summary names bandit with its version", "bandit 1.9.4" in block, block)
 check("the summary names each bandit hit with its test ID and file:line",
       "B104" in block and "case_server/server.py:159" in block and "B608" in block and "case_server/store.py:215" in block, block)
+pa, bd = (([c for c in calls.get(tool, []) if "--version" not in c] or [[]])[-1] for tool in ("pip-audit", "bandit"))
+check("pip-audit audits the case server's requirements, in JSON",
+      "-r" in pa and pa[pa.index("-r") + 1] == "case_server/requirements.txt" and "json" in pa, pa)
+check("bandit scans the case server folder at every severity, in JSON",
+      "-r" in bd and bd[bd.index("-r") + 1] == "case_server" and "json" in bd and not any(a.startswith("-l") for a in bd), bd)
+reports = {name: (folder / name).read_text() if (folder / name).is_file() else "" for name in ("pip-audit.json", "bandit.json")}
+check("each tool's JSON is in the output folder, as the tool wrote it",
+      reports["pip-audit.json"] == (FIXTURES / "clean" / "pip-audit.json").read_text()
+      and reports["bandit.json"] == (FIXTURES / "clean" / "bandit.json").read_text(), {k: len(v) for k, v in reports.items()})
+check("the summary says where the JSON is", str(folder / "pip-audit.json") in block and str(folder / "bandit.json") in block, block)
+commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+check("the summary names the commit that it scanned", commit and f"commit: {commit}" in block, block)
+check(f"the summary fits well in what wait_job shows (under half of its {WAIT_JOB_TAIL} characters)",
+      0 < len(block) < WAIT_JOB_TAIL // 2, len(block))
 
 # ------------------------------------------------------------------------------------------- the scan: the demo branch's pyyaml pin
 code, out, err, calls, folder = scan("vulnerable")
