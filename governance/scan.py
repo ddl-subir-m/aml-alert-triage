@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent   # the project's root: this file 
 REQUIREMENTS = "case_server/requirements.txt"
 SOURCE = "case_server"
 START, END = "== scan summary ==", "== end of scan summary =="
+LINE = 320   # the longest line of the summary: pip-audit's description of PYSEC-2021-142 is about 500 characters
 
 
 def say(line):
@@ -50,10 +51,29 @@ def read_json(path):
         return None
 
 
+def clip(text, n=LINE):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[:n - 3] + "..."
+
+
 def pip_audit_lines(out):
     report = read_json(out / "pip-audit.json") or {}
     deps = report.get("dependencies") or []
-    return [f"pip-audit {version('pip_audit')} on {REQUIREMENTS}: no known vulnerabilities in {len(deps)} packages"]
+    hits = []   # one line per package and vulnerability ID: pip-audit can list one vulnerability twice
+    for d in deps:
+        seen = {}
+        for v in d.get("vulns") or []:
+            seen.setdefault(v.get("id"), v)
+        for vid, v in seen.items():
+            aliases = ", ".join(v.get("aliases") or [])
+            fix = ", ".join(v.get("fix_versions") or []) or "none known"
+            hits.append(clip(f"- {d.get('name')} {d.get('version')}: {vid}" + (f" ({aliases})" if aliases else "")
+                             + f", fixed in {fix}: {v.get('description') or 'no description'}"))
+    head = f"pip-audit {version('pip_audit')} on {REQUIREMENTS}: "
+    if not hits:
+        return [head + f"no known vulnerabilities in {len(deps)} packages"]
+    packages = sum(1 for d in deps if d.get("vulns"))
+    return [head + f"{len(hits)} known vulnerabilit{'y' if len(hits) == 1 else 'ies'} in {packages} of {len(deps)} packages", *hits]
 
 
 def bandit_lines(out):

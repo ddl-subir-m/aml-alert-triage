@@ -147,5 +147,17 @@ check("the summary names bandit with its version", "bandit 1.9.4" in block, bloc
 check("the summary names each bandit hit with its test ID and file:line",
       "B104" in block and "case_server/server.py:159" in block and "B608" in block and "case_server/store.py:215" in block, block)
 
+# ------------------------------------------------------------------------------------------- the scan: the demo branch's pyyaml pin
+code, out, err, calls, folder = scan("vulnerable")
+block = summary(out)
+check("with a known vulnerability, the scan still exits 0 (both tools ran) and writes nothing to stderr", code == 0 and err == "",
+      f"exit {code}; stderr: {err[-400:]}")
+check("the summary counts the known vulnerability once (pip-audit lists PYSEC-2021-142 twice)",
+      "pip-audit 2.10.1 on case_server/requirements.txt: 1 known vulnerability in 1 of 30 packages" in block, block)
+vuln = [ln for ln in block.splitlines() if "PYSEC-2021-142" in ln]
+check("the summary names PYSEC-2021-142 for pyyaml 5.3.1 on one line, with its aliases, its fix version and what it is",
+      len(vuln) == 1 and all(w in vuln[0] for w in ("pyyaml 5.3.1", "CVE-2020-14343", "GHSA-8q59-q68h-6hv4", "fixed in 5.4",
+                                                      "full_load")), vuln or block)
+
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if failed else 0)
