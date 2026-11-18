@@ -602,5 +602,64 @@ started = [b for m, p, q, b in dom.calls if (m, p) == ("POST", "/api/jobs/v1/job
 check("MAIN Domino got one Job, in the task's project, with the scan's command",
       len(started) == 1 and started[0]["runCommand"] == "python governance/scan.py" and started[0]["projectId"] == PROJECT["id"], started)
 
+
+
+def run_case(case, domino, analysis=None, script=None):
+    """One more task, with its own fake Domino and the model's script. -> (the run, its result's lines, the doc, the filed findings,
+    the evidence item's content by label)"""
+    fake_model.SCRIPTS[case] = script or analyst(analysis)
+    got = run_task(case, domino)
+    got["result"] = got["result"] or ""
+    files = sorted(got["folder"].iterdir())
+    text = files[0].read_text() if len(files) == 1 else ""
+    found = [a for n, a in relay.calls if n == "write_governance_finding"]
+    last = relay.calls[-1] if relay.calls and relay.calls[-1][0] == "write_policy_result" else (None, {})
+    mine = next(e for st in domino.policy["stages"] for e in st["evidenceSet"] if e["name"] == EVIDENCE)   # its own artifact IDs
+    labels = {x["id"]: (x["details"] or {}).get("label") for x in mine["artifacts"]}
+    filled = {labels.get(k, k): v for k, v in (last[1].get("content") or {}).items()}
+    return got, got["result"].splitlines(), text, found, filled
+
+
+# --------------------------------------------------------------------------------------------- the case: the scan Job fails
+FAILED = {**MAIN, "real_findings": [
+    {"title": "pyyaml 5.3.1 has PYSEC-2021-142", "severity": "S0", "source": "scan", "evidence": "the scan", "fix": "Pin pyyaml 5.4.",
+     "description": "A scanner finding that the model gives although the scan did not run."},
+    MAIN["real_findings"][0]], "verdict": "approve after fixes", "summary": "The code has one real finding."}
+ran, lines, doc, filed, filled = run_case("C268fail", FakeDomino(job_end="Failed", log=scan_log(fail="pip-audit"),
+                                                                 snapshot_statuses=("active",)), FAILED)
+said = fake_model.seen[0]["conv"].text() if fake_model.seen else ""
+check("SCANFAIL the run ends with no error, and the gateway calls keep the ticket's order",
+      ran["error"] is None and ORDER.fullmatch(" ".join(tools(relay.calls))) is not None, (ran["error"], tools(relay.calls)))
+check("SCANFAIL the model is told that the scan did not run to its end, and why (the Job failed, and pip-audit could not run)",
+      "The scan did not run to its end: the scan Job 41 ended Failed: pip-audit could not run" in said
+      and "Give no finding with the source scan" in said, said[said.find("## The scan"):][:300])
+check("SCANFAIL no scanner finding is filed: only the finding from the code",
+      [a["name"] for a in filed] == ["[LangGraph] " + MAIN["real_findings"][0]["title"]], [a["name"] for a in filed])
+scan_part = doc[doc.find("## Scan results"):doc.find("## Findings")]
+check("SCANFAIL the doc says so: its scan results say that the scan did not run to its end, with the Job and why",
+      "The scan did not run to its end: the scan Job 41 ended Failed" in scan_part and "pip-audit could not run" in scan_part
+      and "Scan Job 41: Failed." in scan_part, scan_part)
+check("SCANFAIL the doc's real findings have no scanner finding, and what the validator could not check names the scan",
+      "PYSEC-2021-142" not in doc[doc.find("### Real findings"):doc.find("### False hits")]
+      and "The scan: the scan Job 41 ended Failed" in doc[doc.find("## What the validator could not check"):], doc[-600:])
+check("SCANFAIL the verdict is do not approve, because the scan did not run (and critical vulns comes from the real findings only)",
+      lines[:2] == ["Verdict: do not approve", "Critical vulns: no"] and "Verdict: do not approve" in doc
+      and "the dependencies' known vulnerabilities were not checked" in doc, lines[:3])
+check("SCANFAIL the evidence item says so: do not approve, and its summary says that the scan did not run to its end",
+      filled.get("Verdict") == "do not approve" and filled.get("Critical vulns") == "no"
+      and "The scan did not run to its end" in (filled.get("Summary") or ""), filled)
+
+# --------------------------------------------------------------------------------------------- the case: no usable analysis
+ran, lines, doc, filed, filled = run_case("C268noanalysis", FakeDomino(snapshot_statuses=("active",)),
+                                          script=lambda conv: fake_model.answer("I looked at the code and it seems fine."))
+check("NOANALYSIS the model is asked twice (an answer with no validation_analysis call is asked again once)",
+      len(fake_model.seen) == 2 and "Your last answer could not be used" in fake_model.seen[1]["conv"].text(), len(fake_model.seen))
+check("NOANALYSIS no finding is filed, and the run still writes the doc and fills the evidence item",
+      not filed and "write_bundle_attachment" in tools(relay.calls) and tools(relay.calls)[-1] == "write_policy_result", tools(relay.calls))
+check("NOANALYSIS the verdict is do not approve, and the result and the doc say that the analysis failed",
+      lines[0] == "Verdict: do not approve" and "analyze: the model's answer has no validation_analysis call" in ran["result"]
+      and "The validator's analysis failed" in doc, ran["result"])
+check("NOANALYSIS the model's text stays out of the task's stream", "seems fine" not in json.dumps(ran["events"]), "")
+
 close()
 done()

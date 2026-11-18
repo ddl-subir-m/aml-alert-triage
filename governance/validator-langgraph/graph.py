@@ -206,7 +206,7 @@ async def scan(state):
     summary = scan_summary(logs if ok else "") or scan_summary(text)
     result = next((ln for ln in (summary or "").splitlines() if ln.startswith("result:")), "")
     ran = status == "Succeeded" and result == "result: both tools ran"
-    why = None if ran else (f"the scan Job {number} ended {status}" + (f" ({result})" if result else "")
+    why = None if ran else (f"the scan Job {number} ended {status}" + (f": {result[len('result: '):]}" if result else "")
                             + ("" if summary else ", and its log has no scan summary"))
     return {"scan": {"ok": ran, "jobId": job_id, "number": number, "status": status, "summary": summary, "why": why}}
 
@@ -320,10 +320,10 @@ def ruled(analysis, scan):
     if not scan.get("ok"):
         a["real_findings"] = [f for f in a["real_findings"] if f["source"] != "scan"]
         a["verdict"] = "do not approve"
-        a["verdict_reason"] = (f"The scan did not run to its end ({scan.get('why')}), so the dependencies' known vulnerabilities were "
+        a["verdict_reason"] = (f"The scan did not run to its end ({scan.get('why')}). So the dependencies' known vulnerabilities were "
                                f"not checked: run the validation again. {a['verdict_reason']}").strip()
         a["could_not_check"] = [f"The scan: {scan.get('why')}."] + a["could_not_check"]
-        a["summary"] = f"The scan did not run to its end ({scan.get('why')}). {a['summary']}".strip()
+        a["summary"] = f"The scan did not run to its end: {scan.get('why')}. {a['summary']}".strip()
     a["findings"] = [{**f, "name": f"{PREFIX} {re.sub(r'^\[LangGraph\]\s*', '', f['title'])}"} for f in a["real_findings"]]
     a["critical_vulns"] = "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
     return a
