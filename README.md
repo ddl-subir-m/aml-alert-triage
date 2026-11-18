@@ -220,8 +220,8 @@ that none of the server's tools resets the system.
 
 The agent is one definition, `agent/definition.json`, and three entry points: one for each framework. Each entry point is a 1-line
 file that names a ready-made agent of domino-agui, the platform's helper library (domino-agent-service ADR 0030). The repo has no
-other agent code. The library is on PyPI (https://pypi.org/project/domino-agui/). Its source is on GitHub
-(https://github.com/ddl-subir-m/domino-agui).
+other triage code (the LangGraph validator of "The LangGraph validator" has its own graph). The library is on PyPI
+(https://pypi.org/project/domino-agui/). Its source is on GitHub (https://github.com/ddl-subir-m/domino-agui).
 
 | Variant | Framework (as the wizard names it) | File: its one line | Entry point |
 |---|---|---|---|
@@ -511,14 +511,14 @@ python tests/check_registration.py
 ```
 
 A stdlib script, one line per case, with a non-zero exit code on any failure. It checks every field of the definition and every AML
-rule in its system prompt, each entry point's one line (and that the repo has no other agent code), the print mode for each
-`--framework` (with a placeholder Environment, and no call), and the script's calls to a small fake App on 127.0.0.1: create and
-update with your token only (extended identity) and with `--view-as`, each variant with the Environment that the App lists last for
-its framework, `--environment` (no list asked), no certified Environment, an App without the list, an update found by the variant's
-name, a 401 in each way, the App that sees another person, the view-as switch off (both answers), the header dropped, a redirect, a
-refused request (with the hint for an Environment that isn't certified), two agents with one name, an agent you can't change, and
-your name from Domino. It runs the script with `python -S`, so a package outside the stdlib fails it. Nothing calls a Domino host.
-The real calls are proven in the live check.
+rule in its system prompt, each entry point's one line (and that the repo has no other agent code but the LangGraph validator's graph
+and its check), the print mode for each `--framework` (with a placeholder Environment, and no call), and the script's calls to a small
+fake App on 127.0.0.1: create and update with your token only (extended identity) and with `--view-as`, each variant with the
+Environment that the App lists last for its framework, `--environment` (no list asked), no certified Environment, an App without the
+list, an update found by the variant's name, a 401 in each way, the App that sees another person, the view-as switch off (both
+answers), the header dropped, a redirect, a refused request (with the hint for an Environment that isn't certified), two agents with
+one name, an agent you can't change, and your name from Domino. It runs the script with `python -S`, so a package outside the stdlib
+fails it. Nothing calls a Domino host. The real calls are proven in the live check.
 
 ## The harness agent
 
@@ -640,6 +640,95 @@ docker run --rm -v /path/to/domino-agent-service:/service:ro -v "$PWD:/aml:ro" -
 ```
 
 Nothing calls a Domino host. The live run is domino-agent-service #246.
+
+## The App deployment policy
+
+The governance policy of the App validation demo (domino-agent-service spec #260). Before an App is deployed, its bundle goes through
+three stages. Two validator agents fill the Validation stage, and a person approves.
+
+| Stage | Evidence item | Its fields | Who fills it |
+|---|---|---|---|
+| Intake | Intake | Purpose, Users, Data class (Public, Internal, Confidential, Restricted) | The analyst |
+| Validation | Validation (agent folder) | Verdict, Critical vulns, Summary, Doc location | The agent folder validator |
+| Validation | Validation (LangGraph) | The same four | The LangGraph validator |
+| Validation | Validation status | A scripted check: a click on Run shows each validator's task | The approver clicks |
+| Approval | (the approval Deployment sign off) | | The approver |
+
+| File | What it holds |
+|---|---|
+| `governance/app-deployment-policy.yaml` | The policy's definition, in Domino's policy YAML |
+| `governance/validation_status.py` | The scripted check. Stdlib only |
+
+### Make the policy
+
+The live script of the demo (domino-agent-service #270) makes it. It replaces the four placeholders in a copy of the file, then
+calls Domino's governance API: `POST /api/governance/v1/policies` with the name `App deployment policy`, `PUT .../policies/{id}/definition`
+with `{"definition": "<the YAML>"}`, and `PUT .../policies/{id}/status` with `{"status": "Published"}`. A Governance admin can do the
+same in Domino. The enforcement on new App versions is a policy enforcer (`POST /api/governance/v1/policy-enforcers`), not a part of
+the file.
+
+| Placeholder | The value |
+|---|---|
+| `__ENVIRONMENT_ID__` | The scripted check's Environment: any one with Python 3 |
+| `__HARDWARE_TIER_ID__` | The scripted check's hardware tier |
+| `__AGENT_SERVICE_URL__` | The agent service App's own URL, the one that ends in `/apps-internal/<App ID>`: the check's default |
+| `__APPROVER__` | Who approves: a user or an organization that is a member of the demo project |
+
+A validator fills its own evidence item with `write_policy_result`. Domino gives each field its own artifact ID when it reads the
+file, so the validator reads the IDs with `get_policy`: it finds its item by its name, and each field by its label. The values:
+Verdict is `approve`, `approve after fixes` or `do not approve`; Critical vulns is `yes` or `no`; Summary and Doc location are text.
+
+### The scripted check
+
+The approver clicks Run on the Validation stage. Domino runs `governance/validation_status.py <bundle_id> <service_url>` as a Job, as
+the approver, with their token. The check reads the agent service App's task search (`GET /api/tasks` with `q` = the bundle ID and
+the event trigger), and prints one block for each validator: the agent, the task, its status, its verdict, its critical vulns, its
+doc location and the task's link. A validator with no task yet shows `not started`. A task that still runs shows its status. It
+writes the same lines to `validation_status.txt`, which Domino shows to the approver.
+
+- **The bundle ID.** Domino doesn't give it to a scripted check, so it is a parameter. Its default, `newest`, shows the newest event
+  task of each validator in the Job's project. To see one bundle, type its ID.
+- **What it reads.** A validator is found by its agent's name: `App validator (agent folder)` and `App validator (LangGraph)`. The
+  verdict, critical vulns and doc location are lines of the validator's result: `Verdict: ...`, `Critical vulns: ...`,
+  `Doc location: ...`.
+- **Who sees what.** The App shows a task only to the people who may read it. The approver must be an owner or an editor of both
+  agents.
+- **It changes nothing.** It sends only GET requests to the App, and never starts or changes an agent. It sends the token only to
+  an https URL, and never prints it.
+- **An error.** No token, an App URL that isn't https, or an App error (`App error: HTTP <status>: <detail>`) ends the check with
+  exit code 1.
+
+### The check
+
+```
+python tests/check_validation_policy.py
+```
+
+One line per case, with a non-zero exit code on any failure. It needs PyYAML (`pip install pyyaml`) to read the policy. It checks
+the three stages, the evidence items and their fields, the scripted check's command and parameters, the placeholders, and that the
+file has no host name and no Domino ID. Then it runs the scripted check with `python -S` against a fake App on 127.0.0.1 (in the
+shape of the agent service's task search) and a fake Domino API proxy: both validators done, one not started, a running, waiting,
+queued or failed task, earlier tasks, another agent's task, `newest`, the token (sent, never printed), the output file, only GET
+requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App URL that isn't
+https. Nothing calls a Domino host. The live run is domino-agent-service #270.
+
+## The agent folder validator
+
+One of the two App validators of the App deployment policy (domino-agent-service spec #260): a harness agent (opencode),
+`App validator (agent folder)`, whose definition is the agent folder `governance/validator-folder/`. When a bundle moves to the
+Validation stage, it reads the App's code, scans it in a Domino Job, commits a validation doc to its task branch, attaches the doc to
+the bundle, files the real findings and fills the evidence item "Validation (agent folder)". It follows the checklist of its own skill,
+`skills/app-validation`. What it does, what the owner adds before it can run (the service account and its token, the sharing, the
+event subscription), and its check (`tests/check_validator_folder.py`): [governance/validator-folder/README.md](governance/validator-folder/README.md).
+
+## The LangGraph validator
+
+The other App validator of the App deployment policy (domino-agent-service spec #260): a framework agent, `App validator
+(LangGraph)`, made in the wizard, whose code is a fixed LangGraph graph in `governance/validator-langgraph/`. When a bundle moves to
+the Validation stage, its five steps (collect, scan, analyze, write, findings) read the App's code, scan it in a Domino Job, have the
+model sort the hits, write a validation doc to a dataset snapshot, attach the doc to the bundle, file the real findings and fill the
+evidence item "Validation (LangGraph)". What it does, how to make it in the wizard, what the live script fills in its event
+subscription, and its check (`tests/check_validator_langgraph.py`): [governance/validator-langgraph/README.md](governance/validator-langgraph/README.md).
 
 ## Live check
 

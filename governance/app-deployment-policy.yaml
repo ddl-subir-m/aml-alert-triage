@@ -1,0 +1,141 @@
+# The policy "App deployment policy" (domino-agent-service spec #260): the definition, in Domino's policy YAML.
+#
+# The shape is Domino's policy YAML (docs.domino.ai, Governance, "Policy components"): Domino took a policy in this shape and
+# published it (from Draft to Published). The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
+# POST /rpc/submit-result-to-policy). Domino gives each artifact its own ID when it reads this file: read them with GET /policies/{id}
+# (the gateway tool get_policy), and find each field by its evidence item's name and its label.
+#
+# The live script makes the policy (POST /policies with the name "App deployment policy"), puts this file as its definition
+# (PUT /policies/{id}/definition), and publishes it (PUT /policies/{id}/status). Before that, it replaces four placeholders, because
+# their values depend on the deployment:
+#   __ENVIRONMENT_ID__     the scripted check's Environment (any one with Python 3)
+#   __HARDWARE_TIER_ID__   the scripted check's hardware tier
+#   __AGENT_SERVICE_URL__  the agent service App's own URL (the one that ends in /apps-internal/<App ID>): the check's default
+#   __APPROVER__           who approves in the Approval stage: a user or an organization of the demo project
+# The enforcement on new App versions is not in this file: it is a policy enforcer (POST /policy-enforcers).
+stages:
+  - name: Intake
+    evidenceSet:
+      - id: Local.app-intake
+        name: Intake
+        description: What the App is for, who uses it, and the class of its data. The analyst fills it.
+        definition:
+          - artifactType: input
+            details:
+              type: textarea
+              label: Purpose
+              placeholder: What the App does, and for whom
+          - artifactType: input
+            details:
+              type: textinput
+              label: Users
+              placeholder: The people or teams that use the App
+          - artifactType: input
+            details:
+              type: radio
+              label: Data class
+              options:
+                - label: Public
+                  value: "Public"
+                - label: Internal
+                  value: "Internal"
+                - label: Confidential
+                  value: "Confidential"
+                - label: Restricted
+                  value: "Restricted"
+  - name: Validation
+    evidenceSet:
+      - id: Local.validation-agent-folder
+        name: Validation (agent folder)
+        description: The result of the agent folder validator (harness lane, opencode). The validator fills it.
+        definition:
+          - artifactType: input
+            details:
+              type: radio
+              label: Verdict
+              options:
+                - label: Approve
+                  value: "approve"
+                - label: Approve after fixes
+                  value: "approve after fixes"
+                - label: Do not approve
+                  value: "do not approve"
+          - artifactType: input
+            details:
+              type: radio
+              label: Critical vulns
+              options:
+                - label: "Yes"
+                  value: "yes"
+                - label: "No"
+                  value: "no"
+          - artifactType: input
+            details:
+              type: textarea
+              label: Summary
+          - artifactType: input
+            details:
+              type: textinput
+              label: Doc location
+              helpText: Where the validation doc is (its branch and commit). The bundle's Report attachment links it.
+      - id: Local.validation-langgraph
+        name: Validation (LangGraph)
+        description: The result of the LangGraph validator (framework lane). The validator fills it.
+        definition:
+          - artifactType: input
+            details:
+              type: radio
+              label: Verdict
+              options:
+                - label: Approve
+                  value: "approve"
+                - label: Approve after fixes
+                  value: "approve after fixes"
+                - label: Do not approve
+                  value: "do not approve"
+          - artifactType: input
+            details:
+              type: radio
+              label: Critical vulns
+              options:
+                - label: "Yes"
+                  value: "yes"
+                - label: "No"
+                  value: "no"
+          - artifactType: input
+            details:
+              type: textarea
+              label: Summary
+          - artifactType: input
+            details:
+              type: textinput
+              label: Doc location
+              helpText: Where the validation doc is (its dataset snapshot and file). The bundle's attachment links it.
+      - id: Local.validation-status
+        name: Validation status
+        description: >-
+          Click Run to see each validator's task: its status, verdict and doc. The check runs as you, reads the agent service App,
+          and never starts or changes an agent. Type the bundle's ID in bundle_id, or keep newest.
+        definition:
+          - artifactType: policyScriptedCheck
+            details:
+              name: validation-status
+              label: Validation status
+              command: governance/validation_status.py ${bundle_id} ${service_url}
+              parameters:
+                - name: bundle_id
+                  type: text
+                  default: "newest"
+                - name: service_url
+                  type: text
+                  default: "__AGENT_SERVICE_URL__"
+              outputTypes:
+                - txt
+              environmentId: "__ENVIRONMENT_ID__"
+              hardwareTierId: "__HARDWARE_TIER_ID__"
+              volumeSizeGiB: 4
+  - name: Approval
+    approvals:
+      - name: Deployment sign off
+        approvers:
+          - "__APPROVER__"
