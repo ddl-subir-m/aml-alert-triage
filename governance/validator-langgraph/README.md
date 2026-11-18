@@ -1,7 +1,7 @@
 # The LangGraph validator
 
 One of the two App validators of the App validation demo (domino-agent-service spec #260, Implementation Decision 9). It is a
-framework-lane agent, `App validator (LangGraph)`, made in the wizard. Its code is in this folder: a fixed LangGraph graph. When an
+framework agent, `App validator (LangGraph)`, made in the wizard. Its code is in this folder: a fixed LangGraph graph. When an
 analyst moves an App's governance bundle to the Validation stage of the App deployment policy, its event subscription starts a task.
 The graph validates the App, writes a validation doc to a dataset snapshot, attaches the doc to the bundle, files the real findings
 and fills the evidence item "Validation (LangGraph)". The other validator is the agent folder validator (harness lane,
@@ -21,7 +21,8 @@ The graph has five steps, and each task runs them once, in this order. The model
 calls each gateway tool through the relay (`domino_agui.contract.relay()`), so it sees a denial as one. The shared parts are in
 `governance/` (its README has the severity scale, the finding names and the rule for critical vulns).
 
-1. **collect.** Own tools (`list_files`, `read_file`, as the probe did) read the App's code: `app.sh` and `case_server/`. Then
+1. **collect.** The graph's own code (`list_files`, `read_file`, not tools of the model) reads the App's code: `app.sh` and
+   `case_server/`. Then
    `get_bundle` and `get_policy`. It finds its evidence item by its name, and each field (Verdict, Critical vulns, Summary, Doc
    location) by its label. From the same answer, it keeps the Intake values that the analyst filled (Purpose, Users, Data class):
    each filled field has its value in `result.artifactContent`. The doc's "Users and data class" gives them ("not filled" for a field

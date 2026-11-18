@@ -1,7 +1,7 @@
 """The LangGraph validator of the App validation demo (domino-agent-service spec #260, Implementation Decision 9): a fixed graph. Each
 run does the same steps in the same order:
 
-  collect   own tools read the App's code (list_files, read_file, as the probe did); get_bundle, get_policy
+  collect   the graph's own code reads the App's code (list_files, read_file: not tools of the model); get_bundle, get_policy
   scan      run_job with the shared scan (governance/scan.py), wait_job until the Job is done, get_job_logs: the scan's summary
   analyze   the model (its own, with room to answer: max_tokens 16000) sorts the hits and gives the doc's facts, through one tool
             call (the structured output); the code then applies the shared rules (governance/README.md)
@@ -183,7 +183,8 @@ def instruction_of(state):
 
 
 async def collect(state):
-    """The App's code with the own tools, then the bundle and its policy, with this validator's evidence item and its fields."""
+    """The App's code (read by this code, with list_files and read_file), then the bundle and its policy: this validator's evidence
+    item with its fields, and the Intake values."""
     bundle_id = setting(instruction_of(state), "Bundle ID")
     if not bundle_id:
         raise ValueError("The instruction names no bundle: it needs a line \"Bundle ID: <the bundle's ID>\", as the event subscription's "
@@ -317,7 +318,8 @@ def briefing(state):
     values = state.get("intake")
     told = "\n".join(f"{k}: {v or 'not filled'}" for k, v in values.items()) if values is not None else "(not read)"
     return "\n\n".join([f"## The task\n\n{instruction_of(state)}", f"## The bundle\n\n{json.dumps(about) if about else '(not read)'}",
-                         f"## The Intake evidence (what the analyst filled)\n\n{told}", f"## The scan\n\n{scanned}", f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
+                         f"## The Intake evidence (what the analyst filled)\n\n{told}", f"## The scan\n\n{scanned}",
+                         f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
                          f"## The rules (governance/README.md)\n\n{rules}", f"## The doc's template (governance/validation-doc.md)\n\n{template}"])
 
 
@@ -443,8 +445,9 @@ def intake(state):
     if values is None:
         return {"users_and_data_class": "Not read: get_policy gave no Intake evidence item (the stage Intake, its item Intake).",
                 "could_not_check": "The Intake evidence (users, data class): get_policy gave no Intake evidence item."}
-    return {"users_and_data_class": f"Users: {values.get('Users') or 'not filled'}. Data class: {values.get('Data class') or 'not filled'}. "
-                                    "From the bundle's Intake evidence, as the analyst filled it.", "could_not_check": None}
+    users, data_class = values.get("Users") or "not filled", values.get("Data class") or "not filled"
+    return {"users_and_data_class": f"Users: {users}. Data class: {data_class}. From the bundle's Intake evidence, as the analyst filled it.",
+            "could_not_check": None}
 
 
 def render_doc(state, now):

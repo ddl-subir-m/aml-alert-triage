@@ -1,7 +1,7 @@
 # The policy "App deployment policy" (domino-agent-service spec #260): the definition, in Domino's policy YAML.
 #
-# The shape is Domino's policy YAML (docs.domino.ai, Governance, "Policy components"), as the agent trigger test's policy had it when
-# it went from Draft to Published. The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
+# The shape is Domino's policy YAML (docs.domino.ai, Governance, "Policy components"): Domino took a policy in this shape and
+# published it (from Draft to Published). The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
 # POST /rpc/submit-result-to-policy). Domino gives each artifact its own ID when it reads this file: read them with GET /policies/{id}
 # (the gateway tool get_policy), and find each field by its evidence item's name and its label.
 #

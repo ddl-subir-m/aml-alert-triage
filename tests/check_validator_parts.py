@@ -216,7 +216,7 @@ check("when the Environment has both tools, the scan installs nothing", "pip" no
 code, out, err, calls, folder = scan("clean", installed=False)
 block = summary(out)
 pip = (calls.get("pip") or [[]])[0]
-check("the scan installs both tools with pip in one call (a Job reaches PyPI, as the probe's did)",
+check("the scan installs both tools with pip in one call (a Domino Job can reach PyPI)",
       len(calls.get("pip") or []) == 1 and pip[:1] == ["install"] and any(a.startswith("pip-audit") for a in pip)
       and any(a.startswith("bandit") for a in pip), calls.get("pip"))
 check("after the install, both tools ran: exit 0, nothing on stderr, their hits in the summary",
@@ -281,6 +281,19 @@ check("governance/README.md has one rule for a failed scan, for both validators:
       all(w in failed_scan for w in ("result: both tools ran", "`do not approve`", "No finding comes from the scan",
                                      "No S0 finding; dependencies not scanned", "Summary", "What the validator could not check")),
       failed_scan[:400] or "no section '## A failed scan'")
+
+# --------------------------------------------------------------------------------------------- words that a public reader can follow
+# The repo is public. Its validator files say what was learned, never "as the probe did" (a private note). And they use the
+# platform's words (domino-agent-service GLOSSARY.md): a "framework agent", never a "framework-lane agent". This file is left out:
+# it names the words.
+PUBLIC = [ROOT / "README.md",
+          *(f for f in sorted((ROOT / "governance").rglob("*")) if f.is_file() and f.suffix in (".py", ".md", ".yaml", ".json")),
+          *(f for f in sorted((ROOT / "tests").glob("check_valid*.py")) if f.resolve() != Path(__file__).resolve())]
+PRIVATE = re.compile(r"\bthe probe\b|\bprobe's\b|\btrigger test\b|trigger_probe|framework-lane agent", re.I)
+said = sorted(f"{f.relative_to(ROOT)}:{n}: {m.group(0)}" for f in PUBLIC for n, ln in enumerate(f.read_text().splitlines(), 1)
+              for m in PRIVATE.finditer(ln))
+check("the validators' public files point at no private note (the probe, the trigger test) and say framework agent, not "
+      "framework-lane agent", not said, said)
 
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:

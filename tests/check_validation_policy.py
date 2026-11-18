@@ -194,7 +194,7 @@ DONE_GRAPH = ("Verdict: approve after fixes\nCritical vulns: yes\n"
 
 
 class Fake(BaseHTTPRequestHandler):
-    """The Domino API proxy of a Job (GET /access-token, as governance/trigger_probe.py of the trigger test read it) and the agent
+    """The Domino API proxy of a Job (GET /access-token: the Job's token, as plain text) and the agent
     service App's task search (GET /api/tasks): app.py's list_tasks, with its filters (agent_id, status, triggered_by, project,
     trigger_type, q in the title or key, case aside), newest first. Who may read a task is the App's rule (service.can_read_task):
     here the caller may read every task, and a task that the caller may not read is one that the answer doesn't hold."""

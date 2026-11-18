@@ -42,7 +42,8 @@ def field(label, value):
 
 
 def token():
-    """The Job's token: the person who clicked Run. Domino's API proxy in the Job gives it (as the trigger test's probe read it)."""
+    """The Job's token: the person who clicked Run. Domino's API proxy in the Job gives it: GET /access-token on DOMINO_API_PROXY
+    (else localhost:8899), in a scripted check's Job too."""
     url = os.environ.get("DOMINO_API_PROXY", "http://localhost:8899").rstrip("/") + "/access-token"
     t = urllib.request.urlopen(url, timeout=10).read().decode().strip()
     return t[len("Bearer "):] if t.startswith("Bearer ") else t
