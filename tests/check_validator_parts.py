@@ -85,6 +85,10 @@ FAKE_PIP = '''import json, os, shutil, sys
 args = sys.argv[1:]
 with open(os.path.join(os.environ["FAKE_SCAN_CALLS"], "pip.jsonl"), "a") as f:
     f.write(json.dumps(args) + "\\n")
+if os.environ.get("FAKE_SCAN_FAIL") == "pip":   # the real pip when PyPI has no such package (or can't be reached)
+    print("ERROR: Could not find a version that satisfies the requirement pip-audit (from versions: none)", file=sys.stderr)
+    print("ERROR: No matching distribution found for pip-audit", file=sys.stderr)
+    sys.exit(1)
 for spec in args:
     for name, module in (("pip-audit", "pip_audit"), ("bandit", "bandit")):
         if spec.startswith(name):
@@ -189,6 +193,25 @@ check("the summary's last line before its end says which tool could not run",
 code, out, err, calls, folder = scan("clean")
 check("when both tools ran, the summary's last line before its end says so",
       summary(out).rstrip().splitlines()[-2:-1] == ["result: both tools ran"], summary(out))
+check("when the Environment has both tools, the scan installs nothing", "pip" not in calls, calls.get("pip"))
+
+# ------------------------------------------------------------------------------- the scan: an Environment with no pip-audit and no bandit
+code, out, err, calls, folder = scan("clean", installed=False)
+block = summary(out)
+pip = (calls.get("pip") or [[]])[0]
+check("the scan installs both tools with pip in one call (a Job reaches PyPI, as the probe's did)",
+      len(calls.get("pip") or []) == 1 and pip[:1] == ["install"] and any(a.startswith("pip-audit") for a in pip)
+      and any(a.startswith("bandit") for a in pip), calls.get("pip"))
+check("after the install, both tools ran: exit 0, nothing on stderr, their hits in the summary",
+      code == 0 and err == "" and "pip-audit 2.10.1" in block and "B104" in block, f"exit {code}; {err[-300:]}; {block}")
+check("the scan says what it installed, before the summary", "installing pip-audit and bandit" in out.split(START)[0], out[:600])
+code, out, err, calls, folder = scan("clean", installed=False, fail="pip")
+block = summary(out)
+check("when the install fails, the scan exits 1, writes nothing to stderr, and the summary still ends the output",
+      code == 1 and err == "" and out.rstrip().endswith(END), f"exit {code}; {err[-300:]}; {out[-300:]}")
+check("the summary says that the install failed, with pip's first error",
+      "install: pip could not install pip-audit and bandit (exit 1): ERROR: Could not find a version that satisfies the requirement "
+      "pip-audit" in block, block)
 
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if failed else 0)

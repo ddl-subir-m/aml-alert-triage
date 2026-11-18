@@ -13,6 +13,7 @@ The end of the Job's log is what wait_job shows the agent (its last 8,000 charac
 So the script writes nothing to stderr: the tools' own output goes to their log files.
 """
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -25,6 +26,7 @@ REQUIREMENTS = "case_server/requirements.txt"
 SOURCE = "case_server"
 START, END = "== scan summary ==", "== end of scan summary =="
 TOOLS = {"pip-audit": "pip_audit", "bandit": "bandit"}   # each tool's name and its module (`python -m <module>`)
+INSTALL = {"pip-audit": "pip-audit>=2.7,<3", "bandit": "bandit>=1.7,<2"}   # tested: pip-audit 2.10.1, bandit 1.9.4
 LINE = 320   # the longest line of the summary: pip-audit's description of PYSEC-2021-142 is about 500 characters
 
 
@@ -45,6 +47,21 @@ def scan_with(name, args, out):
     if isinstance(found, dict):
         return found, ""
     return None, clip(f"could not run (exit {code}): {first_error(log)}")
+
+
+def install(out):
+    """Install the tools that this Python lacks, with pip, in one call: a Domino Environment may have neither (the Job reaches PyPI).
+    -> "" when nothing failed, else the summary's line about the install"""
+    missing = [name for name, module in TOOLS.items() if importlib.util.find_spec(module) is None]
+    if not missing:
+        return ""
+    names = " and ".join(missing)
+    say(f"scan: installing {names} with pip (this Environment doesn't have {'it' if len(missing) == 1 else 'them'})")
+    log = out / "install.log"
+    with open(log, "w") as f:
+        code = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *(INSTALL[n] for n in missing)], cwd=ROOT,
+                              stdout=f, stderr=subprocess.STDOUT).returncode
+    return "" if code == 0 else clip(f"install: pip could not install {names} (exit {code}): {first_error(log)}")
 
 
 def first_error(log):
@@ -123,6 +140,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     say(f"scan: pip-audit and bandit on {SOURCE} (governance/scan.py), output in {out}")
 
+    install_failed = install(out)
     say(f"scan: running pip-audit on {REQUIREMENTS}")
     audit = scan_with("pip-audit", ["-r", REQUIREMENTS, "--progress-spinner", "off", "--format", "json"], out)
     say(f"scan: running bandit on {SOURCE}")
@@ -135,7 +153,7 @@ def main():
         result = (f"result: {' and '.join(failed)} could not run ({'its' if len(failed) == 1 else 'their'} messages: "
                   + ", ".join(f"{name}.log" for name in failed) + ")")
     reports = [str(out / f"{name}.json") for name in TOOLS if name not in failed]
-    say("\n".join([START, f"commit: {commit()}", *pip_audit_lines(*audit), *bandit_lines(*bandit),
+    say("\n".join([START, f"commit: {commit()}", *([install_failed] if install_failed else []), *pip_audit_lines(*audit), *bandit_lines(*bandit),
                    f"JSON: {', '.join(reports) or 'none'}", result, END]))
     return 1 if failed else 0
 
