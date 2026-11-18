@@ -5,19 +5,25 @@ run does the same steps in the same order:
   scan      run_job with the shared scan (governance/scan.py), wait_job until the Job is done, get_job_logs: the scan's summary
   analyze   the model (its own, with room to answer: max_tokens 16000) sorts the hits and gives the doc's facts, through one tool
             call (the structured output); the code then applies the shared rules (governance/README.md)
+  write     renders the doc from the shared template (governance/validation-doc.md), writes it to the doc dataset's mount,
+            write_dataset_snapshot, get_dataset_snapshot until the snapshot is active, write_bundle_attachment (DatasetSnapshotFile)
   findings  the task's result, streamed as the last text: the verdict, critical vulns and the doc's location
 
 The gateway tools are called from this code through the relay (domino_agui.contract.relay(): a ToolResult with is_error, so a denial
 is seen as one), never by the model. The instruction is the event subscription's (subscription.json): the graph reads the bundle ID
-from its line "Bundle ID: ...".
+and the doc dataset from its lines "Bundle ID: ...", "Doc dataset ID: ..." and "Doc dataset path: ..." (the dataset's mount in the
+Job, /mnt/data/<dataset name> in a Git-based project).
 
 The entry point is governance/validator-langgraph/graph.py:build_graph. The definition is agent.json, next to this file. The data is
 fake.
 """
+import asyncio
 import json
 import operator
+import os
 import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -43,6 +49,9 @@ SEVERITIES = ("S0", "S1", "S2", "S3")   # write_governance_finding's scale (gove
 PREFIX = "[LangGraph]"   # each finding's name starts with the validator's short name
 RULES = ("## The severity scale", "## Finding names", "## Critical vulns")   # the shared rules: sections of governance/README.md
 README_CHARS = 15000   # the start of the project's README: the App's own part
+SNAPSHOT_EVERY, SNAPSHOTS = 5, 36   # get_dataset_snapshot every 5 s, at most 36 times (3 minutes), until the snapshot is active
+SNAPSHOT_ENDED = ("active", "failed", "markForDeletion", "deletionInProgress", "deleted")   # Domino's snapshot statuses that end the wait
+COMMENT = re.compile(r"<!--.*?-->\n?", re.S)   # the template's guidance (governance/README.md: a renderer strips it)
 
 TEXT = {"type": "string"}
 ANALYSIS = {   # the model's structured output: the one tool it calls
@@ -110,6 +119,7 @@ class Validation(State, total=False):
     code: dict        # {path: text}: the App's files
     scan: dict        # {"ok", "jobId", "number", "status", "summary", "why"}: the scan Job and its summary
     analysis: dict    # the model's analysis, after the shared rules: with "findings" (named) and "critical_vulns"
+    doc: dict         # {"location", "filename", "datasetId", "snapshotId", "attached"}: where the doc is
     problems: Annotated[list, operator.add]   # what a step could not do, for the result and the doc
     result: str
 
@@ -315,11 +325,115 @@ def ruled(analysis, scan):
     return a
 
 
+async def write(state):
+    """The doc: the shared template filled, written to the doc dataset's mount, snapshot, and attached to the bundle once the snapshot
+    is active. A step that can't be done is said in the doc's location and in the problems, and the graph goes on."""
+    instruction, bundle_id = instruction_of(state), state["bundle_id"]
+    dataset_id, mount = setting(instruction, "Doc dataset ID"), setting(instruction, "Doc dataset path")
+    now = datetime.now(timezone.utc)
+    filename = f"validation-{bundle_id}-{now:%Y%m%dT%H%M%SZ}.md"
+    if not dataset_id or not mount:
+        why = "the instruction names no doc dataset (its lines Doc dataset ID and Doc dataset path)"
+        return {"doc": {"location": f"not written: {why}"}, "problems": [f"write: {why}"]}
+    try:
+        (Path(mount) / filename).write_text(render_doc(state, now))
+    except OSError as e:
+        return {"doc": {"location": f"not written: {e}"}, "problems": [f"write: the doc could not be written to {mount}: {e}"]}
+    ok, text = await call("write_dataset_snapshot", datasetId=dataset_id)
+    snapshot_id = ((answer(text) or {}).get("snapshot") or {}).get("id") if ok else None
+    if not snapshot_id:
+        return {"doc": {"location": f"written to {mount}/{filename}, with no snapshot"}, "problems": [f"write_dataset_snapshot: {text[:300]}"]}
+    doc = {"location": f"dataset {dataset_id}, snapshot {snapshot_id}, file {filename}", "filename": filename, "datasetId": dataset_id,
+           "snapshotId": snapshot_id, "attached": False}
+    status, text = await snapshot_ready(dataset_id, snapshot_id)
+    if status != "active":
+        return {"doc": doc, "problems": [f"get_dataset_snapshot: the snapshot is {status or 'not read'} ({text[:200]}), so the doc isn't "
+                                         "attached"]}
+    ok, text = await call("write_bundle_attachment", bundleId=bundle_id, type="DatasetSnapshotFile",
+                          identifier={"datasetId": dataset_id, "snapshotId": snapshot_id, "filename": filename})
+    return {"doc": {**doc, "attached": ok}, **({} if ok else {"problems": [f"write_bundle_attachment: {text[:300]}"]})}
+
+
+async def snapshot_ready(dataset_id, snapshot_id):
+    """get_dataset_snapshot until the snapshot is active, failed or gone, or the wait is over. -> (its status or None, the last answer)"""
+    status, text = None, ""
+    for n in range(SNAPSHOTS):
+        if n:
+            await asyncio.sleep(SNAPSHOT_EVERY)
+        ok, text = await call("get_dataset_snapshot", datasetId=dataset_id, snapshotId=snapshot_id)
+        status = ((answer(text) or {}).get("snapshot") or {}).get("status") if ok else None
+        if not ok or status in SNAPSHOT_ENDED:
+            break
+    return status, text
+
+
+def intake(state):
+    """The doc's fields from the bundle's Intake evidence (users, data class). No gateway tool reads a bundle's results yet, so they
+    are not read: the doc says so, and lists it under what the validator could not check."""
+    return {"users_and_data_class": "Not read: the gateway tools give no read of the bundle's evidence results, so this validator did not "
+                                    "read the Intake evidence (users, data class).",
+            "could_not_check": "The Intake evidence (users, data class): no gateway tool reads a bundle's results."}
+
+
+def render_doc(state, now):
+    """The validation doc: the shared template (governance/validation-doc.md), each {{field}} filled and each comment removed."""
+    fields = doc_fields(state, now)
+    text = COMMENT.sub("", (ROOT / "governance" / "validation-doc.md").read_text())
+    return re.sub(r"{{(\w+)}}", lambda m: fields.get(m.group(1), m.group(0)), text).lstrip()
+
+
+def doc_fields(state, now):
+    a, scan, bundle = state.get("analysis") or {}, state.get("scan") or {}, state.get("bundle") or {}
+    commit = next((ln.split(":", 1)[1].strip() for ln in (scan.get("summary") or "").splitlines() if ln.startswith("commit:")), None)
+    app = a.get("app") or bundle.get("name") or "the App"
+    known = intake(state)
+    return {"app": app, "validator": f"App validator (LangGraph), the framework lane, task {os.environ.get('TASK_KEY') or 'unknown'}",
+            "bundle_id": state["bundle_id"], "written_at": f"{now:%Y-%m-%d %H:%M}",
+            "app_and_version": f"{app}" + (f", the bundle {bundle['name']}" if bundle.get("name") else "")
+                               + (f". Commit {commit}: the commit that the scan read (the project's default branch)." if commit else
+                                  ". The commit is not known: the scan did not give it."),
+            "purpose": a.get("purpose") or "", "users_and_data_class": known["users_and_data_class"],
+            "tech_stack": a.get("tech_stack") or "", "architecture": a.get("architecture") or "",
+            "dependencies": table(["Dependency", "Version or range", "How it is installed"],
+                                  [[d["name"], d["version"], d["installed_by"]] for d in a.get("dependencies") or []]),
+            "scan_results": scan_results(scan),
+            "real_findings": table(["Name", "Severity", "Evidence", "Fix"],
+                                   [[f["name"], f["severity"], f["evidence"], f["fix"]] for f in a.get("findings") or []]),
+            "false_hits": table(["Hit", "Why it is false"], [[h["hit"], h["reason"]] for h in a.get("false_hits") or []]),
+            "critical_vulns": a.get("critical_vulns") or "no", "critical_vulns_reason": a.get("critical_vulns_reason") or "",
+            "verdict": a.get("verdict") or "do not approve", "verdict_reason": a.get("verdict_reason") or "",
+            "could_not_check": "\n".join(f"- {x}" for x in [*(a.get("could_not_check") or []), known["could_not_check"]])}
+
+
+def table(head, rows):
+    """A Markdown table, or "None." when it has no row."""
+    if not rows:
+        return "None."
+    cell = lambda v: " ".join(str(v or "").split()).replace("|", "\\|")
+    return "\n".join(["| " + " | ".join(head) + " |", "|" + "---|" * len(head)] + ["| " + " | ".join(cell(v) for v in r) + " |" for r in rows])
+
+
+def scan_results(scan):
+    """The scan's table (each tool, its version and its hits, from the summary) and its Job; or why the scan did not run to its end."""
+    tools = []   # [tool, version, what it said, [its hits]]
+    for ln in (scan.get("summary") or "").splitlines():
+        m = re.match(r"(pip-audit|bandit) (\S+) on .+?: (.*)$", ln)
+        if m:
+            tools.append([*m.groups(), []])
+        elif ln.startswith("- ") and tools:
+            tools[-1][3].append(ln[2:])
+    rows = [[name, version, said + (": " + "; ".join(hits) if hits else "")] for name, version, said, hits in tools]
+    job = f"Scan Job {scan['number']}: {scan.get('status')}." if scan.get("number") else ""
+    head = "" if scan.get("ok") else f"The scan did not run to its end: {scan.get('why')}. No finding comes from it.\n\n"
+    return (head + (table(["Tool", "Version", "Hits"], rows) + "\n\n" if rows else "") + job).strip()
+
+
 async def findings(state, config):
     """The task's result, streamed as the run's last text (the task's result is the run's last text: a message in the state is not
     sent)."""
     a = state.get("analysis") or {}
-    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", "",
+    doc = state.get("doc") or {}
+    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", f"Doc location: {doc.get('location')}", "",
                         f"Bundle: {state['bundle_id']}. {a.get('summary') or ''}".strip()])
     message_id = f"msg-{uuid.uuid4().hex[:16]}"
     await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
@@ -332,10 +446,12 @@ def build_graph(checkpointer):
     g.add_node("collect", collect)
     g.add_node("scan", scan)
     g.add_node("analyze", analyze)
+    g.add_node("write", write)
     g.add_node("findings", findings)
     g.add_edge(START, "collect")
     g.add_edge("collect", "scan")
     g.add_edge("scan", "analyze")
-    g.add_edge("analyze", "findings")
+    g.add_edge("analyze", "write")
+    g.add_edge("write", "findings")
     g.add_edge("findings", END)
     return g.compile(checkpointer=checkpointer)

@@ -255,7 +255,7 @@ class FakeDomino:
                        "policyVersion": "1", "stage": "Validation", "state": "Active", "createdAt": "2026-11-17T10:00:00Z",
                        "createdBy": {"id": "u-analyst", "userName": "analyst"}, "attachments": [], "stages": [], "policies": []}
         self.job_end, self.log, self.snapshot_statuses = job_end, scan_log() if log is None else log, list(snapshot_statuses)
-        self.calls, self.snapshots, self.job, self.job_started = [], {}, None, None
+        self.calls, self.snapshots, self.job, self.job_started, self.folder = [], {}, None, None, None   # folder: the dataset's mount
 
     def http(self, method, path, query=None, body=None, raw=False, ctype=None, headers=None):
         self.calls.append((method, path, query, body))
@@ -278,7 +278,27 @@ class FakeDomino:
             return 200, {"logs": {"isComplete": True, "logContent": [
                 {"log": line, "logType": query["logType"], "size": len(line), "timestamp": "2026-11-17T11:00:00Z"}
                 for line in text.splitlines()]}, "metadata": {"requestId": "rq-logs", "notices": []}}
+        if method == "GET" and path == f"/api/datasetrw/v1/datasets/{DATASET['id']}":
+            return 200, {"dataset": {"id": DATASET["id"], "name": DATASET["name"], "projectId": PROJECT["id"], "description": "",
+                                     "createdAt": "2026-11-01T10:00:00Z", "snapshotIds": list(self.snapshots), "tags": {}},
+                         "metadata": {"requestId": "rq-ds", "notices": []}}
+        if method == "POST" and path == f"/api/datasetrw/v1/datasets/{DATASET['id']}/snapshots":
+            sid = f"snap-{len(self.snapshots) + 1}"   # what the dataset holds at the snapshot: the files written before it
+            self.snapshots[sid] = sorted(str(f.relative_to(self.folder)) for f in self.folder.rglob("*") if f.is_file())
+            return 200, self.snapshot(sid, "pending")
+        if method == "GET" and parts[:4] == ["api", "datasetrw", "v1", "snapshots"] and parts[4:] and parts[4] in self.snapshots:
+            status = self.snapshot_statuses.pop(0) if len(self.snapshot_statuses) > 1 else self.snapshot_statuses[0]
+            return 200, self.snapshot(parts[4], status)
+        if method == "POST" and path == f"/api/governance/v1/bundles/{BUNDLE['id']}/attachments":
+            return 200, {"id": "att-1", "type": body["type"], "identifier": body["identifier"], "source": "MANUAL",
+                         "createdAt": "2026-11-17T11:05:00Z", "createdBy": {"id": "u-sa", "userName": "svc_validator"},
+                         "approvalTimelineMap": {}}
         return 404, {"message": f"{path} not found"}
+
+    @staticmethod
+    def snapshot(sid, status):
+        return {"snapshot": {"id": sid, "datasetId": DATASET["id"], "status": status, "createdAt": "2026-11-17T11:04:00Z",
+                             "creatorId": "u-sa", "description": ""}, "metadata": {"requestId": f"rq-{sid}", "notices": []}}
 
     @staticmethod
     def job_status(status):
@@ -357,7 +377,10 @@ def close():
         agent_server.kill()
     relay.server.shutdown()
     model.shutdown()
-    shutil.rmtree(TMP, ignore_errors=True)
+    if os.environ.get("KEEP") == "1":   # KEEP=1 keeps the folder: the agent server's log and each case's doc
+        print(f"     kept {TMP}", flush=True)
+    else:
+        shutil.rmtree(TMP, ignore_errors=True)
 
 
 if not up:
@@ -371,8 +394,9 @@ def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
     the bundle's name, so in the instruction)."""
     relay.start(domino, task_key)
     fake_model.seen.clear()
-    folder = TMP / f"data-{case}"
+    folder = TMP / f"data-{case}"   # the doc dataset's mount in the Job
     folder.mkdir(exist_ok=True)
+    domino.folder = folder
     th = messages or thread.Thread(thread_id or f"t-{case}")
     if not messages:
         th.add_user(instruction_for(f"{BUNDLE['name']} [certify {case}]", folder))
@@ -486,6 +510,43 @@ check("MAIN the model's analysis stays out of the task's stream: no tool call, a
 lines = (ran["result"] or "").splitlines()
 check("MAIN the result starts with the verdict and critical vulns: the model's verdict, and no S0 finding is no",
       lines[:2] == ["Verdict: approve after fixes", "Critical vulns: no"], lines[:3])
+docs = sorted(f.name for f in ran["folder"].iterdir())
+doc = (ran["folder"] / docs[0]).read_text() if len(docs) == 1 else ""
+after = tools(relay.calls)[tools(relay.calls).index("get_job_logs") + 1:]
+check("MAIN write: after the scan, write_dataset_snapshot of the doc dataset, then get_dataset_snapshot until the snapshot is active (it "
+      "is pending at first), then write_bundle_attachment",
+      after[:4] == ["write_dataset_snapshot", "get_dataset_snapshot", "get_dataset_snapshot", "write_bundle_attachment"]
+      and relay.calls[tools(relay.calls).index("write_dataset_snapshot")][1] == {"datasetId": DATASET["id"]}
+      and all(a == {"datasetId": DATASET["id"], "snapshotId": "snap-1"} for n, a in relay.calls if n == "get_dataset_snapshot"), after)
+check("MAIN the doc is one Markdown file in the dataset's folder, written before the snapshot (the snapshot has it)",
+      len(docs) == 1 and docs[0].endswith(".md") and BUNDLE["id"] in docs[0] and dom.snapshots.get("snap-1") == docs, (docs, dom.snapshots))
+attach = next((a for n, a in relay.calls if n == "write_bundle_attachment"), {})
+check("MAIN the attachment is the doc's file in that snapshot (DatasetSnapshotFile), on the event's bundle",
+      attach == {"bundleId": BUNDLE["id"], "type": "DatasetSnapshotFile",
+                 "identifier": {"datasetId": DATASET["id"], "snapshotId": "snap-1", "filename": docs[0] if docs else None}}, attach)
+check("MAIN the result's third line is the doc's location: the dataset, the snapshot and the file",
+      lines[2:3] == [f"Doc location: dataset {DATASET['id']}, snapshot snap-1, file {docs[0] if docs else None}"], lines[:4])
+TEMPLATE = (ROOT / "governance" / "validation-doc.md").read_text()
+heads = [ln for ln in TEMPLATE.splitlines() if ln.startswith("#")]
+check("MAIN the doc is the shared template filled: every heading in its order, no field left and no comment",
+      [ln for ln in doc.splitlines() if ln.startswith("#")] == [h.replace("{{app}}", MAIN["app"]) for h in heads]
+      and "{{" not in doc and "<!--" not in doc, [ln for ln in doc.splitlines() if ln.startswith("#")][:3])
+check("MAIN the doc names the validator, the bundle and the commit that the scan read",
+      "Validator: App validator (LangGraph)" in doc and f"Bundle: {BUNDLE['id']}" in doc and SCANNED in doc, doc[:400])
+check("MAIN the doc's scan results: each tool with its version and its hits, and the scan Job",
+      "| pip-audit | 2.10.1 | no known vulnerabilities in 29 packages |" in doc and "| bandit | 1.9.4 | 2 hits: B104 hardcoded_bind_all_interfaces at case_server/server.py:159" in doc
+      and "Job 41" in doc, doc[doc.find("## Scan results"):][:600])
+check("MAIN the doc's real findings: a table with each finding's name (with [LangGraph]), severity, evidence and fix",
+      "| [LangGraph] POST /reset wipes all state for any caller | S1 | case_server/server.py: the /reset route | Allow /reset only to "
+      "the App's owner. |" in doc, doc[doc.find("### Real findings"):][:600])
+check("MAIN the doc's false hits: each bandit hit with the reason", all(f"| {h['hit']} | {h['reason']} |" in doc for h in MAIN["false_hits"]),
+      doc[doc.find("### False hits"):][:600])
+check("MAIN the doc's verdict and critical vulns, with their reasons", "Critical vulns: no" in doc and MAIN["critical_vulns_reason"] in doc
+      and "Verdict: approve after fixes" in doc and MAIN["verdict_reason"] in doc, doc[doc.find("## Critical vulns"):][:400])
+check("MAIN the Intake fields say Not read (no gateway tool reads a bundle's results yet), and the doc says so under what the validator "
+      "could not check", "Not read" in doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
+      and "Intake" in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc,
+      doc[doc.find("## Users and data class"):][:300])
 started = [b for m, p, q, b in dom.calls if (m, p) == ("POST", "/api/jobs/v1/jobs")]
 check("MAIN Domino got one Job, in the task's project, with the scan's command",
       len(started) == 1 and started[0]["runCommand"] == "python governance/scan.py" and started[0]["projectId"] == PROJECT["id"], started)
