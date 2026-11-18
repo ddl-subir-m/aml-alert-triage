@@ -25,6 +25,8 @@ import urllib.request
 # The validators, in the order of the Validation stage: the evidence item's name, and the agent's name (#267 and #268).
 VALIDATORS = (("Validation (agent folder)", "App validator (agent folder)"),
               ("Validation (LangGraph)", "App validator (LangGraph)"))
+LABELS = ("Verdict", "Critical vulns", "Doc location")   # the first lines of each validator's result: "<label>: <value>". The one
+# source: the LangGraph graph writes its result with these, and the agent folder's checklist names them (its check compares).
 WIDTH = 16   # the label column: "critical vulns: " is the longest label
 OUTPUT = "validation_status.txt"
 LINES = []   # every line said, for the output file
@@ -40,7 +42,8 @@ def field(label, value):
 
 
 def token():
-    """The Job's token: the person who clicked Run. Domino's API proxy in the Job gives it (as the trigger test's probe read it)."""
+    """The Job's token: the person who clicked Run. Domino's API proxy in the Job gives it: GET /access-token on DOMINO_API_PROXY
+    (else localhost:8899), in a scripted check's Job too."""
     url = os.environ.get("DOMINO_API_PROXY", "http://localhost:8899").rstrip("/") + "/access-token"
     t = urllib.request.urlopen(url, timeout=10).read().decode().strip()
     return t[len("Bearer "):] if t.startswith("Bearer ") else t
@@ -91,14 +94,14 @@ def get_tasks(app, query, tok):
     return tasks
 
 
-def facts(summary):
+def result_lines(summary):
     """The verdict, critical vulns and doc location lines of a validator's result (its task's summary), Markdown aside."""
     found = {}
-    for line in (summary or "").splitlines():
-        plain = re.sub(r"[*_`]", "", line).strip().lstrip("-#> ").strip()
-        m = re.match(r"(verdict|critical vulns|doc location)\s*:\s*(.+)$", plain, re.I)
-        if m and m.group(1).lower() not in found:
-            found[m.group(1).lower()] = m.group(2).strip()
+    for line in (summary or "").splitlines():   # "- **Verdict:** approve", "_Doc location_: `a_b`": marks around, never inside
+        m = re.match(rf"[\s>#*_`-]*({'|'.join(LABELS)})[*_`]*\s*:(.+)$", line, re.I)
+        value = m.group(2).strip(" \t*_`") if m else ""
+        if value and m.group(1).lower() not in found:
+            found[m.group(1).lower()] = value
     return found
 
 
@@ -117,10 +120,10 @@ def show(app, title, agent, tasks, where):
     t, status = tasks[0], tasks[0].get("status") or "unknown"
     field("task", f"{t.get('key')}  {t.get('title')}")
     field("status", f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status)
-    got = facts(t.get("summary"))
+    got = result_lines(t.get("summary"))
     if status in ENDED:
         field("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none")
-    for label in ("verdict", "critical vulns", "doc location"):
+    for label in (x.lower() for x in LABELS):
         if status in ("review", "done"):
             field(label, got.get(label, "not in the task's result"))
         elif status in ENDED:

@@ -1,7 +1,7 @@
 # The LangGraph validator
 
 One of the two App validators of the App validation demo (domino-agent-service spec #260, Implementation Decision 9). It is a
-framework-lane agent, `App validator (LangGraph)`, made in the wizard. Its code is in this folder: a fixed LangGraph graph. When an
+framework agent, `App validator (LangGraph)`, made in the wizard. Its code is in this folder: a fixed LangGraph graph. When an
 analyst moves an App's governance bundle to the Validation stage of the App deployment policy, its event subscription starts a task.
 The graph validates the App, writes a validation doc to a dataset snapshot, attaches the doc to the bundle, files the real findings
 and fills the evidence item "Validation (LangGraph)". The other validator is the agent folder validator (harness lane,
@@ -21,9 +21,12 @@ The graph has five steps, and each task runs them once, in this order. The model
 calls each gateway tool through the relay (`domino_agui.contract.relay()`), so it sees a denial as one. The shared parts are in
 `governance/` (its README has the severity scale, the finding names and the rule for critical vulns).
 
-1. **collect.** Own tools (`list_files`, `read_file`, as the probe did) read the App's code: `app.sh` and `case_server/`. Then
+1. **collect.** The graph's own code (`list_files`, `read_file`, not tools of the model) reads the App's code: `app.sh` and
+   `case_server/`. Then
    `get_bundle` and `get_policy`. It finds its evidence item by its name, and each field (Verdict, Critical vulns, Summary, Doc
-   location) by its label.
+   location) by its label. From the same answer, it keeps the Intake values that the analyst filled (Purpose, Users, Data class):
+   each filled field has its value in `result.artifactContent`. The doc's "Users and data class" gives them ("not filled" for a field
+   with no value), and the model compares the Intake purpose with the code.
 2. **scan.** `run_job` with `python governance/scan.py`, then `wait_job` until the Job is done, then `get_job_logs`. It reads the
    summary between the two marker lines. The scan ran only when the Job succeeded and the summary says `result: both tools ran`.
 3. **analyze.** One model call. The model reads the task, the bundle, the scan's summary, the App's code, the start of the repo's
@@ -46,9 +49,10 @@ models refuse a forced tool choice. The model's answer stays out of the task's t
 Where it can't do the whole job, it says so, in the doc ("What the validator could not check"), in the evidence item's Summary and
 in the result ("Not done"), and goes on:
 
-- **The Intake values.** No gateway tool reads a bundle's evidence values, so the doc's "Users and data class" says "Not read".
-- **The scan.** When the scan Job fails (or doesn't start, or doesn't end in about 20 minutes), the doc's scan results say why, the
-  verdict is `do not approve`, and no finding comes from the scan. The model still reviews the code.
+- **The scan.** When the scan Job fails (or doesn't start, or doesn't end in about 20 minutes), the graph follows "A failed scan" in
+  `governance/README.md`, as the agent folder validator does: the doc's scan results say why, the verdict is `do not approve`, no
+  finding comes from the scan, and critical vulns `no` says "No S0 finding; dependencies not scanned". The model still reviews the
+  code.
 - **The model's analysis.** An answer with no `validation_analysis` call is asked again once. When the second one can't be used
   either, the verdict is `do not approve`, and no finding is filed.
 - **The snapshot.** A snapshot that fails is not attached, and the doc's location says so.
@@ -145,10 +149,13 @@ Gateway. domino-agui comes from the service's `tests/fetch_domino_agui.py`, at t
   until the Job is done, `get_job_logs`, `write_dataset_snapshot`, `get_dataset_snapshot` until the snapshot is active,
   `write_bundle_attachment`, one `write_governance_finding` for each real finding, and `write_policy_result`, and no other. The model
   call has `max_tokens` 16000 and one offered tool, and reads the scan, the code and the shared rules. The doc is the template
-  filled, in the snapshot. The evidence item's four fields and the result's three lines.
-- **The scan Job fails.** The doc and the evidence item say so, the verdict is `do not approve`, and no scanner finding is filed.
-- **No usable analysis, the demo branch (an S0 finding makes critical vulns yes), a failed snapshot, a message to a task that has
-  validated, and an instruction with no bundle.**
+  filled, in the snapshot, with the Intake values that the fake Domino's latest results hold. The evidence item's four fields and
+  the result's three lines.
+- **The scan Job fails.** The doc and the evidence item say so, the verdict is `do not approve`, no scanner finding is filed, and
+  critical vulns `no` says "No S0 finding; dependencies not scanned".
+- **No usable analysis, the demo branch (an S0 finding makes critical vulns yes), a failed snapshot with no Intake value filled, a
+  message to a task that has validated, an instruction with no bundle, a `wait_job` answer that isn't the Job's state, the model in
+  the OpenAI format, and an answer cut at its output limit.**
 
 The service part needs Linux: it starts the agent service with a fake Domino (the service's seam helper, `tests/agent_folder_seam.py`).
 The wizard's create (`POST /api/agents`) takes `agent.json` with a certified Environment and a service account: the framework lane's

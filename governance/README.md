@@ -8,7 +8,7 @@ on this page, so that the demo compares two lanes, not two jobs. All the data is
 |---|---|
 | [scan.py](scan.py) | The scan: pip-audit and bandit on the case server, in a Domino Job |
 | [validation-doc.md](validation-doc.md) | The template of the validation doc |
-| This page | The severity scale, the finding names and the rule for "critical vulns" |
+| This page | The severity scale, the finding names, the rule for "critical vulns" and the rule for a failed scan |
 
 There is no list of the expected findings. Each validator reads the code and the scan, and sorts the hits itself.
 
@@ -24,6 +24,9 @@ ends.
   scanned, each tool with its version and its hits, where the JSON is, and a `result:` line.
 - It exits 0 when both tools ran, with hits or not. It exits 1 when a tool could not run, and the summary says which tool and why.
   The doc then says so under "What the validator could not check".
+- A tool can run and still miss a part: pip-audit does not audit a package that is not on PyPI (its `skip_reason`), and bandit does
+  not scan a file that it cannot parse (its `errors`). The summary counts only what was checked, and names each part that was not
+  (`- not audited: ...`, `- not scanned: ...`). The doc names each one under "What the validator could not check".
 
 `wait_job` shows the end of the Job's log: its last 8,000 characters. The summary is short, so it is there. Domino adds a few lines of
 its own after the script's output, and the Job's stderr (Domino's messages only: the script writes nothing to stderr) comes after its
@@ -57,6 +60,18 @@ A validator files only the real findings. A false hit goes in the doc only, unde
 
 The doc's "Critical vulns" is `yes` when at least one real finding is S0, and `no` when none is.
 
+## A failed scan
+
+The scan failed when its Job did not end `Succeeded`, or when its summary's `result:` line is not `result: both tools ran` (a tool
+could not run). Then nobody checked the dependencies, and both validators do the same:
+
+- The verdict is `do not approve`: run the validation again when the scan runs.
+- No finding comes from the scan, so none is filed. The findings from the code are filed as usual.
+- Critical vulns stays `yes` or `no`: the policy's field has only these two values. It is `yes` when a finding from the code is S0.
+  Else it is `no`, and its reason starts with "No S0 finding; dependencies not scanned".
+- The evidence item's Summary, and the doc's "Scan results" and "What the validator could not check", say that the scan failed, and
+  why.
+
 ## The check
 
 ```bash
@@ -65,7 +80,8 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_pa
 ```
 
 It runs the scan with no network: in a bare venv, with fake scanners that answer with the real tools' output (saved in
-`tests/fixtures/scan/`: `clean` is main, and `vulnerable` is pip-audit's answer for `pyyaml==5.3.1`). It covers the summary (each tool,
-its version and its hits, at the end of the output, nothing on stderr), the JSON files, a tool that cannot run, and the install. It
+`tests/fixtures/scan/`: `clean` is main, `vulnerable` is pip-audit's answer for `pyyaml==5.3.1`, and `gaps` has a file that bandit
+can't parse and a package that isn't on PyPI). It covers the summary (each tool, its version and its hits, at the end of the output,
+nothing on stderr), the JSON files, the parts that a tool did not check, a tool that cannot run, and the install. It
 also checks the doc template's sections and this page's rules. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it
 checks the severity scale against the gateway's `write_governance_finding`. Without it, that part prints a SKIP line.

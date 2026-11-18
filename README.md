@@ -723,7 +723,7 @@ event subscription), and its check (`tests/check_validator_folder.py`): [governa
 
 ## The LangGraph validator
 
-The other App validator of the App deployment policy (domino-agent-service spec #260): a framework-lane agent, `App validator
+The other App validator of the App deployment policy (domino-agent-service spec #260): a framework agent, `App validator
 (LangGraph)`, made in the wizard, whose code is a fixed LangGraph graph in `governance/validator-langgraph/`. When a bundle moves to
 the Validation stage, its five steps (collect, scan, analyze, write, findings) read the App's code, scan it in a Domino Job, have the
 model sort the hits, write a validation doc to a dataset snapshot, attach the doc to the bundle, file the real findings and fill the

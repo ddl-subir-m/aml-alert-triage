@@ -1,7 +1,7 @@
 """The LangGraph validator of the App validation demo (domino-agent-service spec #260, Implementation Decision 9): a fixed graph. Each
 run does the same steps in the same order:
 
-  collect   own tools read the App's code (list_files, read_file, as the probe did); get_bundle, get_policy
+  collect   the graph's own code reads the App's code (list_files, read_file: not tools of the model); get_bundle, get_policy
   scan      run_job with the shared scan (governance/scan.py), wait_job until the Job is done, get_job_logs: the scan's summary
   analyze   the model (its own, with room to answer: max_tokens 16000) sorts the hits and gives the doc's facts, through one tool
             call (the structured output); the code then applies the shared rules (governance/README.md)
@@ -23,6 +23,7 @@ The entry point is governance/validator-langgraph/graph.py:build_graph. The defi
 fake.
 """
 import asyncio
+import importlib.util
 import json
 import operator
 import os
@@ -41,19 +42,33 @@ from domino_agui.langgraph import State, system_prompt
 
 ROOT = Path(__file__).resolve().parents[2]   # the project's root: this file is governance/validator-langgraph/graph.py
 HERE = Path(__file__).resolve().parent
+
+
+def shared(name):
+    """A shared part of governance/ as a module: the one source of the lines that the scan prints (scan.py) and that the scripted
+    check reads (validation_status.py). The Job runs this graph from the repo, so the parts are there."""
+    spec = importlib.util.spec_from_file_location(f"governance_{name}", ROOT / "governance" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SCANNER, STATUS = shared("scan"), shared("validation_status")
 SKIP = {".git", "__pycache__", ".venv", "node_modules"}
 LIMIT = 200
 APP = ("app.sh", "case_server")   # the App under validation: its start script and its server
 EVIDENCE = "Validation (LangGraph)"   # the evidence item this validator fills, and no other
+INTAKE = ("Purpose", "Users", "Data class")   # the fields of the Intake evidence (its stage and its item are both "Intake")
 FIELDS = ("Verdict", "Critical vulns", "Summary", "Doc location")   # its fields' labels (governance/app-deployment-policy.yaml)
 SCAN = "python governance/scan.py"   # the shared scan, as both validators run it (governance/README.md)
-SUMMARY = ("== scan summary ==", "== end of scan summary ==")   # its summary's markers: Domino adds lines after it, so not the last line
+SUMMARY = (SCANNER.START, SCANNER.END)   # its summary's markers: Domino adds lines after it, so not the last line
 WAITS = 30   # wait_job calls before the graph stops waiting for the scan: each one waits up to 45 s, so about 20 minutes
 MAX_TOKENS = 16000   # the model's output limit (domino-agui#1: the ready-made model sets none, and an alias then gets 4,096)
 VERDICTS = ("approve", "approve after fixes", "do not approve")   # the policy's Verdict values, exactly
 SEVERITIES = ("S0", "S1", "S2", "S3")   # write_governance_finding's scale (governance/README.md)
 PREFIX = "[LangGraph]"   # each finding's name starts with the validator's short name
-RULES = ("## The severity scale", "## Finding names", "## Critical vulns")   # the shared rules: sections of governance/README.md
+RULES = ("## The severity scale", "## Finding names", "## Critical vulns", "## A failed scan")   # the shared rules: sections of
+# governance/README.md
 README_CHARS = 15000   # the start of the project's README: the App's own part
 SNAPSHOT_EVERY, SNAPSHOTS = 5, 36   # get_dataset_snapshot every 5 s, at most 36 times (3 minutes), until the snapshot is active
 SNAPSHOT_ENDED = ("active", "failed", "markForDeletion", "deletionInProgress", "deleted")   # Domino's snapshot statuses that end the wait
@@ -66,7 +81,7 @@ ANALYSIS = {   # the model's structured output: the one tool it calls
     "type": "object",
     "properties": {
         "app": {**TEXT, "description": "The App's name, as its code and README name it"},
-        "purpose": {**TEXT, "description": "What the App does, in two or three sentences"},
+        "purpose": {**TEXT, "description": "What the App does, in two or three sentences, and where it differs from the Intake purpose"},
         "tech_stack": {**TEXT, "description": "The language, the frameworks, the server and the storage"},
         "architecture": {**TEXT, "description": "The parts and how they connect: the entry point, the routes or tools, the state, who can "
                                                 "call what"},
@@ -92,10 +107,11 @@ ANALYSIS = {   # the model's structured output: the one tool it calls
 
 
 def list_files(folder: str = ".") -> str:
-    """The files under a folder of the project, as paths relative to the project's root, one on each line (at most 200)."""
+    """The files under a folder of the project, as paths relative to the project's root, one on each line (at most 200). A file's
+    path gives that file (rglob on a file gives nothing)."""
     base = _inside(folder)
-    files = sorted(str(p.relative_to(ROOT)) for p in base.rglob("*")
-                   if p.is_file() and not SKIP & set(p.relative_to(ROOT).parts))
+    found = [base] if base.is_file() else base.rglob("*")
+    files = sorted(str(p.relative_to(ROOT)) for p in found if p.is_file() and not SKIP & set(p.relative_to(ROOT).parts))
     if not files:
         return f"No files under {folder}"
     more = f"\n... and {len(files) - LIMIT} more" if len(files) > LIMIT else ""
@@ -122,6 +138,7 @@ class Validation(State, total=False):
     bundle_id: str
     bundle: dict      # get_bundle's answer
     evidence: dict    # this validator's evidence item: {"id", "fields": {label: artifact ID}}
+    intake: dict      # the Intake values that the analyst filled: {label: value, or None when not filled}; None: not read
     code: dict        # {path: text}: the App's files
     scan: dict        # {"ok", "jobId", "number", "status", "summary", "why"}: the scan Job and its summary
     analysis: dict    # the model's analysis, after the shared rules: with "findings" (named) and "critical_vulns"
@@ -146,6 +163,14 @@ def answer(text):
     return got if isinstance(got, dict) else None
 
 
+def answered(text, *keys):
+    """One value of a gateway tool's JSON answer, by its keys ("job", "id": the answer's job.id), or None."""
+    value = answer(text)
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
 async def call(tool, /, **args):
     """One gateway tool call through the relay. -> (ok, the answer's text). A denial or Domino's error is not ok. (`tool` is positional
     only: write_governance_finding has an argument `name`.)"""
@@ -158,7 +183,8 @@ def instruction_of(state):
 
 
 async def collect(state):
-    """The App's code with the own tools, then the bundle and its policy, with this validator's evidence item and its fields."""
+    """The App's code (read by this code, with list_files and read_file), then the bundle and its policy: this validator's evidence
+    item with its fields, and the Intake values."""
     bundle_id = setting(instruction_of(state), "Bundle ID")
     if not bundle_id:
         raise ValueError("The instruction names no bundle: it needs a line \"Bundle ID: <the bundle's ID>\", as the event subscription's "
@@ -174,41 +200,68 @@ async def collect(state):
     policy = answer(text) if ok else None
     if not policy:
         problems.append(f"get_policy: {text[:300]}")
-    return {"bundle_id": bundle_id, "bundle": bundle or {}, "code": code, "problems": problems, "evidence": evidence_item(policy)}
+    return {"bundle_id": bundle_id, "bundle": bundle or {}, "code": code, "problems": problems, "evidence": evidence_item(policy),
+            "intake": intake_values(policy)}
+
+
+def item_of(policy, stage, name):
+    """An evidence item of the policy (get_policy's answer), by its stage's name and its own name: the policy file sets no IDs, Domino
+    gives them. None when the policy has no such item."""
+    for st in (policy or {}).get("stages") or []:
+        for item in st.get("evidenceSet") or [] if st.get("name") == stage else []:
+            if item.get("name") == name:
+                return item
+    return None
+
+
+def label(artifact):
+    return (artifact.get("details") or {}).get("label")
 
 
 def evidence_item(policy):
-    """This validator's evidence item in the policy (get_policy's answer), found by its name, with each field's artifact ID by its label
-    (the policy file sets no IDs: Domino gives them). {} when the policy has none."""
-    for stage in (policy or {}).get("stages") or []:
-        for item in stage.get("evidenceSet") or []:
-            if item.get("name") == EVIDENCE:
-                return {"id": item.get("id"), "fields": {(a.get("details") or {}).get("label"): a.get("id")
-                                                         for a in item.get("artifacts") or [] if a.get("id")}}
-    return {}
+    """This validator's evidence item, with each field's artifact ID by its label. {} when the policy has none."""
+    item = item_of(policy, "Validation", EVIDENCE)
+    return {"id": item.get("id"), "fields": {label(a): a.get("id") for a in item.get("artifacts") or [] if a.get("id")}} if item else {}
+
+
+def intake_values(policy):
+    """The Intake values that the analyst filled: {label: value}, with None for a field that nobody filled. get_policy gives a filled
+    field its latest value in result.artifactContent, and a field with no `result` is not filled. None when the policy has no Intake."""
+    item = item_of(policy, "Intake", "Intake")
+    if not item:
+        return None
+    got = {label(a): (a.get("result") or {}).get("artifactContent") for a in item.get("artifacts") or []}
+    return {k: shown(got.get(k)) for k in INTAKE}
+
+
+def shown(value):
+    """An artifact's value as text (a radio's value is its option's value), or None when it is empty."""
+    text = value if isinstance(value, str) else json.dumps(value) if value is not None else ""
+    return text.strip() or None
 
 
 async def scan(state):
     """The shared scan in a Domino Job: run_job, then wait_job until the Job is done, then get_job_logs for its summary. The scan ran
     only when the Job succeeded and its summary says that both tools ran."""
     ok, text = await call("run_job", command=SCAN, title="App validation scan (LangGraph)")
-    job_id = ((answer(text) or {}).get("job") or {}).get("id") if ok else None
+    job_id = answered(text, "job", "id") if ok else None
     if not job_id:
         return {"scan": {"ok": False, "why": f"the scan Job didn't start: {text[:300]}"}}
-    done = None
+    done, waiting = None, False
     for _ in range(WAITS):
         ok, text = await call("wait_job", jobId=job_id)
         done = re.match(r"Job (\S+) finished: (\w+)\.", text) if ok else None
-        if done or not ok or not text.startswith("Job "):
+        waiting = ok and not done and text.startswith("Job ")   # "Job N is still <status> ...": call it again
+        if not waiting:
             break
     if not done:
-        why = f"wait_job: {text[:300]}" if not ok else f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job"
+        why = f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job" if waiting else f"wait_job: {text[:300]}"
         return {"scan": {"ok": False, "jobId": job_id, "why": why}}
     number, status = done.groups()
     ok, logs = await call("get_job_logs", jobId=job_id)
     summary = scan_summary(logs if ok else "") or scan_summary(text)
     result = next((ln for ln in (summary or "").splitlines() if ln.startswith("result:")), "")
-    ran = status == "Succeeded" and result == "result: both tools ran"
+    ran = status == "Succeeded" and result == SCANNER.RAN
     why = None if ran else (f"the scan Job {number} ended {status}" + (f": {result[len('result: '):]}" if result else "")
                             + ("" if summary else ", and its log has no scan summary"))
     return {"scan": {"ok": ran, "jobId": job_id, "number": number, "status": status, "summary": summary, "why": why}}
@@ -237,7 +290,7 @@ async def analyze(state):
     with_structured_output sends. An answer that can't be used is asked again once; then the analysis says why it failed."""
     model = validator_model().bind_tools([ANALYSIS]).with_config(metadata={"emit-messages": False, "emit-tool-calls": False})
     system = "\n\n".join([m.content for m in system_prompt(state)] + [(HERE / "analyze.md").read_text()])
-    asked, why = facts(state), None
+    asked, why = briefing(state), None
     for _ in range(2):
         got = await model.ainvoke([SystemMessage(system), HumanMessage(asked + (f"\n\nYour last answer could not be used: {why}. Call "
                                                                                  f"{ANALYSIS['title']} once, with every field." if why else ""))])
@@ -247,7 +300,7 @@ async def analyze(state):
     return {"analysis": ruled(unanalyzed(state, why), state.get("scan") or {}), "problems": [f"analyze: {why}"]}
 
 
-def facts(state):
+def briefing(state):
     """What the model reads: the task, the bundle, the scan, the App's code, the start of the README, the shared rules and the doc's
     template."""
     scan, bundle = state.get("scan") or {}, state.get("bundle") or {}
@@ -262,8 +315,11 @@ def facts(state):
     rules = "\n\n".join(section(shared, heading) for heading in RULES)
     template = (ROOT / "governance" / "validation-doc.md").read_text()
     about = {k: bundle.get(k) for k in ("id", "name", "projectName", "stage", "policyName") if bundle.get(k)}
+    values = state.get("intake")
+    told = "\n".join(f"{k}: {v or 'not filled'}" for k, v in values.items()) if values is not None else "(not read)"
     return "\n\n".join([f"## The task\n\n{instruction_of(state)}", f"## The bundle\n\n{json.dumps(about) if about else '(not read)'}",
-                         f"## The scan\n\n{scanned}", f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
+                         f"## The Intake evidence (what the analyst filled)\n\n{told}", f"## The scan\n\n{scanned}",
+                         f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
                          f"## The rules (governance/README.md)\n\n{rules}", f"## The doc's template (governance/validation-doc.md)\n\n{template}"])
 
 
@@ -277,13 +333,15 @@ def section(text, heading):
 
 
 def read_analysis(message):
-    """The model's answer -> (the analysis, None), or (None, why it can't be used)."""
-    if (message.response_metadata or {}).get("stop_reason") in ("max_tokens", "length"):
+    """The model's answer -> (the analysis, None), or (None, why it can't be used). An answer cut at its output limit has stop_reason
+    max_tokens (the Anthropic format) or finish_reason length (the OpenAI format)."""
+    meta = message.response_metadata or {}
+    if meta.get("stop_reason") == "max_tokens" or meta.get("finish_reason") == "length":
         return None, f"the model's answer stopped at its output limit ({MAX_TOKENS} tokens)"
-    call = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)
-    if not call:
+    made = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)   # the model's tool call
+    if not made:
         return None, f"the model's answer has no {ANALYSIS['title']} call"
-    a = call.get("args") or {}
+    a = made.get("args") or {}
     missing = [k for k in ANALYSIS["required"] if k not in a]
     verdict = str(a.get("verdict") or "").strip().lower()
     if missing or verdict not in VERDICTS:
@@ -318,18 +376,22 @@ def unanalyzed(state, why):
 
 def ruled(analysis, scan):
     """The shared rules on the model's analysis (governance/README.md): each finding's name starts with the validator's short name, and
-    critical vulns is yes when a real finding is S0. When the scan did not run to its end, no finding comes from it (one that says so is
-    left out), and the verdict is do not approve: the dependencies' known vulnerabilities were not checked."""
-    a = dict(analysis)
-    if not scan.get("ok"):
+    critical vulns is yes when a real finding is S0. A failed scan: no finding comes from it (one that says so is left out), the
+    verdict is do not approve, and critical vulns no says "No S0 finding; dependencies not scanned": nobody checked the dependencies."""
+    a, failed, why = dict(analysis), not scan.get("ok"), scan.get("why")
+    if failed:
         a["real_findings"] = [f for f in a["real_findings"] if f["source"] != "scan"]
         a["verdict"] = "do not approve"
-        a["verdict_reason"] = (f"The scan did not run to its end ({scan.get('why')}). So the dependencies' known vulnerabilities were "
-                               f"not checked: run the validation again. {a['verdict_reason']}").strip()
-        a["could_not_check"] = [f"The scan: {scan.get('why')}."] + a["could_not_check"]
-        a["summary"] = f"The scan did not run to its end: {scan.get('why')}. {a['summary']}".strip()
+        a["verdict_reason"] = (f"The scan did not run to its end ({why}). So the dependencies' known vulnerabilities were not checked: "
+                               f"run the validation again. {a['verdict_reason']}").strip()
+        a["could_not_check"] = [f"The scan: {why}."] + a["could_not_check"]
+        a["summary"] = f"The scan did not run to its end: {why}. {a['summary']}".strip()
     a["findings"] = [{**f, "name": PREFIX + " " + f["title"].removeprefix(PREFIX).strip()} for f in a["real_findings"]]
     a["critical_vulns"] = "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
+    if failed:   # the model's reason may speak of a scan that nobody read
+        unscanned = f"The scan did not run to its end ({why}), so the dependencies' known vulnerabilities were not checked."
+        a["critical_vulns_reason"] = (f"{a['critical_vulns_reason']} {unscanned}".strip() if a["critical_vulns"] == "yes" else
+                                      f"No S0 finding; dependencies not scanned. {unscanned}")
     return a
 
 
@@ -348,7 +410,7 @@ async def write(state):
     except OSError as e:
         return {"doc": {"location": f"not written: {e}"}, "problems": [f"write: the doc could not be written to {mount}: {e}"]}
     ok, text = await call("write_dataset_snapshot", datasetId=dataset_id)
-    snapshot_id = ((answer(text) or {}).get("snapshot") or {}).get("id") if ok else None
+    snapshot_id = answered(text, "snapshot", "id") if ok else None
     if not snapshot_id:
         return {"doc": {"location": f"written to {mount}/{filename}, with no snapshot"}, "problems": [f"write_dataset_snapshot: {text[:300]}"]}
     doc = {"location": f"dataset {dataset_id}, snapshot {snapshot_id}, file {filename}", "filename": filename, "datasetId": dataset_id,
@@ -370,18 +432,22 @@ async def snapshot_ready(dataset_id, snapshot_id):
         if n:
             await asyncio.sleep(SNAPSHOT_EVERY)
         ok, text = await call("get_dataset_snapshot", datasetId=dataset_id, snapshotId=snapshot_id)
-        status = ((answer(text) or {}).get("snapshot") or {}).get("status") if ok else None
+        status = answered(text, "snapshot", "status") if ok else None
         if not ok or status in SNAPSHOT_ENDED:
             break
     return status, text
 
 
 def intake(state):
-    """The doc's fields from the bundle's Intake evidence (users, data class). No gateway tool reads a bundle's results yet, so they
-    are not read: the doc says so, and lists it under what the validator could not check."""
-    return {"users_and_data_class": "Not read: the gateway tools give no read of the bundle's evidence results, so this validator did not "
-                                    "read the Intake evidence (users, data class).",
-            "could_not_check": "The Intake evidence (users, data class): no gateway tool reads a bundle's results."}
+    """The doc's "Users and data class", from the Intake values that the analyst filled (collect read them with get_policy), and the
+    line for what the validator could not check when they could not be read (else None)."""
+    values = state.get("intake")
+    if values is None:
+        return {"users_and_data_class": "Not read: get_policy gave no Intake evidence item (the stage Intake, its item Intake).",
+                "could_not_check": "The Intake evidence (users, data class): get_policy gave no Intake evidence item."}
+    users, data_class = values.get("Users") or "not filled", values.get("Data class") or "not filled"
+    return {"users_and_data_class": f"Users: {users}. Data class: {data_class}. From the bundle's Intake evidence, as the analyst filled it.",
+            "could_not_check": None}
 
 
 def render_doc(state, now):
@@ -411,7 +477,8 @@ def doc_fields(state, now):
             "false_hits": table(["Hit", "Why it is false"], [[h["hit"], h["reason"]] for h in a.get("false_hits") or []]),
             "critical_vulns": a.get("critical_vulns") or "no", "critical_vulns_reason": a.get("critical_vulns_reason") or "",
             "verdict": a.get("verdict") or "do not approve", "verdict_reason": a.get("verdict_reason") or "",
-            "could_not_check": "\n".join(f"- {x}" for x in [*(a.get("could_not_check") or []), known["could_not_check"]])}
+            "could_not_check": "\n".join(f"- {x}" for x in [*(a.get("could_not_check") or []), known["could_not_check"]] if x)
+                               or "Nothing that the validator knows of."}
 
 
 def table(head, rows):
@@ -426,7 +493,7 @@ def scan_results(scan):
     """The scan's table (each tool, its version and its hits, from the summary) and its Job; or why the scan did not run to its end."""
     tools = []   # [tool, version, what it said, [its hits]]
     for ln in (scan.get("summary") or "").splitlines():
-        m = re.match(r"(pip-audit|bandit) (\S+) on .+?: (.*)$", ln)
+        m = re.match(rf"({'|'.join(SCANNER.TOOLS)}) (\S+) on .+?: (.*)$", ln)
         if m:
             tools.append([*m.groups(), []])
         elif ln.startswith("- ") and tools:
@@ -438,8 +505,7 @@ def scan_results(scan):
 
 
 async def findings(state, config):
-    """Each real finding on the bundle, then this validator's evidence item, then the task's result. The result is streamed as the
-    run's last text: the task's result is the run's last text, and a message that a node only puts in the state is not sent."""
+    """Each real finding on the bundle, then this validator's evidence item, then the task's result (streamed: emit)."""
     a, doc, bundle_id = state.get("analysis") or {}, state.get("doc") or {}, state["bundle_id"]
     filed, problems = [], []
     for f in a.get("findings") or []:
@@ -464,25 +530,31 @@ async def findings(state, config):
     else:
         filled = "not filled"
         problems.append(f"write_policy_result: the bundle's policy has no evidence item {EVIDENCE!r} with the fields {', '.join(FIELDS)}")
-    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", f"Doc location: {location}", "",
+    head = [f"{k}: {v}" for k, v in zip(STATUS.LABELS, (a.get("verdict"), a.get("critical_vulns"), location))]   # the scripted check's
+    result = "\n".join([*head, "",
                         f"Bundle: {bundle_id}. {a.get('summary') or ''}".strip(), "",
                         f"Findings filed ({len(filed)}): {'; '.join(filed) or 'none'}",
                         f"False hits ({len(a.get('false_hits') or [])}): {'; '.join(h['hit'] for h in a.get('false_hits') or []) or 'none'}",
                         f"Evidence item {EVIDENCE}: {filled}."]
                        + ([("Not done:"), *(f"- {x}" for x in (state.get("problems") or []) + problems)]
                           if state.get("problems") or problems else []))
-    message_id = f"msg-{uuid.uuid4().hex[:16]}"
-    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
-    return {"result": result, "messages": [AIMessage(result, id=message_id)], "problems": problems}
+    return {"result": result, "messages": [await emit(result, config)], "problems": problems}
 
 
 async def repeat(state, config):
     """A later run of a task that has validated: no step again (each one would file the findings again), only its result."""
     result = (f"{state['result']}\n\nThis task validated bundle {state.get('bundle_id')} already, so it did nothing again. A new move "
               "of the bundle to the Validation stage starts a new validation.")
+    return {"messages": [await emit(result, config)]}
+
+
+async def emit(text, config):
+    """The run's last text, streamed: a task's result is the run's last text, and a message that a node only puts in the state is not
+    sent. The bridge (ag-ui-langgraph) streams the custom event manually_emit_message as a text message. -> the same message, for the
+    state."""
     message_id = f"msg-{uuid.uuid4().hex[:16]}"
-    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
-    return {"messages": [AIMessage(result, id=message_id)]}
+    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": text}, config=config)
+    return AIMessage(text, id=message_id)
 
 
 def first(state):

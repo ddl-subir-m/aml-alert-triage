@@ -9,6 +9,8 @@ Call no other tool, and write no text outside that call.
 
 1. Read the App's code: its start script and its server. Find what the App does, its parts and how they connect, who can call each
    route or tool, where its state is, and how each dependency is installed.
+   The Intake evidence below is what the analyst wrote about the App: in `purpose`, say where the code differs from the Intake
+   purpose. Its data class tells you how much harm a leak or a change of the App's data can do.
 2. Look at each scanner hit in the scan's summary. A hit is real when the App's code makes it reachable or harmful. A hit is false
    when the code shows that it can't do harm: put it in `false_hits`, with the reason and the file and line that show it.
 3. Look for real problems that no scanner shows. Ask: who can call each route or tool, what can a caller change or delete, what does
@@ -17,7 +19,8 @@ Call no other tool, and write no text outside that call.
    the code. Give the evidence (file and line, and the hit or the code), and a fix.
 5. Give a verdict for the approver: `approve`, `approve after fixes` or `do not approve`, and the reason, which names the findings
    that decide it. The verdict is advice: the approver decides.
-6. Say what you could not check, for example what only the running App shows.
+6. Say what you could not check, for example what only the running App shows, and each part that the scan's summary says
+   was not checked (`- not audited: ...`, `- not scanned: ...`).
 
 When the scan did not run to its end, the graph says so below. Then give no finding with the source `scan`: you have no scan to
 read. Review the code as usual.

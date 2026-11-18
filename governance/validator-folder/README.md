@@ -20,6 +20,8 @@ The checklist's steps, in order. The shared parts are in `governance/` (its READ
 
 1. It reads the bundle and its policy (`domino_get_bundle`, `domino_get_policy`). It finds its evidence item by its name, and each
    field (Verdict, Critical vulns, Summary, Doc location) by its label.
+   `domino_get_policy` also gives the Intake values that the analyst filled (Purpose, Users, Data class): each filled field has its
+   value in `result.artifactContent`.
 2. It reads the App's code, its start script and its requirements.
 3. It runs the scan in a Domino Job (`domino_run_job` with `python governance/scan.py`, then `domino_wait_job`), and reads the
    summary between its two marker lines.
@@ -35,7 +37,9 @@ The checklist's steps, in order. The shared parts are in `governance/` (its READ
 
 Where it can't do the whole job, it says so under "What the validator could not check" (in the doc and in the result):
 
-- **The Intake values.** No gateway tool reads a bundle's evidence values, so the doc's "Users and data class" says "Not read".
+- **A failed scan.** When the scan Job fails, or a tool could not run, it follows "A failed scan" in `governance/README.md`, as the
+  LangGraph validator does: the verdict is `do not approve`, no finding comes from the scan, and critical vulns `no` says "No S0
+  finding; dependencies not scanned".
 - **A dry-run push.** When the platform App pushes in dry-run mode, the commit is not on the remote. The validator then attaches
   nothing, its Doc location says "Not in the repo", and its result holds the whole doc.
 - **The App version's commit.** An event task reads the demo project's default branch, not the commit of the App version under

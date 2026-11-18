@@ -8,7 +8,8 @@ in a Domino Job, with the gateway tool run_job and the command `python governanc
 2. pip-audit on case_server/requirements.txt (it resolves the requirements from PyPI) and bandit on case_server/ (all severities).
    Each tool's JSON goes to the output folder (pip-audit.json, bandit.json), and its own messages to <tool>.log there.
 3. The last thing it prints is a short summary, between "== scan summary ==" and "== end of scan summary ==": the commit, each tool,
-   its version and its hits. The summary does not sort the hits: each validator decides which ones are real.
+   its version and its hits, and each package that pip-audit did not audit or file that bandit could not parse. The summary does
+   not sort the hits: each validator decides which ones are real.
 Exit 0 when both tools ran, with hits or not. Exit 1 when a tool could not run: the summary says which one and why.
 
 The end of the Job's log is what wait_job shows the agent (its last 8,000 characters), and a Job's stderr comes after its stdout there.
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent   # the project's root: this file 
 REQUIREMENTS = "case_server/requirements.txt"
 SOURCE = "case_server"
 START, END = "== scan summary ==", "== end of scan summary =="
+RAN = "result: both tools ran"   # the summary's result line when both tools ran (the LangGraph graph compares with this one)
 TOOLS = {"pip-audit": "pip_audit", "bandit": "bandit"}   # each tool's name and its module (`python -m <module>`)
 INSTALL = {"pip-audit": "pip-audit>=2.7,<3", "bandit": "bandit>=1.7,<2"}   # tested: pip-audit 2.10.1, bandit 1.9.4
 LINE = 320   # the longest line of the summary: pip-audit's description of PYSEC-2021-142 is about 500 characters
@@ -100,11 +102,19 @@ def clip(text, n=LINE):
     return text if len(text) <= n else text[:n - 3] + "..."
 
 
+def not_checked(n, thing, done):
+    """The end of a tool's head line when it did not check everything: ", and 1 package not audited" ("" for none)."""
+    return f", and {n} {thing}{'' if n == 1 else 's'} not {done}" if n else ""
+
+
 def pip_audit_lines(report, why):
     head = f"pip-audit {version('pip_audit')} on {REQUIREMENTS}: "
     if report is None:
         return [head + why]
-    deps = report.get("dependencies") or []
+    every = report.get("dependencies") or []
+    deps = [d for d in every if "skip_reason" not in d]   # a dependency with skip_reason (not on PyPI, for one) was not audited
+    skipped = [clip(f"- not audited: {d.get('name')}: {d.get('skip_reason')}") for d in every if "skip_reason" in d]
+    more = not_checked(len(skipped), "package", "audited")
     hits = []   # one line per package and vulnerability ID: pip-audit can list one vulnerability twice
     for d in deps:
         seen = {}
@@ -116,9 +126,10 @@ def pip_audit_lines(report, why):
             hits.append(clip(f"- {d.get('name')} {d.get('version')}: {vid}" + (f" ({aliases})" if aliases else "")
                              + f", fixed in {fix}: {v.get('description') or 'no description'}"))
     if not hits:
-        return [head + f"no known vulnerabilities in {len(deps)} packages"]
+        return [head + f"no known vulnerabilities in {len(deps)} packages" + more, *skipped]
     packages = sum(1 for d in deps if d.get("vulns"))
-    return [head + f"{len(hits)} known vulnerabilit{'y' if len(hits) == 1 else 'ies'} in {packages} of {len(deps)} packages", *hits]
+    return [head + f"{len(hits)} known vulnerabilit{'y' if len(hits) == 1 else 'ies'} in {packages} of {len(deps)} packages" + more,
+            *hits, *skipped]
 
 
 def bandit_lines(report, why):
@@ -126,11 +137,12 @@ def bandit_lines(report, why):
     if report is None:
         return [head + why]
     hits = report.get("results") or []
-    lines = [head + f"{len(hits)} hits"]
+    errors = report.get("errors") or []   # a file that bandit could not parse: none of its lines was scanned
+    lines = [head + f"{len(hits)} hits" + not_checked(len(errors), "file", "scanned")]
     for h in hits:
         lines.append(f"- {h.get('test_id')} {h.get('test_name')} at {h.get('filename')}:{h.get('line_number')}, severity "
                      f"{h.get('issue_severity')}, confidence {h.get('issue_confidence')}: {h.get('issue_text')}")
-    return lines
+    return lines + [clip(f"- not scanned: {e.get('filename')}: {e.get('reason')}") for e in errors]
 
 
 def main():
@@ -150,7 +162,7 @@ def main():
 
     failed = [name for name, (report, _) in (("pip-audit", audit), ("bandit", bandit)) if report is None]
     if not failed:
-        result = "result: both tools ran"
+        result = RAN
     else:
         result = (f"result: {' and '.join(failed)} could not run ({'its' if len(failed) == 1 else 'their'} messages: "
                   + ", ".join(f"{name}.log" for name in failed) + ")")

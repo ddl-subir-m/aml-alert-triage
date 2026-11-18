@@ -125,6 +125,9 @@ check("the folder's README gives the wizard's settings: the exact name, the entr
                               "Resources not attached to the task: No access", "Fail and report")), page[:200])
 check("the folder's README gives both ways to run the check: the AML venv, and Docker with the service's checks image",
       "tests/check_validator_langgraph.py" in page and "domino-agent-service-checks:<tag>" in page, page[-300:])
+check("the folder's README says that collect reads the Intake values with get_policy, and no longer that no gateway tool reads them",
+      "Intake values" in page and "result.artifactContent" in page and "No gateway tool reads" not in page,
+      [ln for ln in page.splitlines() if "Intake" in ln])
 check("the repo's README has a section for the LangGraph validator, which links the folder's README",
       "## The LangGraph validator" in (ROOT / "README.md").read_text()
       and "governance/validator-langgraph/README.md" in (ROOT / "README.md").read_text())
@@ -365,17 +368,21 @@ def scan_log(fixture="clean", fail=None):
 
 
 JOB_SECONDS = 0.45   # how long the scan Job runs: longer than one wait_job call (gateway.WAIT_S), shorter than two
+INTAKE = {"Purpose": "Triage fake AML alerts and track SAR cases for the compliance team.", "Users": "AML analysts of the compliance team",
+          "Data class": "Confidential"}   # what the analyst filled in the bundle's Intake evidence
 
 
 class FakeDomino:
     """The Job's sidecar for one case: Domino's APIs as the specs have them (reference_materials/domino-api-specs in the service repo).
-    Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, POST /findings (guardrails.Finding), POST
-    /rpc/submit-result-to-policy (guardrails.ComputedPolicy), POST /bundles/{id}/attachments (guardrails.Attachment), errors as
-    {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
+    Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, GET /results/latest (a bare list of
+    guardrails.ArtifactResult), POST /findings (guardrails.Finding), POST /rpc/submit-result-to-policy (guardrails.ComputedPolicy),
+    POST /bundles/{id}/attachments (guardrails.Attachment), errors as {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
     holds each request: (method, path, query, body)."""
 
-    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active")):
+    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active"), job_answer=None, intake=INTAKE):
+        self.job_answer = job_answer   # the Job's GET answers 200 with this, when set: a body with no job in it
         self.policy = published_policy()
+        self.intake = intake   # the Intake values that the analyst filled, by label; None: nothing filled (Domino answers 404)
         self.bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": PROJECT["id"], "projectName": PROJECT["name"],
                        "projectOwner": "analyst", "policyId": "pol-app", "policyName": "App deployment policy", "policyVersionId": "pv-1",
                        "policyVersion": "1", "stage": "Validation", "state": "Active", "createdAt": "2026-11-17T10:00:00Z",
@@ -390,11 +397,23 @@ class FakeDomino:
             return 200, self.bundle
         if method == "GET" and path == "/api/governance/v1/policies/pol-app":
             return 200, self.policy
+        if method == "GET" and path == "/api/governance/v1/results/latest":   # ?bundleID=: required (the spec's query parameter)
+            if (query or {}).get("bundleID") != BUNDLE["id"]:
+                return 400, {"message": "bundleID is required"}
+            if self.intake is None:
+                return 404, {"message": f"no results for bundle {BUNDLE['id']}"}
+            item = next(e for st in self.policy["stages"] for e in st["evidenceSet"] if e["name"] == "Intake")
+            return 200, [{"id": f"res-{a['id']}", "artifactId": a["id"], "artifactContent": self.intake[a["details"]["label"]],
+                          "bundleId": BUNDLE["id"], "evidenceId": item["id"], "createdAt": "2026-11-17T10:30:00Z",
+                          "createdBy": {"id": "u-analyst", "userName": "analyst"}, "isLatest": True}
+                         for a in item["artifacts"] if a["details"]["label"] in self.intake]
         if method == "POST" and path == "/api/jobs/v1/jobs":
             self.job_started = time.time()
             self.job = {"id": "job-1", "number": 41, "title": body.get("title"), "runCommand": body.get("runCommand"),
                         "projects": [{"projectId": body.get("projectId"), "commitId": SCANNED}], "status": self.job_status("Queued")}
             return 200, {"job": self.job, "metadata": {"requestId": "rq-job", "notices": []}}
+        if method == "GET" and path == "/api/jobs/beta/jobs/job-1" and self.job_answer is not None:
+            return 200, self.job_answer
         if method == "GET" and path == "/api/jobs/beta/jobs/job-1":
             # the Job runs for JOB_SECONDS: a wait_job call (WAIT_S) ends before that, so the graph must call it again
             status = self.job_end if time.time() - self.job_started >= JOB_SECONDS else "Running"
@@ -482,58 +501,69 @@ class Relay:
 relay = Relay()
 model = fake_model.start()
 TMP = Path(tempfile.mkdtemp(prefix="v268-", dir="/tmp" if os.path.isdir("/tmp") else None))   # a short path: a Unix socket's limit
-SOCKET = str(TMP / "agui.sock")
-server_log = open(TMP / "serve.log", "w")
-(TMP / "state").mkdir()   # the state folder: the bootstrapper makes it, and the adapter keeps the checkpoint there
-env = {"PATH": os.environ.get("PATH", ""), "HOME": str(TMP), "PYTHONPATH": str(AGUI), "PYTHONDONTWRITEBYTECODE": "1",
-       "AGENT_SERVICE_URL": relay.url, "SESSION_TOKEN": RELAY_TOKEN, "AGENT_MODEL": "sonnet", "AGENT_MODEL_FORMAT": "anthropic",
-       "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{model.server_address[1]}/anthropic", "NO_PROXY": "127.0.0.1,localhost",
-       "TASK_KEY": "AGT-268"}
-agent_server = subprocess.Popen([sys.executable, str(SERVE), "--framework", "langgraph", "--entrypoint", ENTRYPOINT, "--socket", SOCKET,
-                                 "--code", str(ROOT), "--state", str(TMP / "state")], env=env, cwd=str(ROOT), stdout=server_log,
-                                stderr=subprocess.STDOUT)
+MODEL_URL = f"http://127.0.0.1:{model.server_address[1]}"
+FORMATS = {   # the model variables of a framework-lane Job, for each of the LLM Gateway's two formats (the fake model speaks both)
+    "anthropic": {"AGENT_MODEL_FORMAT": "anthropic", "ANTHROPIC_BASE_URL": f"{MODEL_URL}/anthropic"},
+    "openai": {"AGENT_MODEL_FORMAT": "openai", "OPENAI_BASE_URL": f"{MODEL_URL}/v1", "OPENAI_API_KEY": "fake-key-268"}}
+servers = {}   # format -> (the agent server's process, its socket)
 
 
-def healthy():
+def healthy(sock):
     """The agent server's /health answer, or None while nothing listens on the socket (client.health raises OSError then)."""
     try:
-        return client.health(SOCKET)
+        return client.health(sock)
     except (OSError, client.ClientError):
         return None
 
 
-for _ in range(300):
-    if agent_server.poll() is not None or healthy():
-        break
-    time.sleep(0.1)
-up = agent_server.poll() is None and (healthy() or {}).get("framework") == "langgraph"
-check("the platform's serve module loads the entry point from this repo and serves it with the LangGraph adapter", up,
-      (TMP / "serve.log").read_text()[-1500:])
+def serve_graph(fmt):
+    """The platform's serve module with the graph, as a framework-lane Job starts it, with the model in the format `fmt`: its own
+    socket, state folder (the bootstrapper makes it, and the adapter keeps the checkpoint there) and log. -> its socket, or None when
+    it didn't come up."""
+    sock, state = str(TMP / f"agui-{fmt}.sock"), TMP / f"state-{fmt}"
+    state.mkdir()
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(TMP), "PYTHONPATH": str(AGUI), "PYTHONDONTWRITEBYTECODE": "1",
+           "AGENT_SERVICE_URL": relay.url, "SESSION_TOKEN": RELAY_TOKEN, "AGENT_MODEL": "sonnet", "NO_PROXY": "127.0.0.1,localhost",
+           "TASK_KEY": "AGT-268", **FORMATS[fmt]}
+    proc = subprocess.Popen([sys.executable, str(SERVE), "--framework", "langgraph", "--entrypoint", ENTRYPOINT, "--socket", sock,
+                             "--code", str(ROOT), "--state", str(state)], env=env, cwd=str(ROOT),
+                            stdout=open(TMP / f"serve-{fmt}.log", "w"), stderr=subprocess.STDOUT)
+    servers[fmt] = (proc, sock)
+    for _ in range(300):
+        if proc.poll() is not None or healthy(sock):
+            break
+        time.sleep(0.1)
+    up = proc.poll() is None and (healthy(sock) or {}).get("framework") == "langgraph"
+    return sock if up else None
 
 
 def close():
-    agent_server.terminate()
-    try:
-        agent_server.wait(10)
-    except subprocess.TimeoutExpired:
-        agent_server.kill()
+    for proc, _ in servers.values():
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
     relay.server.shutdown()
     model.shutdown()
-    if os.environ.get("KEEP") == "1":   # KEEP=1 keeps the folder: the agent server's log and each case's doc
+    if os.environ.get("KEEP") == "1":   # KEEP=1 keeps the folder: the agent servers' logs and each case's doc
         print(f"     kept {TMP}", flush=True)
     else:
         shutil.rmtree(TMP, ignore_errors=True)
 
 
-if not up:
+SOCKET = serve_graph("anthropic")
+check("the platform's serve module loads the entry point from this repo and serves it with the LangGraph adapter", SOCKET is not None,
+      (TMP / "serve-anthropic.log").read_text()[-1500:])
+if not SOCKET:
     close()
     done()
 
 
-def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
+def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None, sock=None):
     """One AG-UI run of the task, as the framework lane's driver makes it: the instruction as the user message, the operating rules and
     the task brief as the context. -> {"result", "error", "events", "thread"}. `case` names the fake model's script ([certify <case>] in
-    the bundle's name, so in the instruction)."""
+    the bundle's name, so in the instruction). `sock`: the agent server (default: the Anthropic format's)."""
     relay.start(domino, task_key)
     fake_model.seen.clear()
     folder = TMP / f"data-{case}"   # the doc dataset's mount in the Job
@@ -547,7 +577,7 @@ def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
     body = th.run_input(f"run-{case}-{uuid.uuid4().hex[:6]}", tools=[], context=context)
     rules, tr, got, error = stream.Rules(), events.Translator(), [], None
     try:
-        for ev in client.run(SOCKET, body, deadline=time.time() + 120):
+        for ev in client.run(sock or SOCKET, body, deadline=time.time() + 120):
             got.append(ev)
             rules.see(ev)
             tr.feed(ev)
@@ -644,8 +674,14 @@ said = asked[0]["conv"].text() if asked else ""
 check("MAIN the model reads the scan's summary (each bandit hit), the App's code and the task's instruction",
       SCAN.START in said and "B608 hardcoded_sql_expressions at case_server/store.py:215" in said
       and (ROOT / "case_server" / "server.py").read_text()[:400] in said and "Bundle ID: " + BUNDLE["id"] in said, said[:300])
-check("MAIN the model reads the shared rules: the severity scale and the rule for critical vulns (governance/README.md)",
-      "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said, said[:300])
+check("MAIN the model reads the App's start script, app.sh, with its path (analyze.md's step 1 names it)",
+      "### app.sh" in said and (ROOT / "app.sh").read_text().strip()[:400] in said, said[said.find("## The App's code"):][:300])
+check("MAIN the model reads the Intake values that the analyst filled (get_policy's result.artifactContent): it compares the purpose",
+      all(f"{label}: {value}" in said for label, value in INTAKE.items()) and "where the code differs from the Intake" in said,
+      said[said.find("## The Intake"):][:300])
+check("MAIN the model reads the shared rules: the severity scale, the rule for critical vulns and the rule for a failed scan "
+      "(governance/README.md)", "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said
+      and "## A failed scan" in said, said[:300])
 shown = [e for e in ran["events"] if e.get("type", "").startswith(("TEXT_MESSAGE", "TOOL_CALL"))]
 check("MAIN the model's analysis stays out of the task's stream: no tool call, and no text but the result",
       not [e for e in shown if e["type"].startswith("TOOL_CALL")]
@@ -686,10 +722,10 @@ check("MAIN the doc's false hits: each bandit hit with the reason", all(f"| {h['
       doc[doc.find("### False hits"):][:600])
 check("MAIN the doc's verdict and critical vulns, with their reasons", "Critical vulns: no" in doc and MAIN["critical_vulns_reason"] in doc
       and "Verdict: approve after fixes" in doc and MAIN["verdict_reason"] in doc, doc[doc.find("## Critical vulns"):][:400])
-check("MAIN the Intake fields say Not read (no gateway tool reads a bundle's results yet), and the doc says so under what the validator "
-      "could not check", "Not read" in doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
-      and "Intake" in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc,
-      doc[doc.find("## Users and data class"):][:300])
+users = doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
+check("MAIN the doc's Users and data class are the Intake values that the analyst filled, from get_policy, and what the validator "
+      "could not check names no Intake value", f"Users: {INTAKE['Users']}. Data class: {INTAKE['Data class']}." in users
+      and "Intake" not in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc, users)
 item = next(e for st in dom.policy["stages"] for e in st["evidenceSet"] if e["name"] == EVIDENCE)
 field = {(x["details"] or {}).get("label"): x["id"] for x in item["artifacts"]}
 filed = [a for n, a in relay.calls if n == "write_governance_finding"]
@@ -730,11 +766,11 @@ check("MAIN Domino got one Job, in the task's project, with the scan's command",
 
 
 
-def run_case(case, domino, analysis=None, script=None):
+def run_case(case, domino, analysis=None, script=None, sock=None):
     """One more task, with its own fake Domino and the model's script. -> (the run, its result's lines, the doc, the filed findings,
     the evidence item's content by label)"""
     fake_model.SCRIPTS[case] = script or analyst(analysis)
-    got = run_task(case, domino)
+    got = run_task(case, domino, sock=sock)
     got["result"] = got["result"] or ""
     files = sorted(got["folder"].iterdir())
     text = files[0].read_text() if len(files) == 1 else ""
@@ -771,9 +807,27 @@ check("SCANFAIL the doc's real findings have no scanner finding, and what the va
 check("SCANFAIL the verdict is do not approve, because the scan did not run (and critical vulns comes from the real findings only)",
       lines[:2] == ["Verdict: do not approve", "Critical vulns: no"] and "Verdict: do not approve" in doc
       and "the dependencies' known vulnerabilities were not checked" in doc, lines[:3])
+critical = doc[doc.find("## Critical vulns"):doc.find("## Verdict for the approver")]
+check("SCANFAIL critical vulns is no only as 'No S0 finding; dependencies not scanned' (the shared rule): the doc's reason says that "
+      "their known vulnerabilities were not checked, and drops the model's claim about the scan",
+      "Critical vulns: no" in critical and "No S0 finding; dependencies not scanned" in critical and "not checked" in critical
+      and MAIN["critical_vulns_reason"] not in critical, critical)
 check("SCANFAIL the evidence item says so: do not approve, and its summary says that the scan did not run to its end",
       filled.get("Verdict") == "do not approve" and filled.get("Critical vulns") == "no"
       and "The scan did not run to its end" in (filled.get("Summary") or ""), filled)
+
+# ------------------------------------------------------------------------- the case: wait_job answers, but not with the Job's state
+# Domino's GET of the Job answers 200 with a body that has no job (not a JobEnvelopeV1). The gateway's wait_job then gives that answer
+# as it is (run.Gateway.wait_job: gateway.job_state reads no state), not "Job ... finished" and not an error. The gateway drops an
+# answer's metadata, and gives compact JSON.
+ODD = {"jobs": [], "metadata": {"requestId": "rq-odd", "notices": []}}
+ran, lines, doc, filed, filled = run_case("C268odd", FakeDomino(job_answer=ODD, snapshot_statuses=("active",)), MAIN)
+scan_part = doc[doc.find("## Scan results"):doc.find("## Findings")]
+check("WAITODD a wait_job answer that isn't the Job's state stops the wait at once (one call), and the run goes on",
+      ran["error"] is None and tools(relay.calls).count("wait_job") == 1 and tools(relay.calls)[-1] == "write_policy_result",
+      (ran["error"], tools(relay.calls)))
+check("WAITODD the doc says why the scan did not run to its end: wait_job's real answer, not a wait that ran out",
+      'The scan did not run to its end: wait_job: {"jobs":[]}.' in scan_part and "didn't finish within" not in doc, scan_part)
 
 # --------------------------------------------------------------------------------------------- the case: no usable analysis
 ran, lines, doc, filed, filled = run_case("C268noanalysis", FakeDomino(snapshot_statuses=("active",)),
@@ -813,7 +867,10 @@ check("AGAIN its result is the validation's result, and says that a new move to 
       (again["result"] or "").startswith(before) and "new validation" in (again["result"] or ""), (again["result"] or "")[-300:])
 
 # ----------------------------------------------------------------------------------------- the case: the snapshot fails
-ran, lines, doc, filed, filled = run_case("C268snapfail", FakeDomino(snapshot_statuses=("failed",)), MAIN)
+ran, lines, doc, filed, filled = run_case("C268snapfail", FakeDomino(snapshot_statuses=("failed",), intake=None), MAIN)
+users = doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
+check("SNAPFAIL with no Intake value filled (Domino's 404 on the results), the doc's Users and data class say not filled",
+      "Users: not filled. Data class: not filled." in users and tools(relay.calls)[:2] == ["get_bundle", "get_policy"], users)
 check("SNAPFAIL a failed snapshot is not attached, and the run goes on: the findings, then the evidence item",
       "write_bundle_attachment" not in tools(relay.calls) and tools(relay.calls)[-1] == "write_policy_result" and len(filed) == 2,
       tools(relay.calls))
@@ -828,6 +885,33 @@ bare = run_task("C268none", FakeDomino(), messages=th)
 check("NOBUNDLE an instruction with no line \"Bundle ID: ...\" fails the run, and says what the line must be, before any call",
       "The instruction names no bundle" in (bare["error"] or "") and "Bundle ID:" in (bare["error"] or "") and relay.calls == [],
       (bare["error"], tools(relay.calls)))
+
+# ---------------------------------------------------------------- the cases: the model in the OpenAI format, and an answer cut short
+# The LLM Gateway's other format (AGENT_MODEL_FORMAT openai): the graph's own ChatOpenAI, on chat completions.
+OPENAI = serve_graph("openai")
+check("OPENAI the serve module also serves the graph with the model in the OpenAI format", OPENAI is not None,
+      (TMP / "serve-openai.log").read_text()[-1500:])
+if OPENAI:
+    ran, lines, doc, filed, filled = run_case("C268openai", FakeDomino(snapshot_statuses=("active",)), MAIN, sock=OPENAI)
+    asked = [r for r in fake_model.seen if r.get("format") == "openai"]
+    check("OPENAI the model is asked in the OpenAI format, with an output limit of 16000 (chat completions' max_completion_tokens), "
+          "and its analysis gives the verdict",
+          ran["error"] is None and len(asked) == 1 and asked[0]["body"].get("max_completion_tokens") == 16000
+          and lines[:2] == ["Verdict: approve after fixes", "Critical vulns: no"], (ran["error"], len(asked), lines[:2]))
+    # An answer cut at its output limit: in the OpenAI format, the choice's finish_reason is "length" (the fake model's own answer,
+    # with only that changed), where the Anthropic format has stop_reason "max_tokens".
+    whole = fake_model._openai
+    fake_model._openai = lambda ans, model_name, streamed: (lambda ctype, data: (ctype, data.replace(
+        b'"finish_reason": "tool_calls"', b'"finish_reason": "length"')))(*whole(ans, model_name, streamed))
+    try:
+        ran, lines, doc, filed, filled = run_case("C268cut", FakeDomino(snapshot_statuses=("active",)), MAIN, sock=OPENAI)
+    finally:
+        fake_model._openai = whole
+    check("CUT an OpenAI-format answer that stopped at its output limit (finish_reason length) can't be used: asked again once, "
+          "then no finding and do not approve, and the result says why",
+          len(fake_model.seen) == 2 and not filed and lines[:1] == ["Verdict: do not approve"]
+          and "the model's answer stopped at its output limit (16000 tokens)" in ran["result"], (len(fake_model.seen), lines[:1],
+                                                                                                    ran["result"][-400:]))
 
 close()
 done()

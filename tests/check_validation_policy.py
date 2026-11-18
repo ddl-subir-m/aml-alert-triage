@@ -194,7 +194,7 @@ DONE_GRAPH = ("Verdict: approve after fixes\nCritical vulns: yes\n"
 
 
 class Fake(BaseHTTPRequestHandler):
-    """The Domino API proxy of a Job (GET /access-token, as governance/trigger_probe.py of the trigger test read it) and the agent
+    """The Domino API proxy of a Job (GET /access-token: the Job's token, as plain text) and the agent
     service App's task search (GET /api/tasks): app.py's list_tasks, with its filters (agent_id, status, triggered_by, project,
     trigger_type, q in the title or key, case aside), newest first. Who may read a task is the App's rule (service.can_read_task):
     here the caller may read every task, and a task that the caller may not read is one that the answer doesn't hold."""
@@ -302,6 +302,14 @@ check("one block for the LangGraph validator, after it (the verdict lines withou
           "  doc location:   dataset aml-validation-demo, snapshot 3, validation/aml-case-management.md",
           f"  task link:      {APP_URL}/#/tasks/task_0000000013"]
       and out.index("Validation (agent folder)") < out.index("Validation (LangGraph)"), out)
+
+MARKED = ("_Verdict_: **do not approve**\n- **Critical vulns:** `no`\n"
+          "**Doc location**: `dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md`\n")
+code, out, _ = run(tasks=[task("AGT-17", FOLDER, "done", MARKED)])
+check("Markdown only around a value goes: the value itself keeps its _ and * (a doc location with _ prints as the validator wrote it)",
+      block(out, "Validation (agent folder)")[4:7] == [
+          "  verdict:        do not approve", "  critical vulns: no",
+          "  doc location:   dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md"], out)
 
 code, out, _ = run(tasks=[task("AGT-14", FOLDER, "running")])
 check("a validator with no task yet: exit 0 (a result, not an error)", code == 0, out)
