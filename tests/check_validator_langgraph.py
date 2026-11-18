@@ -402,7 +402,42 @@ def tools(calls):
 
 
 # ------------------------------------------------------------------------------------------------------------ the case: a clean App
-fake_model.SCRIPTS["C268main"] = lambda conv: fake_model.answer("done")
+ANALYSIS = "validation_analysis"   # the tool through which the model gives its analysis (the graph's structured output)
+MAIN = {   # the model's analysis of main: what a careful reviewer finds there (no CVE; the two bandit hits are false)
+    "app": "aml-case-management",
+    "purpose": "A fake case-management system for AML alerts, served as an MCP server. Agents read alerts and close or escalate them.",
+    "tech_stack": "Python 3, the mcp package (FastMCP, streamable HTTP), SQLite.",
+    "architecture": "app.sh starts case_server/server.py on port 8888. The MCP tools and the /reset and board routes are on one server.",
+    "dependencies": [{"name": "mcp", "version": ">=1.10,<2", "installed_by": "app.sh, from PyPI at App start when it is missing"}],
+    "real_findings": [
+        {"title": "POST /reset wipes all state for any caller", "severity": "S1", "source": "code",
+         "evidence": "case_server/server.py: the /reset route", "fix": "Allow /reset only to the App's owner.",
+         "description": "Anyone who can open the App can wipe every alert and SAR case."},
+        {"title": "A write with no domino-username runs as no identity", "severity": "S2", "source": "code",
+         "evidence": "case_server/server.py: who acted", "fix": "Refuse a write with no identity.",
+         "description": "A write records no person when the header is missing."}],
+    "false_hits": [{"hit": "B104 hardcoded_bind_all_interfaces at case_server/server.py:159",
+                    "reason": "Domino's Apps proxy reaches the App only on 0.0.0.0."},
+                   {"hit": "B608 hardcoded_sql_expressions at case_server/store.py:215",
+                    "reason": "The query builds only placeholders; the values are bound."}],
+    "critical_vulns_reason": "No real finding is S0: pip-audit found no known vulnerability.",
+    "verdict": "approve after fixes", "verdict_reason": "Fix the /reset route first: anyone can wipe the data.",
+    "could_not_check": ["What only the running App shows: the Apps proxy and the identity headers."],
+    "summary": "A small MCP App with no known vulnerability. Anyone can wipe its state with POST /reset."}
+before_model = []   # the graph's tool calls before the model's first request
+
+
+def analyst(analysis):
+    """The fake model's script: the analysis, through the validation_analysis tool when the request offers it."""
+    def script(conv):
+        if ANALYSIS not in conv.tools:
+            return fake_model.answer(f"no {ANALYSIS} tool was offered")
+        return fake_model.answer("", [(ANALYSIS, analysis)])
+    return script
+
+
+fake_model.SCRIPTS["C268main"] = analyst(MAIN)
+fake_model.BEFORE["C268main"] = lambda conv: before_model.append(tools(relay.calls))
 dom = FakeDomino()
 ran = run_task("C268main", dom)
 check("MAIN the run ends with no error", ran["error"] is None, ran["error"])
@@ -428,6 +463,29 @@ check("MAIN scan: right after the policy, run_job with the shared scan's command
       tools(relay.calls).index("run_job") == 2 and scan_calls(relay.calls)[0] == {"command": "python governance/scan.py",
                                                                                  "title": "App validation scan (LangGraph)"}
       and scan_calls(relay.calls)[1] >= 2 and scan_calls(relay.calls)[2], relay.calls[2:8])
+asked = [r for r in fake_model.seen if r.get("format") == "anthropic"]
+body = asked[0]["body"] if asked else {}
+check("MAIN analyze: one model call, after the scan's get_job_logs", len(fake_model.seen) == 1 and before_model
+      and before_model[0][-1] == "get_job_logs" and "write_governance_finding" not in before_model[0], (len(fake_model.seen), before_model))
+check("MAIN its model is the agent's alias, in the Anthropic format, with max_tokens 16000 (domino-agui#1: the ready-made model's "
+      "default gives an alias 4,096)", body.get("model") == "sonnet" and body.get("max_tokens") == 16000,
+      {k: body.get(k) for k in ("model", "max_tokens")})
+offered = [x.get("name") for x in body.get("tools") or []]
+check("MAIN the model gets one tool, validation_analysis, and the choice isn't forced (Claude's newest models refuse a forced one)",
+      offered == [ANALYSIS] and (body.get("tool_choice") or {}).get("type") in (None, "auto"), (offered, body.get("tool_choice")))
+said = asked[0]["conv"].text() if asked else ""
+check("MAIN the model reads the scan's summary (each bandit hit), the App's code and the task's instruction",
+      SCAN.START in said and "B608 hardcoded_sql_expressions at case_server/store.py:215" in said
+      and (ROOT / "case_server" / "server.py").read_text()[:400] in said and "Bundle ID: " + BUNDLE["id"] in said, said[:300])
+check("MAIN the model reads the shared rules: the severity scale and the rule for critical vulns (governance/README.md)",
+      "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said, said[:300])
+shown = [e for e in ran["events"] if e.get("type", "").startswith(("TEXT_MESSAGE", "TOOL_CALL"))]
+check("MAIN the model's analysis stays out of the task's stream: no tool call, and no text but the result",
+      not [e for e in shown if e["type"].startswith("TOOL_CALL")]
+      and all(MAIN["false_hits"][0]["reason"] not in json.dumps(e) for e in shown), shown[:3])
+lines = (ran["result"] or "").splitlines()
+check("MAIN the result starts with the verdict and critical vulns: the model's verdict, and no S0 finding is no",
+      lines[:2] == ["Verdict: approve after fixes", "Critical vulns: no"], lines[:3])
 started = [b for m, p, q, b in dom.calls if (m, p) == ("POST", "/api/jobs/v1/jobs")]
 check("MAIN Domino got one Job, in the task's project, with the scan's command",
       len(started) == 1 and started[0]["runCommand"] == "python governance/scan.py" and started[0]["projectId"] == PROJECT["id"], started)
