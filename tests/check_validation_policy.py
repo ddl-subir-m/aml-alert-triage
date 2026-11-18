@@ -376,4 +376,29 @@ src = SCRIPT.read_text()
 check("the script has no way to send another method: no POST, PUT, PATCH or DELETE, and no request body",
       not re.search(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src), re.findall(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src))
 
+# An App error: printed with its status (the App's errors are FastAPI's {"detail": ...}).
+ERRORS = {401: "Domino didn't accept that token. Send a current JWT or PAT as Authorization: Bearer <token>.",
+          403: "You can't read this.", 500: "Internal Server Error",
+          503: "Couldn't verify the caller with Domino: timed out"}
+for status, detail in ERRORS.items():
+    APP["answer"] = (status, {"detail": detail}) if status != 500 else (500, b"Internal Server Error", "text/plain")
+    code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+    check(f"an App error {status} is printed with its status and its detail, exit 1, and no validator block",
+          code == 1 and f"App error: HTTP {status}: {detail}" in out.splitlines() and "Validation (agent folder)" not in out
+          and "Traceback" not in out, out)
+    check(f"...and the output file says so too ({status})", text is not None and f"App error: HTTP {status}: {detail}" in text, text)
+APP["answer"] = (302, b"", "text/html", [("Location", "https://sign-in.example/login?next=/apps-internal/x")])
+code, out, _ = run()
+check("a redirect (the Apps proxy's sign-in or consent page) is not followed: printed with its status and where it goes",
+      code == 1 and "App error: HTTP 302: a redirect to https://sign-in.example/login?next=/apps-internal/x" in out.splitlines()
+      and len(APP["calls"]) == 1, out)
+APP["answer"] = (200, b"<html>Sign in</html>", "text/html")
+code, out, _ = run()
+check("an answer that is not a task list is an error, with its start", code == 1 and
+      "App error: HTTP 200, but the answer is not a task list: <html>Sign in</html>" in out.splitlines(), out)
+APP["answer"] = None
+code, out, _ = run(url="http://127.0.0.1:9")
+check("an App that can't be reached: printed, exit 1", code == 1 and any(ln.startswith("App error: no answer from the App (") for ln in out.splitlines())
+      and "Traceback" not in out, out)
+
 sys.exit(1 if failed else 0)

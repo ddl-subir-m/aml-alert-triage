@@ -50,12 +50,40 @@ def who(tok):
         return "unknown (the token is not a JWT)"
 
 
-def get(app, path, query, tok):
-    """GET <app><path>?<query> with the Job's token. Returns the JSON answer."""
-    req = urllib.request.Request(f"{app}{path}?{urllib.parse.urlencode(query)}",
+class AppError(Exception):
+    """The App's answer was not a task list. The text says why, with the HTTP status when there was one."""
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):   # a redirect is the Apps proxy's sign-in or consent page, never the App's answer
+        return None
+
+
+def get_tasks(app, query, tok):
+    """GET <app>/api/tasks?<query> with the Job's token: the App's task search (app.py, list_tasks). Returns its list of tasks."""
+    req = urllib.request.Request(f"{app}/api/tasks?{urllib.parse.urlencode(query)}",
                                  headers={"Authorization": "Bearer " + tok, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read() or b"null")
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=30) as r:
+            status, body = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            raise AppError(f"HTTP {e.code}: a redirect to {e.headers.get('Location', '')[:200]}")
+        body = e.read()
+        try:
+            detail = json.loads(body).get("detail")
+        except Exception:
+            detail = None
+        raise AppError(f"HTTP {e.code}: {detail or body[:200].decode('utf-8', 'replace').strip() or e.reason}")
+    except (urllib.error.URLError, OSError) as e:
+        raise AppError(f"no answer from the App ({getattr(e, 'reason', e)})")
+    try:
+        tasks = json.loads(body)
+    except ValueError:
+        tasks = None
+    if not isinstance(tasks, list):
+        raise AppError(f"HTTP {status}, but the answer is not a task list: {body[:120].decode('utf-8', 'replace').strip()}")
+    return tasks
 
 
 def facts(summary):
@@ -112,7 +140,11 @@ def main(argv):
         return 1
     say(f"Read as:   {who(tok)} (the Job's token: the person who clicked Run)")
     say()
-    tasks = get(app, "/api/tasks", {"q": bundle, "trigger_type": "event"}, tok)
+    try:
+        tasks = get_tasks(app, {"q": bundle, "trigger_type": "event"}, tok)
+    except AppError as e:
+        say(f"App error: {e}")
+        return 1
     tasks = sorted(tasks, key=lambda t: t.get("createdAt") or "", reverse=True)   # newest first, as the route sorts them
     for title, agent in VALIDATORS:
         show(app, title, agent, [t for t in tasks if t.get("agentName") == agent])
