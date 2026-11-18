@@ -196,14 +196,15 @@ async def scan(state):
     job_id = ((answer(text) or {}).get("job") or {}).get("id") if ok else None
     if not job_id:
         return {"scan": {"ok": False, "why": f"the scan Job didn't start: {text[:300]}"}}
-    done = None
+    done, waiting = None, False
     for _ in range(WAITS):
         ok, text = await call("wait_job", jobId=job_id)
         done = re.match(r"Job (\S+) finished: (\w+)\.", text) if ok else None
-        if done or not ok or not text.startswith("Job "):
+        waiting = ok and not done and text.startswith("Job ")   # "Job N is still <status> ...": call it again
+        if not waiting:
             break
     if not done:
-        why = f"wait_job: {text[:300]}" if not ok else f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job"
+        why = f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job" if waiting else f"wait_job: {text[:300]}"
         return {"scan": {"ok": False, "jobId": job_id, "why": why}}
     number, status = done.groups()
     ok, logs = await call("get_job_logs", jobId=job_id)

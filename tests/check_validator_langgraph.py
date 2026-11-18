@@ -374,7 +374,8 @@ class FakeDomino:
     {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
     holds each request: (method, path, query, body)."""
 
-    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active")):
+    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active"), job_answer=None):
+        self.job_answer = job_answer   # the Job's GET answers 200 with this, when set: a body with no job in it
         self.policy = published_policy()
         self.bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": PROJECT["id"], "projectName": PROJECT["name"],
                        "projectOwner": "analyst", "policyId": "pol-app", "policyName": "App deployment policy", "policyVersionId": "pv-1",
@@ -395,6 +396,8 @@ class FakeDomino:
             self.job = {"id": "job-1", "number": 41, "title": body.get("title"), "runCommand": body.get("runCommand"),
                         "projects": [{"projectId": body.get("projectId"), "commitId": SCANNED}], "status": self.job_status("Queued")}
             return 200, {"job": self.job, "metadata": {"requestId": "rq-job", "notices": []}}
+        if method == "GET" and path == "/api/jobs/beta/jobs/job-1" and self.job_answer is not None:
+            return 200, self.job_answer
         if method == "GET" and path == "/api/jobs/beta/jobs/job-1":
             # the Job runs for JOB_SECONDS: a wait_job call (WAIT_S) ends before that, so the graph must call it again
             status = self.job_end if time.time() - self.job_started >= JOB_SECONDS else "Running"
@@ -776,6 +779,19 @@ check("SCANFAIL the verdict is do not approve, because the scan did not run (and
 check("SCANFAIL the evidence item says so: do not approve, and its summary says that the scan did not run to its end",
       filled.get("Verdict") == "do not approve" and filled.get("Critical vulns") == "no"
       and "The scan did not run to its end" in (filled.get("Summary") or ""), filled)
+
+# ------------------------------------------------------------------------- the case: wait_job answers, but not with the Job's state
+# Domino's GET of the Job answers 200 with a body that has no job (not a JobEnvelopeV1). The gateway's wait_job then gives that answer
+# as it is (run.Gateway.wait_job: gateway.job_state reads no state), not "Job ... finished" and not an error. The gateway drops an
+# answer's metadata, and gives compact JSON.
+ODD = {"jobs": [], "metadata": {"requestId": "rq-odd", "notices": []}}
+ran, lines, doc, filed, filled = run_case("C268odd", FakeDomino(job_answer=ODD, snapshot_statuses=("active",)), MAIN)
+scan_part = doc[doc.find("## Scan results"):doc.find("## Findings")]
+check("WAITODD a wait_job answer that isn't the Job's state stops the wait at once (one call), and the run goes on",
+      ran["error"] is None and tools(relay.calls).count("wait_job") == 1 and tools(relay.calls)[-1] == "write_policy_result",
+      (ran["error"], tools(relay.calls)))
+check("WAITODD the doc says why the scan did not run to its end: wait_job's real answer, not a wait that ran out",
+      'The scan did not run to its end: wait_job: {"jobs":[]}.' in scan_part and "didn't finish within" not in doc, scan_part)
 
 # --------------------------------------------------------------------------------------------- the case: no usable analysis
 ran, lines, doc, filed, filled = run_case("C268noanalysis", FakeDomino(snapshot_statuses=("active",)),
