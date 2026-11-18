@@ -120,4 +120,48 @@ check("the last step gives the result's three lines, in order, with the scripted
       all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),
       got)
 
+# ------------------------------------------------------------------------------------------------------------- the instructions
+ilines = [ln.lower() for ln in instructions.splitlines()]
+
+
+def irule(name, *words):
+    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
+    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
+
+
+irule("load the skill app-validation first, and do its checklist in order", "first", "skill app-validation", "in order")
+irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
+irule("file only the real findings, each name starting with [folder]", "only the real findings", '"[folder] "')
+irule("a false hit goes in the doc with its reason", "false hit", "doc", "reason")
+irule("say what it could not check, in the doc and in the result", "could not check", "doc", "result")
+irule("nobody answers an event task: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
+irule("the checklist's writes are the task's work: no asking first", "push", "attachment", "findings", "evidence", "without asking")
+irule("end with report_result, once, last", "domino_report_result", "once", "last")
+
+# --------------------------------------------------------------------------------------------------------------- the tool names
+# opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
+NAMES = {"domino_get_bundle", "domino_get_policy", "domino_run_job", "domino_wait_job", "domino_get_job_logs", "domino_git_push",
+         "domino_write_bundle_attachment", "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result",
+         "domino_ask_user", "domino_request_access"}
+named = set(re.findall(r"\bdomino_[a-z_]+", skill + instructions))
+check("the skill and the instructions name the checklist's Domino tools, and no other", named == NAMES, sorted(named ^ NAMES))
+bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait_job|git_push|write_[a-z_]+|report_result)\(",
+                             skill + instructions)))
+check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
+
+service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+if not service:
+    done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
+         "it to a domino-agent-service checkout (README, \"The agent folder validator\")")
+service = Path(service).expanduser().resolve()
+if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "agent_runtime" / "proxies.py").is_file():
+    check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and proxies.py)", False)
+    done()
+sys.path.insert(0, str(service))
+from agent_runtime import gateway, proxies  # noqa: E402  (stdlib only, so any OS)
+
+offered = {f"domino_{n}" for n in gateway.TOOLS} | {f"domino_{n}" for n in proxies.RELAY_TOOLS}
+check("each tool that they name is a gateway tool or a relay tool of this service, as opencode names it (domino_<name>)",
+      named and named <= offered, sorted(named - offered))
+
 done()
