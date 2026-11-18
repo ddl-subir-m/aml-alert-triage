@@ -88,7 +88,7 @@ Open the platform App as the agent's owner.
 2. **Basics.** Click "Your own agent code" (the framework lane). Name: `App validator (LangGraph)`, exactly: the scripted check
    finds the validator's tasks by this name. Where can it work: Any project. Keep "Project required as trigger input" on.
 3. **Model & runtime.** Framework: LangGraph. Entry point: `governance/validator-langgraph/graph.py:build_graph`. Environment: the
-   one certified for LangGraph (a revision with domino-agui 0.2.0). Model: `sonnet`. Model access: Agent identity. Max minutes per
+   one certified for LangGraph (a revision with domino-agui 0.2.0). Model: `google/gemini-3.8-flash`. Model access: Agent identity. Max minutes per
    Job: 45. Max model calls per Job: 10. Wait for answers: 0.
 4. **Instructions & behaviors.** System prompt: the `systemPrompt` of `agent.json` (the graph adds `analyze.md` to it):
 
@@ -117,7 +117,7 @@ Then make the subscription: copy `subscription.json`, replace the three placehol
 
 | What | Without it |
 |---|---|
-| The service account is a Contributor of the demo project, can read and write the doc dataset, has an LLM Gateway grant on `sonnet`, and may submit results, attach files and file findings on the bundle. | Domino refuses the Job, the snapshot, the model calls or the writes on the bundle. |
+| The service account is a Contributor of the demo project, can read and write the doc dataset, has an LLM Gateway grant on `google/gemini-3.8-flash`, and may submit results, attach files and file findings on the bundle. | Domino refuses the Job, the snapshot, the model calls or the writes on the bundle. |
 | The service account has a Git credential for github.com in its Domino account: Domino needs it to start a Job of a Git-based project. | Domino refuses the scan Job. |
 | A token for the service account, stored before the old one expires. | Each stage move starts no task: the agent can't run yet. |
 | The platform App (the smoke App) has the project setting `SMOKE_AUDIT_POLL_SECONDS` (10 in the demo). | No stage move reaches the agent. |

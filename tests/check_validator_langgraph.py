@@ -83,8 +83,8 @@ check("it acts as a service account, and the file names none (the owner picks it
 check("its access is restricted, and the file names no person", d.get("access") == {"mode": "restricted", "users": [], "editors": []},
       d.get("access"))
 check("a failed run fails the task (nobody answers an event task)", d.get("onError") == "fail", d.get("onError"))
-check("the model is sonnet from the LLM Gateway, with the acting identity's grants",
-      d.get("model") == {"source": "gateway", "models": ["sonnet"], "access": "acting"}, d.get("model"))
+check("the model is google/gemini-3.8-flash from the LLM Gateway, with the acting identity's grants",
+      d.get("model") == {"source": "gateway", "models": ["google/gemini-3.8-flash"], "access": "acting"}, d.get("model"))
 check("it has one input, a required project, and no tool server",
       d.get("inputs") == [{"name": "project", "type": "project", "required": True}] and d.get("toolServers") == [],
       (d.get("inputs"), d.get("toolServers")))
