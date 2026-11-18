@@ -303,6 +303,14 @@ check("one block for the LangGraph validator, after it (the verdict lines withou
           f"  task link:      {APP_URL}/#/tasks/task_0000000013"]
       and out.index("Validation (agent folder)") < out.index("Validation (LangGraph)"), out)
 
+MARKED = ("_Verdict_: **do not approve**\n- **Critical vulns:** `no`\n"
+          "**Doc location**: `dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md`\n")
+code, out, _ = run(tasks=[task("AGT-17", FOLDER, "done", MARKED)])
+check("Markdown only around a value goes: the value itself keeps its _ and * (a doc location with _ prints as the validator wrote it)",
+      block(out, "Validation (agent folder)")[4:7] == [
+          "  verdict:        do not approve", "  critical vulns: no",
+          "  doc location:   dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md"], out)
+
 code, out, _ = run(tasks=[task("AGT-14", FOLDER, "running")])
 check("a validator with no task yet: exit 0 (a result, not an error)", code == 0, out)
 check("...its block says not started, and why a task can be missing for this person",

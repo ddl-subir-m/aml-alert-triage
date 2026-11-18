@@ -94,11 +94,11 @@ def get_tasks(app, query, tok):
 def facts(summary):
     """The verdict, critical vulns and doc location lines of a validator's result (its task's summary), Markdown aside."""
     found = {}
-    for line in (summary or "").splitlines():
-        plain = re.sub(r"[*_`]", "", line).strip().lstrip("-#> ").strip()
-        m = re.match(r"(verdict|critical vulns|doc location)\s*:\s*(.+)$", plain, re.I)
-        if m and m.group(1).lower() not in found:
-            found[m.group(1).lower()] = m.group(2).strip()
+    for line in (summary or "").splitlines():   # "- **Verdict:** approve", "_Doc location_: `a_b`": marks around, never inside
+        m = re.match(r"[\s>#*_`-]*(verdict|critical vulns|doc location)[*_`]*\s*:(.+)$", line, re.I)
+        value = m.group(2).strip(" \t*_`") if m else ""
+        if value and m.group(1).lower() not in found:
+            found[m.group(1).lower()] = value
     return found
 
 
