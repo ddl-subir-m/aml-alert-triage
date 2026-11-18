@@ -204,4 +204,65 @@ offered = {f"domino_{n}" for n in gateway.TOOLS} | {f"domino_{n}" for n in proxi
 check("each tool that they name is a gateway tool or a relay tool of this service, as opencode names it (domino_<name>)",
       named and named <= offered, sorted(named - offered))
 
+# --------------------------------------------------------------------------------------------------------------- the deploy
+if not files:
+    done()   # the first part said why: there is no folder to deploy
+if not (service / "tests" / "agent_folder_seam.py").is_file() or not (service / "domino_agent" / "deploy.py").is_file():
+    check(f"AGENT_SERVICE_REPO ({service}) has the agent folder (tests/agent_folder_seam.py and domino_agent/)", False)
+    done()
+if not sys.platform.startswith("linux"):
+    done("needs Linux for the deploy and the event's task: the service's app imports agent_runtime/sandbox.py. On a Mac, run it "
+         "with Docker, in the image of the service's checks (README, \"The agent folder validator\")")
+sys.path.insert(0, str(service / "tests"))
+import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
+
+seam.start()
+OWNER, ANALYST, APPROVER, SA = "olivia", "rita", "bob", "app-validator-sa"   # people the seam's fake Domino knows, and the account
+TITLE, PATH = "App validator (agent folder)", "governance/validator-folder"
+REMOTE = "https://github.com/ddl-subir-m/aml-alert-triage.git"
+repo = seam.Repo(every, path=PATH, remote=REMOTE)   # the whole folder, as git has it: deploy uploads only the known paths
+
+
+def registered():
+    """The agent that the folder's `name` registered, as its owner sees it, or None."""
+    agents = seam.api("GET", "/api/agents", OWNER).json()
+    return next((a for a in agents if (a.get("registration") or {}).get("name") == "app-validator-folder"), None)
+
+
+ran = seam.command("deploy", "--dry-run", PATH, cwd=repo.root, person=OWNER)
+check("deploy --dry-run passes the service's folder rules: it would create the agent, and registers nothing",
+      ran.code == 0 and f"Dry run: would create {TITLE}" in ran.out and "Dry run: nothing was registered." in ran.out
+      and registered() is None, ran)
+ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)
+check("deploy registers it, and says that it can't run yet: it acts as a service account, and none is chosen",
+      ran.code == 0 and ran.out.startswith(f"Created {TITLE} (agt_") and "Can't run yet" in ran.out and "service account" in ran.out, ran)
+a = registered() or {}
+aid = a.get("id")
+check("the agent is a harness agent named App validator (agent folder), owned by the person who deployed it",
+      a.get("lane") == "harness" and a.get("name") == TITLE and (a.get("owner") or {}).get("userName") == OWNER,
+      (a.get("lane"), a.get("name"), a.get("owner")))
+rec = a.get("registration") or {}
+check("its Registration names the AML repo, the folder's path, the commit and a clean folder",
+      rec.get("repo") == REMOTE and rec.get("path") == PATH and rec.get("commit") == repo.head and rec.get("clean") is True, rec)
+check("its identity is a service account (the owner chooses which one, and adds its token)",
+      (a.get("identity") or {}).get("mode") == "service_account", a.get("identity"))
+g = a.get("guardrails") or {}
+check("it runs Jobs and pushes its task branch, with no subagent (Run a Job: on, Git push: on)",
+      {k: (g.get("tools") or {}).get(k) for k in ("jobs", "push", "subagents")} == {"jobs": True, "push": True, "subagents": False},
+      g.get("tools"))
+check("its Resource access: Project files Read & write, Project datasets No access, attached Read & write, not attached No access",
+      {k: (g.get("access") or {}).get(k) for k in ("project", "data", "named", "other")}
+      == {"project": "write", "data": "none", "named": "write", "other": "none"}, g.get("access"))
+check("a failure ends the task with a report (on-error: fail): nobody unblocks an event task", a.get("onError") == "fail", a.get("onError"))
+check("its limits: 45 minutes, 120 turns, and no wait for an answer",
+      {k: (a.get("execution") or {}).get(k) for k in ("maxRuntimeMin", "maxTurns", "idleWaitMin")}
+      == {"maxRuntimeMin": 45, "maxTurns": 120, "idleWaitMin": 0}, a.get("execution"))
+check("its model is the LLM Gateway alias sonnet", (a.get("model") or {}).get("models") == ["sonnet"], a.get("model"))
+check("its system prompt is instructions.md", a.get("systemPrompt") == instructions.strip(), (a.get("systemPrompt") or "")[:200])
+own = a.get("ownSkills") or []
+check("its own skill is app-validation, with its description and one file, SKILL.md (the API shows no text: the Job's spec has it)",
+      [(s.get("name"), s.get("files")) for s in own] == [("app-validation", ["SKILL.md"])]
+      and own[0].get("description") and own[0]["description"] in skill, own)
+
+seam.close()
 done()
