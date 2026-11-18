@@ -15,6 +15,7 @@ write_governance_finding (agent_runtime/gateway.py, stdlib only, so any OS). Wit
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -214,4 +215,35 @@ check("the summary says that the install failed, with pip's first error",
       "pip-audit" in block, block)
 
 shutil.rmtree(tmp, ignore_errors=True)
+
+# ------------------------------------------------------------------------------------------------------------------ the doc template
+# The sections of spec #260, Implementation Decision 7, in its order.
+SECTIONS = ["App and version", "Purpose", "Users and data class", "Tech stack", "Architecture", "Dependencies", "Scan results",
+            "Findings", "Critical vulns", "Verdict for the approver", "What the validator could not check"]
+TEMPLATE = ROOT / "governance" / "validation-doc.md"
+doc = TEMPLATE.read_text() if TEMPLATE.is_file() else ""
+headings = [ln[3:].strip() for ln in doc.splitlines() if ln.startswith("## ")]
+check("the doc template has every section of the spec, in its order, and no other", headings == SECTIONS, headings)
+parts = {}
+for ln in doc.splitlines():
+    if ln.startswith("## "):
+        parts[ln[3:].strip()] = ""
+    elif parts:
+        parts[list(parts)[-1]] += ln.lower() + "\n"
+check("each section has a {{field}} for the validator to fill", bool(parts) and all(re.search(r"\{\{[a-z_]+\}\}", t) for t in parts.values()),
+      [h for h, t in parts.items() if not re.search(r"\{\{[a-z_]+\}\}", t)])
+
+
+def says(section, *words):
+    text = parts.get(section, "")
+    check(f"the doc template's {section!r} section says: {', '.join(words)}", all(w in text for w in words), text[:300])
+
+
+says("App and version", "commit")
+says("Users and data class", "intake")
+says("Dependencies", "installed")
+says("Scan results", "tool", "version", "hits")
+says("Findings", "severity", "evidence", "false", "reason")
+says("Critical vulns", "yes", "no", "s0")
+says("Verdict for the approver", "approve", "approve after fixes", "do not approve")
 sys.exit(1 if failed else 0)
