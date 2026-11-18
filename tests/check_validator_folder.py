@@ -149,6 +149,46 @@ bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait
                              skill + instructions)))
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
+# ------------------------------------------------------------------------------------------------- the event subscription's file
+# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), for the live script (#270). Its one
+# placeholder is the demo project's ID. Deploy doesn't upload it: an agent folder holds no trigger.
+SUB_FILE = FOLDER / "subscription.json"
+PROJECT_ID = "__DEMO_PROJECT_ID__"
+# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
+PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
+           "policy.name", "project.id", "project.name")
+try:
+    sub = json.loads(text(SUB_FILE))
+except ValueError as e:
+    sub = {"error": str(e)}
+sub = sub if isinstance(sub, dict) else {}
+event = sub.get("event") or {}
+check("governance/validator-folder/subscription.json is an event subscription to governance.bundle.stage_changed, on",
+      sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
+      and sub.get("name"), {k: sub.get(k) for k in ("type", "name", "enabled", "event", "error")})
+policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
+check("its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the demo project",
+      event.get("filter") == [{"field": "toStage", "op": "equals", "value": "Validation"},
+                              {"field": "project.id", "op": "equals", "value": PROJECT_ID}]
+      and re.search(r"^  - name: Validation$", policy_yaml, re.M), event.get("filter"))
+title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
+check("its title template names the bundle ID (the scripted check's task search matches the title and the key only)",
+      "{{bundle.id}}" in title and len(title) <= 90, title)
+check("its instruction template names the bundle ID, the evidence item to fill, and the skill",
+      "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and "app-validation" in instruction, instruction)
+fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
+check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
+      fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
+check("it pins no resource and writes nothing back: the event names the bundle and the project",
+      sub.get("defaultResources") == [] and sub.get("writeBack") == [], {k: sub.get(k) for k in ("defaultResources", "writeBack")})
+
+# The AML repo is public: no Domino host, no ID of a Domino object, no token in the folder (the live script fills the placeholder)
+leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
+                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}", body)})
+check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
+dashed = sorted(rel for rel, body in every.items() if "—" in body)
+check("no file of the folder has an em dash", not dashed, dashed)
+
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
