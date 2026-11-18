@@ -58,16 +58,34 @@ def facts(summary):
     return found
 
 
+ENDED = {"failed": "the task failed", "cancelled": "the task was cancelled"}
+
+
 def show(app, title, agent, tasks):
+    """One validator's block. `tasks` are its tasks, newest first: the newest is the validation; a new stage move starts a new one."""
     say(title)
     field("agent", agent)
-    t = tasks[0]
+    if not tasks:
+        field("status", "not started")
+        field("note", "no task of this agent names the bundle that you may read (only its owner and editors see all its tasks)")
+        say()
+        return
+    t, status = tasks[0], tasks[0].get("status") or "unknown"
     field("task", f"{t.get('key')}  {t.get('title')}")
-    field("status", t.get("status"))
+    field("status", f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status)
     got = facts(t.get("summary"))
+    if status in ENDED:
+        field("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none")
     for label in ("verdict", "critical vulns", "doc location"):
-        field(label, got.get(label, "not in the task's result"))
+        if status in ("review", "done"):
+            field(label, got.get(label, "not in the task's result"))
+        elif status in ENDED:
+            field(label, f"none ({ENDED[status]})")
+        else:
+            field(label, f"not yet (the task is {status})")
     field("task link", f"{app}/#/tasks/{t.get('id')}")
+    if len(tasks) > 1:
+        field("earlier tasks", ", ".join(f"{e.get('key')} ({e.get('status')})" for e in tasks[1:]))
     say()
 
 
@@ -77,6 +95,7 @@ def main(argv):
     say(f"Validation status of bundle {bundle}")
     say()
     tasks = get(app, "/api/tasks", {"q": bundle, "trigger_type": "event"})
+    tasks = sorted(tasks, key=lambda t: t.get("createdAt") or "", reverse=True)   # newest first, as the route sorts them
     for title, agent in VALIDATORS:
         show(app, title, agent, [t for t in tasks if t.get("agentName") == agent])
     return 0

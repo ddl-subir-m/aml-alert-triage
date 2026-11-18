@@ -293,4 +293,40 @@ check("one block for the LangGraph validator, after it (the verdict lines withou
           f"  task link:      {APP_URL}/#/tasks/task_0000000013"]
       and out.index("Validation (agent folder)") < out.index("Validation (LangGraph)"), out)
 
+code, out, _ = run(tasks=[task("AGT-14", FOLDER, "running")])
+check("a validator with no task yet: exit 0 (a result, not an error)", code == 0, out)
+check("...its block says not started, and why a task can be missing for this person",
+      block(out, "Validation (LangGraph)") == [
+          "Validation (LangGraph)",
+          f"  agent:          {LANGGRAPH}",
+          "  status:         not started",
+          "  note:           no task of this agent names the bundle that you may read (only its owner and editors see all its tasks)"],
+      out)
+check("a task that still runs shows its status, and no verdict yet",
+      block(out, "Validation (agent folder)")[3:6] == ["  status:         running", "  verdict:        not yet (the task is running)",
+                                                       "  critical vulns: not yet (the task is running)"], out)
+code, out, _ = run(tasks=[task("AGT-15", FOLDER, "waiting", waiting="approval"), task("AGT-16", LANGGRAPH, "queued")])
+check("a waiting task shows what it waits for; a queued task shows queued",
+      "  status:         waiting (approval)" in block(out, "Validation (agent folder)")
+      and "  status:         queued" in block(out, "Validation (LangGraph)"), out)
+code, out, _ = run(tasks=[task("AGT-17", LANGGRAPH, "failed", "Not run: the Job's Environment is not certified.\nMore lines.")])
+check("a failed task shows its status, and the first line of its result",
+      block(out, "Validation (LangGraph)")[3:5] == ["  status:         failed",
+                                                    "  result:         Not run: the Job's Environment is not certified."], out)
+check("...and no verdict", "  verdict:        none (the task failed)" in block(out, "Validation (LangGraph)"), out)
+code, out, _ = run(tasks=[task("AGT-20", FOLDER, "review", DONE_FOLDER, created="2026-11-17T12:00:00Z"),
+                          task("AGT-18", FOLDER, "review", "Verdict: do not approve", created="2026-11-17T09:00:00Z"),
+                          task("AGT-19", FOLDER, "failed", "Not run.", created="2026-11-17T11:00:00Z"),
+                          task("AGT-21", "Stage change listener", "review", "Verdict: approve"),
+                          task("AGT-22", LANGGRAPH, "review", DONE_GRAPH, trigger="direct")])
+b = block(out, "Validation (agent folder)")
+check("a new stage move gives a new task: the block shows the newest, and names the earlier ones",
+      b[2].startswith("  task:           AGT-20 ") and "  verdict:        approve after fixes" in b
+      and "  earlier tasks:  AGT-19 (failed), AGT-18 (review)" in b, b)
+check("another agent's task that names the bundle is not a validator's, and a task that a person started is not a validation",
+      "AGT-21" not in out and "AGT-22" not in out and "  status:         not started" in block(out, "Validation (LangGraph)"), out)
+code, out, _ = run(tasks=[task("AGT-23", FOLDER, "done", "All good, no verdict line.")])
+check("a finished task with no verdict line in its result says so",
+      "  verdict:        not in the task's result" in block(out, "Validation (agent folder)"), out)
+
 sys.exit(1 if failed else 0)
