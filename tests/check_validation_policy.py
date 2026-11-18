@@ -322,7 +322,7 @@ code, out, _ = run(tasks=[task("AGT-20", FOLDER, "review", DONE_FOLDER, created=
                           task("AGT-22", LANGGRAPH, "review", DONE_GRAPH, trigger="direct")])
 b = block(out, "Validation (agent folder)")
 check("a new stage move gives a new task: the block shows the newest, and names the earlier ones",
-      b[2].startswith("  task:           AGT-20 ") and "  verdict:        approve after fixes" in b
+      len(b) > 2 and b[2].startswith("  task:           AGT-20 ") and "  verdict:        approve after fixes" in b
       and "  earlier tasks:  AGT-19 (failed), AGT-18 (review)" in b, b)
 check("another agent's task that names the bundle is not a validator's, and a task that a person started is not a validation",
       "AGT-21" not in out and "AGT-22" not in out and "  status:         not started" in block(out, "Validation (LangGraph)"), out)
@@ -361,5 +361,19 @@ check("it writes validation_status.txt in its working folder, with the lines of 
       text is not None and text.splitlines() == out.splitlines() and "Validation (LangGraph)" in text, text)
 check("...and a copy in the Job's artifacts folder (DOMINO_ARTIFACTS_DIR: a Git-based project keeps the Job's results there)",
       text is not None and copy() == text, copy())
+
+# Only GET: the check never starts or changes an agent.
+seen = []
+for tasks in ([], [task("AGT-12", FOLDER, "review", DONE_FOLDER)], [task("AGT-14", FOLDER, "running"), task("AGT-16", LANGGRAPH, "waiting")]):
+    run(tasks=tasks)
+    seen += APP["calls"]
+check("it sends only GET requests to the App, and only to its task search (GET /api/tasks)",
+      seen and all(c["method"] == "GET" and c["path"] == "/api/tasks" for c in seen), sorted({(c["method"], c["path"]) for c in seen}))
+check("...one request for each click", len(seen) == 3, len(seen))
+check("...with q = the bundle ID and the event trigger (trigger_type=event)",
+      all(c["query"] == {"q": [BUNDLE], "trigger_type": ["event"]} for c in seen), [c["query"] for c in seen])
+src = SCRIPT.read_text()
+check("the script has no way to send another method: no POST, PUT, PATCH or DELETE, and no request body",
+      not re.search(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src), re.findall(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src))
 
 sys.exit(1 if failed else 0)
