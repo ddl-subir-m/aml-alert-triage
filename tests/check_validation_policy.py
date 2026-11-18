@@ -144,7 +144,8 @@ check("the placeholders are these four, and the file's head names each one", set
       and all(re.search(rf"^#.*{p}", raw, re.M) for p in PLACEHOLDERS), set(re.findall(r"__[A-Z_]+__", body)))
 check("the file is for a PUBLIC repo: no host name, no cloud-dogfood, no Domino object ID",
       not re.search(r"https?://|\.domino\.tech|cloud-dogfood|\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-", raw), "a host or an ID")
-check("no em dash", "—" not in raw)
+dashed = [p.name for p in (POLICY, ROOT / "governance" / "validation_status.py", Path(__file__)) if p.is_file() and "\u2014" in p.read_text()]
+check("no em dash in the policy, the scripted check or this check", not dashed, dashed)
 
 # ------------------------------------------------------------------------------------------------- the scripted check, on a fake App
 SCRIPT = ROOT / "governance" / "validation_status.py"
