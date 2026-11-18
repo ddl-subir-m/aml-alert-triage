@@ -246,4 +246,31 @@ says("Scan results", "tool", "version", "hits")
 says("Findings", "severity", "evidence", "false", "reason")
 says("Critical vulns", "yes", "no", "s0")
 says("Verdict for the approver", "approve", "approve after fixes", "do not approve")
+
+# ----------------------------------------------------------------------------------------- the severity scale and the finding names
+# write_governance_finding's own words: "severity: S0 (critical), S1 (high), S2 (medium) or S3 (low)" (agent_runtime/gateway.py).
+SCALE = {"S0": "critical", "S1": "high", "S2": "medium", "S3": "low"}
+RULES = ROOT / "governance" / "README.md"
+rules = RULES.read_text() if RULES.is_file() else ""
+rows = dict(re.findall(r"^\| (S\d) \((\w+)\) \|", rules, re.M))
+check("governance/README.md has the severity scale, S0 to S3, with write_governance_finding's words", rows == SCALE, rows)
+flat = " ".join(rules.split())
+check("governance/README.md says that each finding's name starts with the validator's short name, [folder] or [LangGraph]",
+      "[folder]" in flat and "[LangGraph]" in flat and "starts with" in flat, flat[:300])
+check("governance/README.md says that critical vulns is yes when at least one real finding is S0",
+      re.search(r"critical vulns.{0,40}yes.{0,80}at least one real finding is S0", flat, re.I) is not None, flat[:300])
+
+service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+if not service:
+    print("SKIP: AGENT_SERVICE_REPO is not set, so the severity scale wasn't checked against the gateway's write_governance_finding. "
+          "Set it to a domino-agent-service checkout.", flush=True)
+    sys.exit(1 if failed else 0)
+sys.path.insert(0, service)
+from agent_runtime import gateway  # noqa: E402  (stdlib only; from AGENT_SERVICE_REPO)
+
+check("write_governance_finding takes exactly the scale's four severities", set(gateway.SEVERITY.values()) == set(SCALE),
+      sorted(set(gateway.SEVERITY.values())))
+check("write_governance_finding maps each severity and its word to that severity, as the scale says",
+      all(gateway.SEVERITY.get(code.lower()) == code and gateway.SEVERITY.get(word) == code for code, word in rows.items()) and rows,
+      {code: (gateway.SEVERITY.get(code.lower()), gateway.SEVERITY.get(word)) for code, word in rows.items()})
 sys.exit(1 if failed else 0)
