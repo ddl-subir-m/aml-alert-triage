@@ -43,7 +43,7 @@ Done when: each fact for the doc's sections from "Purpose" to "Dependencies" has
 - When the Job is finished, find the scan summary in the end of its output: the lines between `== scan summary ==` and `== end of scan summary ==`. Domino adds lines of its own after the summary. If the summary isn't there, `domino_get_job_logs(jobId)` gives more of the log.
 - The summary's `commit:` line is the commit that the scan read. Its `result:` line says whether both tools ran.
 
-Done when: you have the summary, or you know why there is none (the Job failed, or a tool could not run). A tool that could not run goes under could not check.
+Done when: you have the summary, or you know why there is none (the Job failed, or a tool could not run). A tool that could not run goes under could not check, and so does each part that the summary says was not checked (`- not audited: ...`, `- not scanned: ...`).
 
 ## 4. Sort each hit
 

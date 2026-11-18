@@ -17,7 +17,8 @@ Call no other tool, and write no text outside that call.
    the code. Give the evidence (file and line, and the hit or the code), and a fix.
 5. Give a verdict for the approver: `approve`, `approve after fixes` or `do not approve`, and the reason, which names the findings
    that decide it. The verdict is advice: the approver decides.
-6. Say what you could not check, for example what only the running App shows.
+6. Say what you could not check, for example what only the running App shows, and each part that the scan's summary says
+   was not checked (`- not audited: ...`, `- not scanned: ...`).
 
 When the scan did not run to its end, the graph says so below. Then give no finding with the source `scan`: you have no scan to
 read. Review the code as usual.

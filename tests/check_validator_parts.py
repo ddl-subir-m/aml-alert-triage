@@ -2,8 +2,9 @@
 script as a Domino Job runs it, the doc template, and the severity scale with the rule for finding names (governance/README.md).
 
 The scan script runs with no network: a bare venv (no pip-audit, no bandit, no pip) and fake scanners on PYTHONPATH that answer with
-the real tools' output, saved in tests/fixtures/scan/ (pip-audit 2.10.1 and bandit 1.9.4 on case_server: `clean` is main, and
-`vulnerable` is pip-audit's answer for the demo branch's pin, pyyaml==5.3.1). The fakes copy the real tools: their `--version` line,
+the real tools' output, saved in tests/fixtures/scan/ (pip-audit 2.10.1 and bandit 1.9.4 on case_server: `clean` is main,
+`vulnerable` is pip-audit's answer for the demo branch's pin, pyyaml==5.3.1, and `gaps` adds a file that bandit can't parse and a
+package that isn't on PyPI). The fakes copy the real tools: their `--version` line,
 their JSON file at -o, their messages on stderr and their exit codes (pip-audit: 0, 1 with hits, 1 and no JSON when it fails; bandit:
 0, 1 with hits). A fake pip "installs" the fake scanners, as a Job's pip installs the real ones.
 
@@ -177,6 +178,21 @@ vuln = [ln for ln in block.splitlines() if "PYSEC-2021-142" in ln]
 check("the summary names PYSEC-2021-142 for pyyaml 5.3.1 on one line, with its aliases, its fix version and what it is",
       len(vuln) == 1 and all(w in vuln[0] for w in ("pyyaml 5.3.1", "CVE-2020-14343", "GHSA-8q59-q68h-6hv4", "fixed in 5.4",
                                                       "full_load")), vuln or block)
+
+# ------------------------------------------------------------- the scan: a file bandit can't parse, a package pip-audit can't audit
+# The `gaps` fixture is the real tools' JSON for case_server plus a Python 2 file (bandit's `errors`) and a local package that isn't on
+# PyPI (pip-audit's dependency with `skip_reason` and no version). Both tools ran, but neither checked everything.
+code, out, err, calls, folder = scan("gaps")
+block = summary(out)
+check("with a file bandit can't parse and a package pip-audit can't audit, both tools still ran: exit 0, nothing on stderr",
+      code == 0 and err == "" and summary(out).rstrip().splitlines()[-2:-1] == ["result: both tools ran"], f"exit {code}; {err[-300:]}")
+check("pip-audit counts only the packages it audited, and the summary names each one it did not audit, with pip-audit's reason",
+      "pip-audit 2.10.1 on case_server/requirements.txt: no known vulnerabilities in 29 packages, and 1 package not audited" in block
+      and "- not audited: aml-local-helper: Dependency not found on PyPI and could not be audited: aml-local-helper (0.1.0)" in block,
+      block)
+check("bandit's errors are not a clean file: the summary names each file bandit could not scan, with bandit's reason",
+      "bandit 1.9.4 on case_server (all severities): 2 hits, and 1 file not scanned" in block
+      and "- not scanned: case_server/legacy_export.py: syntax error while parsing AST from file" in block, block)
 
 # ------------------------------------------------------------------------------------- the scan: pip-audit can't resolve the requirements
 code, out, err, calls, folder = scan("clean", fail="pip-audit")
