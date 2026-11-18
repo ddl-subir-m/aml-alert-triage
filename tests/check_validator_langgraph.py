@@ -792,5 +792,22 @@ check("AGAIN a later run of the same task (a message to it) validates nothing ag
 check("AGAIN its result is the validation's result, and says that a new move to Validation starts a new validation",
       (again["result"] or "").startswith(before) and "new validation" in (again["result"] or ""), (again["result"] or "")[-300:])
 
+# ----------------------------------------------------------------------------------------- the case: the snapshot fails
+ran, lines, doc, filed, filled = run_case("C268snapfail", FakeDomino(snapshot_statuses=("failed",)), MAIN)
+check("SNAPFAIL a failed snapshot is not attached, and the run goes on: the findings, then the evidence item",
+      "write_bundle_attachment" not in tools(relay.calls) and tools(relay.calls)[-1] == "write_policy_result" and len(filed) == 2,
+      tools(relay.calls))
+check("SNAPFAIL the doc's location, in the result and the evidence item, says that the snapshot failed and isn't attached",
+      lines[2].startswith(f"Doc location: dataset {DATASET['id']}, snapshot snap-1") and "failed" in lines[2]
+      and "not attached" in lines[2] and filled.get("Doc location") == lines[2].split(": ", 1)[1], (lines[2:3], filled.get("Doc location")))
+
+# ----------------------------------------------------------------------------------------- the case: an instruction with no bundle
+th = thread.Thread("t-nobundle")
+th.add_user("Validate the App, please. [certify C268none]")
+bare = run_task("C268none", FakeDomino(), messages=th)
+check("NOBUNDLE an instruction with no line \"Bundle ID: ...\" fails the run, and says what the line must be, before any call",
+      "The instruction names no bundle" in (bare["error"] or "") and "Bundle ID:" in (bare["error"] or "") and relay.calls == [],
+      (bare["error"], tools(relay.calls)))
+
 close()
 done()

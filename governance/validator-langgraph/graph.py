@@ -199,7 +199,7 @@ async def scan(state):
     for _ in range(WAITS):
         ok, text = await call("wait_job", jobId=job_id)
         done = re.match(r"Job (\S+) finished: (\w+)\.", text) if ok else None
-        if done or not ok or not text.startswith(f"Job "):
+        if done or not ok or not text.startswith("Job "):
             break
     if not done:
         why = f"wait_job: {text[:300]}" if not ok else f"the scan Job {job_id} didn't finish within {WAITS} calls of wait_job"
@@ -297,8 +297,9 @@ def read_analysis(message):
     out["could_not_check"] = [str(x).strip() for x in a.get("could_not_check") or [] if str(x).strip()]
     found = []
     for f in a.get("real_findings") or []:
-        severity, source = str((f or {}).get("severity") or "").strip().upper(), str((f or {}).get("source") or "").strip().lower()
-        if not isinstance(f, dict) or severity not in SEVERITIES or source not in ("scan", "code") or not str(f.get("title") or "").strip():
+        f = f if isinstance(f, dict) else {}
+        severity, source = str(f.get("severity") or "").strip().upper(), str(f.get("source") or "").strip().lower()
+        if severity not in SEVERITIES or source not in ("scan", "code") or not str(f.get("title") or "").strip():
             return None, f"a real finding of its {ANALYSIS['title']} call has no title, or no severity S0 to S3, or no source"
         found.append({"title": str(f["title"]).strip(), "severity": severity, "source": source,
                       **{k: str(f.get(k) or "").strip() for k in ("evidence", "fix", "description")}})
@@ -327,7 +328,7 @@ def ruled(analysis, scan):
                                f"not checked: run the validation again. {a['verdict_reason']}").strip()
         a["could_not_check"] = [f"The scan: {scan.get('why')}."] + a["could_not_check"]
         a["summary"] = f"The scan did not run to its end: {scan.get('why')}. {a['summary']}".strip()
-    a["findings"] = [{**f, "name": f"{PREFIX} {re.sub(r'^\[LangGraph\]\s*', '', f['title'])}"} for f in a["real_findings"]]
+    a["findings"] = [{**f, "name": PREFIX + " " + f["title"].removeprefix(PREFIX).strip()} for f in a["real_findings"]]
     a["critical_vulns"] = "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
     return a
 
@@ -354,7 +355,8 @@ async def write(state):
            "snapshotId": snapshot_id, "attached": False}
     status, text = await snapshot_ready(dataset_id, snapshot_id)
     if status != "active":
-        return {"doc": doc, "problems": [f"get_dataset_snapshot: the snapshot is {status or 'not read'} ({text[:200]}), so the doc isn't "
+        doc["location"] += f" (the snapshot is {status or 'not known'}: not attached)"
+        return {"doc": doc, "problems": [f"get_dataset_snapshot: the snapshot is {status or 'not known'} ({text[:200]}), so the doc isn't "
                                          "attached"]}
     ok, text = await call("write_bundle_attachment", bundleId=bundle_id, type="DatasetSnapshotFile",
                           identifier={"datasetId": dataset_id, "snapshotId": snapshot_id, "filename": filename})
@@ -444,7 +446,10 @@ async def findings(state, config):
         description = "\n\n".join(x for x in [f.get("description"), f"Evidence: {f['evidence']}", f"Fix: {f['fix']}",
                                                f"Filed by the App validator (LangGraph), from {'the scan' if f['source'] == 'scan' else 'the code'}."] if x)
         ok, text = await call("write_governance_finding", bundleId=bundle_id, name=f["name"], severity=f["severity"], description=description)
-        filed.append(f["name"]) if ok else problems.append(f"write_governance_finding ({f['name']}): {text[:200]}")
+        if ok:
+            filed.append(f["name"])
+        else:
+            problems.append(f"write_governance_finding ({f['name']}): {text[:200]}")
     summary = " ".join(x for x in [a.get("summary"), f"Real findings filed: {len(filed)}.", f"False hits: {len(a.get('false_hits') or [])}.",
                                    (f"Not done: {'; '.join(state.get('problems') or [])}." if state.get("problems") else "")] if x)
     item, location = state.get("evidence") or {}, doc.get("location") or "not written"
