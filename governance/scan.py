@@ -153,8 +153,8 @@ def main():
         result = (f"result: {' and '.join(failed)} could not run ({'its' if len(failed) == 1 else 'their'} messages: "
                   + ", ".join(f"{name}.log" for name in failed) + ")")
     reports = [str(out / f"{name}.json") for name in TOOLS if name not in failed]
-    say("\n".join([START, f"commit: {commit()}", *([install_failed] if install_failed else []), *pip_audit_lines(*audit), *bandit_lines(*bandit),
-                   f"JSON: {', '.join(reports) or 'none'}", result, END]))
+    say("\n".join([START, f"commit: {commit()}", *([install_failed] if install_failed else []), *pip_audit_lines(*audit),
+                   *bandit_lines(*bandit), f"JSON: {', '.join(reports) or 'none'}", result, END]))
     return 1 if failed else 0
 
 
