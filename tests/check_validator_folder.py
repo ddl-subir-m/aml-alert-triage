@@ -443,7 +443,7 @@ listed = {f"domino_{t['name']}" for t in gateway.tool_defs(policy)} | {f"domino_
 check("each tool that the skill and the instructions name is one that this task's agent is offered", named <= listed,
       sorted(named - listed))
 
-fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("6a0000000000000000000e40", "another-project")), ANALYST)]
+fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("p-other", "another-project")), ANALYST)]
 check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
 domino.get = real_get
 
