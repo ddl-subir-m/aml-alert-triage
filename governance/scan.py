@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent   # the project's root: this file 
 REQUIREMENTS = "case_server/requirements.txt"
 SOURCE = "case_server"
 START, END = "== scan summary ==", "== end of scan summary =="
+TOOLS = {"pip-audit": "pip_audit", "bandit": "bandit"}   # each tool's name and its module (`python -m <module>`)
 LINE = 320   # the longest line of the summary: pip-audit's description of PYSEC-2021-142 is about 500 characters
 
 
@@ -31,10 +32,25 @@ def say(line):
     print(line, flush=True)
 
 
-def run(args, log):
-    """One tool run from the project's root, its stdout and stderr in the log file. -> exit code"""
+def scan_with(name, args, out):
+    """One tool run from the project's root: its JSON report in out/<name>.json, its stdout and stderr in out/<name>.log. It ran when
+    it wrote a JSON report (pip-audit and bandit both exit 1 when they find something). -> (report, or None; why it could not run)"""
+    report, log = out / f"{name}.json", out / f"{name}.log"
+    if report.exists():
+        report.unlink()   # an old report must not pass for this run's
     with open(log, "w") as f:
-        return subprocess.run(args, cwd=ROOT, stdout=f, stderr=subprocess.STDOUT).returncode
+        code = subprocess.run([sys.executable, "-m", TOOLS[name], *args, "-o", str(report)], cwd=ROOT, stdout=f,
+                              stderr=subprocess.STDOUT).returncode
+    found = read_json(report)
+    if isinstance(found, dict):
+        return found, ""
+    return None, clip(f"could not run (exit {code}): {first_error(log)}")
+
+
+def first_error(log):
+    """The line of a tool's log that says why it failed: its first error line, else its last line."""
+    lines = [ln.strip() for ln in Path(log).read_text(errors="replace").splitlines() if ln.strip()]
+    return next((ln for ln in lines if "error" in ln.lower()), lines[-1] if lines else "no output")
 
 
 def version(module):
@@ -65,8 +81,10 @@ def clip(text, n=LINE):
     return text if len(text) <= n else text[:n - 3] + "..."
 
 
-def pip_audit_lines(out):
-    report = read_json(out / "pip-audit.json") or {}
+def pip_audit_lines(report, why):
+    head = f"pip-audit {version('pip_audit')} on {REQUIREMENTS}: "
+    if report is None:
+        return [head + why]
     deps = report.get("dependencies") or []
     hits = []   # one line per package and vulnerability ID: pip-audit can list one vulnerability twice
     for d in deps:
@@ -78,17 +96,18 @@ def pip_audit_lines(out):
             fix = ", ".join(v.get("fix_versions") or []) or "none known"
             hits.append(clip(f"- {d.get('name')} {d.get('version')}: {vid}" + (f" ({aliases})" if aliases else "")
                              + f", fixed in {fix}: {v.get('description') or 'no description'}"))
-    head = f"pip-audit {version('pip_audit')} on {REQUIREMENTS}: "
     if not hits:
         return [head + f"no known vulnerabilities in {len(deps)} packages"]
     packages = sum(1 for d in deps if d.get("vulns"))
     return [head + f"{len(hits)} known vulnerabilit{'y' if len(hits) == 1 else 'ies'} in {packages} of {len(deps)} packages", *hits]
 
 
-def bandit_lines(out):
-    report = read_json(out / "bandit.json") or {}
+def bandit_lines(report, why):
+    head = f"bandit {version('bandit')} on {SOURCE} (all severities): "
+    if report is None:
+        return [head + why]
     hits = report.get("results") or []
-    lines = [f"bandit {version('bandit')} on {SOURCE} (all severities): {len(hits)} hits"]
+    lines = [head + f"{len(hits)} hits"]
     for h in hits:
         lines.append(f"- {h.get('test_id')} {h.get('test_name')} at {h.get('filename')}:{h.get('line_number')}, severity "
                      f"{h.get('issue_severity')}, confidence {h.get('issue_confidence')}: {h.get('issue_text')}")
@@ -105,14 +124,20 @@ def main():
     say(f"scan: pip-audit and bandit on {SOURCE} (governance/scan.py), output in {out}")
 
     say(f"scan: running pip-audit on {REQUIREMENTS}")
-    run([sys.executable, "-m", "pip_audit", "-r", REQUIREMENTS, "--progress-spinner", "off", "--format", "json",
-         "-o", str(out / "pip-audit.json")], out / "pip-audit.log")
+    audit = scan_with("pip-audit", ["-r", REQUIREMENTS, "--progress-spinner", "off", "--format", "json"], out)
     say(f"scan: running bandit on {SOURCE}")
-    run([sys.executable, "-m", "bandit", "-r", SOURCE, "-f", "json", "-o", str(out / "bandit.json")], out / "bandit.log")
+    bandit = scan_with("bandit", ["-r", SOURCE, "-f", "json"], out)
 
-    say("\n".join([START, f"commit: {commit()}", *pip_audit_lines(out), *bandit_lines(out),
-                   f"JSON: {out / 'pip-audit.json'}, {out / 'bandit.json'}", END]))
-    return 0
+    failed = [name for name, (report, _) in (("pip-audit", audit), ("bandit", bandit)) if report is None]
+    if not failed:
+        result = "result: both tools ran"
+    else:
+        result = (f"result: {' and '.join(failed)} could not run ({'its' if len(failed) == 1 else 'their'} messages: "
+                  + ", ".join(f"{name}.log" for name in failed) + ")")
+    reports = [str(out / f"{name}.json") for name in TOOLS if name not in failed]
+    say("\n".join([START, f"commit: {commit()}", *pip_audit_lines(*audit), *bandit_lines(*bandit),
+                   f"JSON: {', '.join(reports) or 'none'}", result, END]))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

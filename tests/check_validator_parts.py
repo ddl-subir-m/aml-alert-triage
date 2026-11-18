@@ -173,5 +173,22 @@ check("the summary names PYSEC-2021-142 for pyyaml 5.3.1 on one line, with its a
       len(vuln) == 1 and all(w in vuln[0] for w in ("pyyaml 5.3.1", "CVE-2020-14343", "GHSA-8q59-q68h-6hv4", "fixed in 5.4",
                                                       "full_load")), vuln or block)
 
+# ------------------------------------------------------------------------------------- the scan: pip-audit can't resolve the requirements
+code, out, err, calls, folder = scan("clean", fail="pip-audit")
+block = summary(out)
+check("when a tool can't run, the scan exits 1 and still writes nothing to stderr", code == 1 and err == "",
+      f"exit {code}; stderr: {err[-400:]}")
+check("the summary is still the end of the output", out.rstrip().endswith(END), out[-400:])
+line = next((ln for ln in block.splitlines() if ln.startswith("pip-audit")), "")
+check("the summary says that pip-audit could not run, with its exit code and its first error",
+      "could not run (exit 1)" in line and "Could not find a version that satisfies the requirement" in line
+      and "no known vulnerabilities" not in block, block)
+check("bandit's hits are still in the summary", "B104" in block and "B608" in block, block)
+check("the summary's last line before its end says which tool could not run",
+      block.rstrip().splitlines()[-2:-1] == ["result: pip-audit could not run (its messages: pip-audit.log)"], block)
+code, out, err, calls, folder = scan("clean")
+check("when both tools ran, the summary's last line before its end says so",
+      summary(out).rstrip().splitlines()[-2:-1] == ["result: both tools ran"], summary(out))
+
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if failed else 0)
