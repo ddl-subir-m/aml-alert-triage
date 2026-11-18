@@ -58,7 +58,9 @@ A validator files only the real findings. A false hit goes in the doc only, unde
 
 ## Critical vulns
 
-The doc's "Critical vulns" is `yes` when at least one real finding is S0, and `no` when none is.
+The doc's "Critical vulns" is `yes` when at least one real finding is S0, and `no` when none is. It is `not analyzed` when the
+analysis failed (the model refused the call, or gave no usable answer): nothing was checked, so it is neither. The evidence item's
+Critical vulns radio (`yes` or `no` only) then stays empty, and its Summary says why.
 
 ## A failed scan
 

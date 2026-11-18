@@ -65,6 +65,8 @@ SUMMARY = (SCANNER.START, SCANNER.END)   # its summary's markers: Domino adds li
 WAITS = 30   # wait_job calls before the graph stops waiting for the scan: each one waits up to 45 s, so about 20 minutes
 MAX_TOKENS = 16000   # the model's output limit (domino-agui#1: the ready-made model sets none, and an alias then gets 4,096)
 VERDICTS = ("approve", "approve after fixes", "do not approve")   # the policy's Verdict values, exactly
+NOT_ANALYZED = "not analyzed"   # critical vulns when the analysis failed: neither yes nor no (the evidence item's radio stays empty)
+REFUSED = "the model refused the call"   # the start of the reason for a refusal: such a request is not asked again
 SEVERITIES = ("S0", "S1", "S2", "S3")   # write_governance_finding's scale (governance/README.md)
 PREFIX = "[LangGraph]"   # each finding's name starts with the validator's short name
 RULES = ("## The severity scale", "## Finding names", "## Critical vulns", "## A failed scan")   # the shared rules: sections of
@@ -287,7 +289,8 @@ def validator_model():
 async def analyze(state):
     """One model call, which gives the analysis through the validation_analysis tool. Its stream stays out of the task's: the result is
     the last step's. The tool is offered, not forced: Claude's newest models refuse a forced tool choice, which langchain-anthropic's
-    with_structured_output sends. An answer that can't be used is asked again once; then the analysis says why it failed."""
+    with_structured_output sends. An answer that can't be used is asked again once; then the analysis says why it failed. A refusal
+    (the model's safeguards) is not asked again: the same request is refused again."""
     model = validator_model().bind_tools([ANALYSIS]).with_config(metadata={"emit-messages": False, "emit-tool-calls": False})
     system = "\n\n".join([m.content for m in system_prompt(state)] + [(HERE / "analyze.md").read_text()])
     asked, why = briefing(state), None
@@ -297,6 +300,8 @@ async def analyze(state):
         analysis, why = read_analysis(got)
         if analysis:
             return {"analysis": ruled(analysis, state.get("scan") or {})}
+        if why.startswith(REFUSED):
+            break
     return {"analysis": ruled(unanalyzed(state, why), state.get("scan") or {}), "problems": [f"analyze: {why}"]}
 
 
@@ -334,12 +339,21 @@ def section(text, heading):
 
 def read_analysis(message):
     """The model's answer -> (the analysis, None), or (None, why it can't be used). An answer cut at its output limit has stop_reason
-    max_tokens (the Anthropic format) or finish_reason length (the OpenAI format)."""
+    max_tokens (the Anthropic format) or finish_reason length (the OpenAI format). A refusal by Anthropic's safeguards is HTTP 200 with
+    no content, stop_reason refusal and stop_details (its category); the LLM Gateway's OpenAI route gives it as an empty answer with
+    finish_reason stop (domino-agent-service#270)."""
     meta = message.response_metadata or {}
+    if meta.get("stop_reason") == "refusal":
+        category = (meta.get("stop_details") or {}).get("category") or "none given"
+        return None, f"{REFUSED} (Anthropic safeguards, category {category})"
     if meta.get("stop_reason") == "max_tokens" or meta.get("finish_reason") == "length":
         return None, f"the model's answer stopped at its output limit ({MAX_TOKENS} tokens)"
     made = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)   # the model's tool call
     if not made:
+        content = message.content
+        said = "".join(b.get("text") or "" for b in content if isinstance(b, dict)) if isinstance(content, list) else str(content or "")
+        if not message.tool_calls and not said.strip():
+            return None, "the model gave an empty answer (a refusal through the LLM Gateway's OpenAI route looks like this)"
         return None, f"the model's answer has no {ANALYSIS['title']} call"
     a = made.get("args") or {}
     missing = [k for k in ANALYSIS["required"] if k not in a]
@@ -366,8 +380,8 @@ def read_analysis(message):
 
 
 def unanalyzed(state, why):
-    """The analysis when the model's answers couldn't be used: no hit sorted, and no finding filed."""
-    return {"app": (state.get("bundle") or {}).get("name") or "the App", "purpose": "Not analyzed.", "tech_stack": "Not analyzed.",
+    """The analysis when the model's answers couldn't be used: no hit sorted, no finding filed, and critical vulns not analyzed."""
+    return {"analyzed": False, "app": (state.get("bundle") or {}).get("name") or "the App", "purpose": "Not analyzed.", "tech_stack": "Not analyzed.",
             "architecture": "Not analyzed.", "dependencies": [], "real_findings": [], "false_hits": [],
             "critical_vulns_reason": "Not analyzed: no hit was sorted.", "verdict": "do not approve",
             "verdict_reason": f"The validator's analysis failed ({why}), so it sorted no hit: run the validation again.",
@@ -376,8 +390,9 @@ def unanalyzed(state, why):
 
 def ruled(analysis, scan):
     """The shared rules on the model's analysis (governance/README.md): each finding's name starts with the validator's short name, and
-    critical vulns is yes when a real finding is S0. A failed scan: no finding comes from it (one that says so is left out), the
-    verdict is do not approve, and critical vulns no says "No S0 finding; dependencies not scanned": nobody checked the dependencies."""
+    critical vulns is yes when a real finding is S0, and not analyzed when the analysis failed. A failed scan: no finding comes from it
+    (one that says so is left out), the verdict is do not approve, and critical vulns no says "No S0 finding; dependencies not
+    scanned": nobody checked the dependencies."""
     a, failed, why = dict(analysis), not scan.get("ok"), scan.get("why")
     if failed:
         a["real_findings"] = [f for f in a["real_findings"] if f["source"] != "scan"]
@@ -387,8 +402,8 @@ def ruled(analysis, scan):
         a["could_not_check"] = [f"The scan: {why}."] + a["could_not_check"]
         a["summary"] = f"The scan did not run to its end: {why}. {a['summary']}".strip()
     a["findings"] = [{**f, "name": PREFIX + " " + f["title"].removeprefix(PREFIX).strip()} for f in a["real_findings"]]
-    a["critical_vulns"] = "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
-    if failed:   # the model's reason may speak of a scan that nobody read
+    a["critical_vulns"] = NOT_ANALYZED if a.get("analyzed") is False else "yes" if any(f["severity"] == "S0" for f in a["findings"]) else "no"
+    if failed and a["critical_vulns"] != NOT_ANALYZED:   # the model's reason may speak of a scan that nobody read
         unscanned = f"The scan did not run to its end ({why}), so the dependencies' known vulnerabilities were not checked."
         a["critical_vulns_reason"] = (f"{a['critical_vulns_reason']} {unscanned}".strip() if a["critical_vulns"] == "yes" else
                                       f"No S0 finding; dependencies not scanned. {unscanned}")
@@ -521,8 +536,9 @@ async def findings(state, config):
     item, location = state.get("evidence") or {}, doc.get("location") or "not written"
     fields = item.get("fields") or {}
     if item.get("id") and all(fields.get(label) for label in FIELDS):
-        content = {fields["Verdict"]: a.get("verdict"), fields["Critical vulns"]: a.get("critical_vulns"), fields["Summary"]: summary,
-                   fields["Doc location"]: location}
+        content = {fields["Verdict"]: a.get("verdict"), fields["Summary"]: summary, fields["Doc location"]: location}
+        if a.get("critical_vulns") in ("yes", "no"):   # its radio takes these only: not analyzed leaves it empty
+            content[fields["Critical vulns"]] = a.get("critical_vulns")
         ok, text = await call("write_policy_result", bundleId=bundle_id, evidenceId=item["id"], content=content)
         filled = "filled" if ok else "not filled"
         if not ok:

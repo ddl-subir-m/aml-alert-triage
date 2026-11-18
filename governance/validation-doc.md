@@ -63,7 +63,7 @@ hit is real. -->
 ## Critical vulns
 
 <!-- critical_vulns is "yes" or "no": "yes" when at least one real finding is S0. The reason names those findings, or says why no
-finding is S0. -->
+finding is S0. It is "not analyzed" when the analysis failed (for example the model refused the call): then nothing was checked. -->
 Critical vulns: {{critical_vulns}}
 
 {{critical_vulns_reason}}

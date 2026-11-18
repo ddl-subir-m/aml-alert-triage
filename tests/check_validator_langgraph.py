@@ -840,6 +840,50 @@ check("NOANALYSIS the verdict is do not approve, and the result and the doc say 
       lines[0] == "Verdict: do not approve" and "analyze: the model's answer has no validation_analysis call" in ran["result"]
       and "The validator's analysis failed" in doc, ran["result"])
 check("NOANALYSIS the model's text stays out of the task's stream", "seems fine" not in json.dumps(ran["events"]), "")
+check("NOANALYSIS critical vulns is 'not analyzed' in the result and the doc, never no: nothing was analyzed",
+      lines[1:2] == ["Critical vulns: not analyzed"] and "\nCritical vulns: not analyzed\n" in doc and "\nCritical vulns: no\n" not in doc,
+      lines[:3])
+check("NOANALYSIS the evidence item leaves Critical vulns empty (its radio takes yes or no only)", "Critical vulns" not in filled
+      and filled.get("Verdict") == "do not approve", filled)
+
+# ------------------------------------------------------------------------------ the case: the model refuses (Anthropic's safeguards)
+# The live shape (domino-agent-service#270, 2026-11-18, sonnet on the LLM Gateway): HTTP 200, no content, stop_reason refusal, and
+# stop_details with the category. The service's fake model has no such answer, so this check wraps its Anthropic format for one.
+plain_anthropic = fake_model._anthropic
+
+
+def anthropic_or_refusal(ans, model_name, streamed):
+    if not ans.get("refusal"):
+        return plain_anthropic(ans, model_name, streamed)
+    details = {"type": "refusal", "category": ans["refusal"], "explanation": "This request triggered cyber-related safeguards."}
+    usage = {"input_tokens": 11, "output_tokens": 0}
+    if not streamed:
+        return "application/json", json.dumps({"id": "msg_refusal", "type": "message", "role": "assistant", "model": model_name,
+                                               "content": [], "stop_reason": "refusal", "stop_sequence": None, "stop_details": details,
+                                               "usage": usage}).encode()
+    events = [{"type": "message_start", "message": {"id": "msg_refusal", "type": "message", "role": "assistant", "model": model_name,
+                                                    "content": [], "stop_reason": None, "stop_sequence": None, "stop_details": None,
+                                                    "usage": usage}},
+              {"type": "message_delta", "delta": {"stop_reason": "refusal", "stop_sequence": None, "stop_details": details},
+               "usage": {"output_tokens": 0}},
+              {"type": "message_stop"}]
+    return "text/event-stream", b"".join(b"event: %s\ndata: %s\n\n" % (e["type"].encode(), json.dumps(e).encode()) for e in events)
+
+
+fake_model._anthropic = anthropic_or_refusal
+try:
+    ran, lines, doc, filed, filled = run_case("C268refusal", FakeDomino(snapshot_statuses=("active",)),
+                                              script=lambda conv: {**fake_model.answer(), "refusal": "cyber"})
+finally:
+    fake_model._anthropic = plain_anthropic
+check("REFUSAL a refused request is not asked again: one model call (the same request is refused again)", len(fake_model.seen) == 1,
+      len(fake_model.seen))
+check("REFUSAL the result names the refusal and its category", "analyze: the model refused the call (Anthropic safeguards, category cyber)"
+      in ran["result"], ran["result"][-500:])
+check("REFUSAL the verdict is do not approve, critical vulns is not analyzed, and no finding is filed",
+      lines[:2] == ["Verdict: do not approve", "Critical vulns: not analyzed"] and not filed, (lines[:2], filed))
+check("REFUSAL the doc and the evidence item's summary say that the model refused", "the model refused the call" in doc
+      and "the model refused the call" in (filled.get("Summary") or "") and "Critical vulns" not in filled, filled)
 
 # ----------------------------------------------------------------------------------- the case: the demo branch, with a planted CVE
 DEMO = {**MAIN, "real_findings": [
@@ -912,6 +956,15 @@ if OPENAI:
           len(fake_model.seen) == 2 and not filed and lines[:1] == ["Verdict: do not approve"]
           and "the model's answer stopped at its output limit (16000 tokens)" in ran["result"], (len(fake_model.seen), lines[:1],
                                                                                                     ran["result"][-400:]))
+
+    # An empty answer in the OpenAI format: no text and no tool call, finish_reason stop. The LLM Gateway's OpenAI route gives this for a
+    # refusal (domino-agent-service#270), with no stop_details: the result names it, and the request is asked again once.
+    ran, lines, doc, filed, filled = run_case("C268empty", FakeDomino(snapshot_statuses=("active",)),
+                                              script=lambda conv: fake_model.answer(""), sock=OPENAI)
+    check("EMPTY an empty OpenAI-format answer is named (a refusal through the Gateway's OpenAI route looks like this), asked again "
+          "once, then do not approve and critical vulns not analyzed",
+          len(fake_model.seen) == 2 and "the model gave an empty answer" in ran["result"]
+          and lines[:2] == ["Verdict: do not approve", "Critical vulns: not analyzed"], (len(fake_model.seen), lines[:2], ran["result"][-300:]))
 
 close()
 done()
