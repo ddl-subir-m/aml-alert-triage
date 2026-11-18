@@ -2,7 +2,22 @@
 spec #260, Implementation Decision 8, ticket #267. Seen from outside: its files as `domino-agent deploy` uploads them, its checklist
 skill as the agent reads it, the templates of its event subscription, and the agent that a local agent service registers from it.
 
-  python tests/check_validator_folder.py                                                    # the files only
+With no service, it checks the folder's files: the ones that deploy uploads, the checklist's rules and the order of its tools, the
+instructions' rules, the tool names (as a harness agent sees them: domino_<name>), the subscription's file (its filter and its two
+templates, which name the bundle ID), no Domino host or ID (the repo is public), and the READMEs.
+
+With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), it checks each tool name against the service's
+gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with
+a fake Domino (the service's seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
+  - `domino-agent deploy --dry-run` passes the service's folder rules; `deploy` registers the agent, which can't run yet.
+  - The owner makes the subscription from subscription.json. A stage move (the audit poller's payload) starts no task before the
+    service account's token, nor for an analyst who may not use the agent; then one task, as the service account, and its Job.
+  - The Job's spec (the skill, the access rows, the permissions, the limits) and the gateway's decisions for that task on the event's
+    bundle: the attachment, the findings and the evidence are allowed by the row "Other resources attached to the task".
+With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
+#270.
+
+  python tests/check_validator_folder.py                                                   # the files only
   AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_folder.py   # on Linux: everything (README)
 """
 import json
@@ -186,8 +201,39 @@ check("it pins no resource and writes nothing back: the event names the bundle a
 leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
                 for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}", body)})
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
-dashed = sorted(rel for rel, body in every.items() if "—" in body)
-check("no file of the folder has an em dash", not dashed, dashed)
+dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_validator_folder.py", text(Path(__file__)))] if chr(0x2014) in body)
+check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
+
+# ---------------------------------------------------------------------------------------------------------------- the READMEs
+# The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.
+rlines = [ln.lower() for ln in every.get("README.md", "").splitlines()]
+
+
+def rrule(name, *words):
+    """One line of the folder's README.md says it: it holds every one of `words` (case aside)."""
+    check(f"the folder's README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
+
+
+rrule("deploy it with a dry run first", "domino-agent deploy --dry-run governance/validator-folder")
+rrule("the owner adds the service account and its token, else it can't run yet", "service account", "token", "can't run yet")
+rrule("...and stores a new token before the old one expires", "token", "expires")
+rrule("the service account's rights: Contributor on the demo project, the model, the bundle", "service account", "contributor",
+      "llm gateway", "bundle")
+rrule("the service account's Git credential, with write access to the repo (the push)", "git credential", "write access", "push")
+rrule("the access rows, with attached Read & write for the event's bundle", "other resources attached to the task", "read & write",
+      "bundle")
+rrule("share it with the analyst who moves the stage", "share", "analyst", "moves the stage")
+rrule("...and with the approver as an owner or an editor", "approver", "owner or an editor")
+rrule("make the subscription from subscription.json, with the demo project's ID", "subscription.json", PROJECT_ID,
+      "post /api/agents/{id}/triggers")
+rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
+rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
+rrule("the demo project's default branch has the shared parts", "default branch", "governance/scan.py",
+      "governance/validation-doc.md")
+rrule("how to run this check", "python tests/check_validator_folder.py")
+readme = text(ROOT / "README.md")
+check("the repo's README has a section for this validator that links to the folder's README",
+      "\n## The agent folder validator\n" in readme and "governance/validator-folder/README.md" in readme)
 
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
