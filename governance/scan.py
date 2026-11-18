@@ -4,10 +4,12 @@ in a Domino Job, with the gateway tool run_job and the command `python governanc
   python governance/scan.py              # from the project's root, as a Job runs it
   python governance/scan.py --out DIR    # where the JSON goes (default: $DOMINO_ARTIFACTS_DIR/governance-scan, else a new temp folder)
 
-1. pip-audit on case_server/requirements.txt (it resolves the requirements from PyPI) and bandit on case_server/ (all severities).
+1. It installs pip-audit and bandit with pip when this Python lacks them (a Domino Environment may have neither).
+2. pip-audit on case_server/requirements.txt (it resolves the requirements from PyPI) and bandit on case_server/ (all severities).
    Each tool's JSON goes to the output folder (pip-audit.json, bandit.json), and its own messages to <tool>.log there.
-2. The last thing it prints is a short summary, between "== scan summary ==" and "== end of scan summary ==": each tool, its version
-   and its hits. The summary does not sort the hits: each validator decides which ones are real.
+3. The last thing it prints is a short summary, between "== scan summary ==" and "== end of scan summary ==": the commit, each tool,
+   its version and its hits. The summary does not sort the hits: each validator decides which ones are real.
+Exit 0 when both tools ran, with hits or not. Exit 1 when a tool could not run: the summary says which one and why.
 
 The end of the Job's log is what wait_job shows the agent (its last 8,000 characters), and a Job's stderr comes after its stdout there.
 So the script writes nothing to stderr: the tools' own output goes to their log files.
