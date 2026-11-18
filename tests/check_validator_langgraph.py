@@ -1,12 +1,33 @@
 """The LangGraph validator (governance/validator-langgraph/, domino-agent-service spec #260, Implementation Decision 9), seen from
-outside: its definition as the wizard makes it, and its event subscription's templates.
+outside: its definition as the wizard makes it, its event subscription's templates, and its graph as a framework-lane Job runs it.
+
+With no service, it checks the two files. With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), and a
+Python that has the agent-langgraph Environment's packages (langgraph, ag-ui-langgraph, langchain-anthropic, uvicorn), it runs the
+graph as the framework lane runs it, with the platform's own parts and no Domino host:
+  - the platform's serve module (agent_runtime/lanes/framework/serve.py) loads the entry point from this repo and serves it with the
+    LangGraph adapter, on a Unix socket, with domino-agui (tests/fetch_domino_agui.py gives the pinned version);
+  - the platform's AG-UI client, thread and stream rules play the driver, and its translator gives the task's result;
+  - the relay is the Job's own (agent_runtime/proxies.py relay, agent_runtime/run.py Gateway: each call decided by gateway.decide() on
+    the task's policy and made by gateway.execute()), with a fake Domino that answers in Domino's API shape;
+  - the model is the certification seam's fake LLM Gateway (tests/certify/fake_model.py), in the Anthropic Messages format.
+The task is the one the event subscription makes: the instruction is the subscription's template, filled from a stage-change event.
+Without the service or the packages, that part prints a SKIP line.
 
   python tests/check_validator_langgraph.py
+  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_langgraph.py   # the AML venv: README, the check
 """
 import json
+import os
 import re
 import runpy
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
+import time
+import types
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,4 +112,249 @@ check("it names no Domino resource: no 24-hex ID and no host", not re.search(r"\
       json.dumps(s)[:300])
 check("it has no default resource and no write-back", s.get("defaultResources") == [] and s.get("writeBack") == [], s)
 
+# --------------------------------------------------------------------------------------------- the graph, as the framework lane runs it
+service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+if not service:
+    done("AGENT_SERVICE_REPO is not set, so the graph wasn't run. Set it to a domino-agent-service checkout (README, \"The LangGraph "
+         "validator\")")
+service = Path(service).expanduser().resolve()
+SERVE = service / "agent_runtime" / "lanes" / "framework" / "serve.py"
+if not SERVE.is_file() or not (service / "tests" / "certify" / "fake_model.py").is_file():
+    check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout with the framework lane", False)
+    done()
+try:
+    import ag_ui_langgraph  # noqa: F401  (the agent-langgraph Environment's packages: the serve module's adapter needs them)
+    import langchain_anthropic  # noqa: F401
+    import langgraph.checkpoint.sqlite.aio  # noqa: F401
+    import uvicorn  # noqa: F401
+    import yaml
+except ImportError as e:
+    done(f"this Python has no {e.name}: run the check with a Python that has the agent-langgraph Environment's packages (the AML venv, "
+         "README, \"The LangGraph validator\")")
+sys.path[:0] = [str(service / "tests" / "certify"), str(service), str(service / "tests")]   # certify/ first: its fake_model.py
+if not sys.platform.startswith("linux"):   # agent_runtime/sandbox.py calls Linux's prctl when it is imported. The relay and the gateway
+    # never call it (it sandboxes the harness), so on another OS an empty module stands in for it. On Linux the real one loads.
+    sys.modules["agent_runtime.sandbox"] = types.ModuleType("agent_runtime.sandbox")
+import fake_model  # noqa: E402  (the certification seam's fake LLM Gateway, from AGENT_SERVICE_REPO)
+import fetch_domino_agui  # noqa: E402
+from agent_runtime import gateway, proxies, run as runtime  # noqa: E402
+from agent_runtime.lanes.framework import client, events, stream, thread  # noqa: E402
+
+gateway.LANE = "framework"   # as the framework lane's driver sets it: a denial names no harness tool
+gateway.WAIT_S, gateway.WAIT_EVERY = 0.3, 0.1   # wait_job waits up to 45 s for each call: here a fraction of a second
+AGUI = fetch_domino_agui.for_check()   # the folder with domino_agui/ in it: the pinned version from PyPI (cached)
+
+PROJECT = {"id": "p-demo", "name": "aml-app-validation", "gitBased": True}   # the demo project: Git-based, as spec #260 decision 5
+BUNDLE = {"id": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9", "name": "aml-case-management v3"}   # Domino gives a bundle a UUID
+DATASET = {"id": "ds-validation-docs", "name": "validation-docs"}
+RELAY_TOKEN = "relay-token-268"
+
+
+def render(template, payload):
+    """{{dotted.path}} -> its value in the event's payload; a path that isn't there stays as it is (agent_service/service.py
+    render_template, which the service part compares with)."""
+    def one(m):
+        v = payload
+        for k in m.group(1).split("."):
+            v = v.get(k) if isinstance(v, dict) else None
+        return str(v) if v is not None else m.group(0)
+    return re.sub(r"{{\s*([\w.]+)\s*}}", one, template)
+
+
+def stage_change(bundle_name):
+    """The payload of governance.bundle.stage_changed as the audit poller builds it (agent_service/audit_source.py to_payload)."""
+    return {"source": "domino-audit-trail", "triggeredBy": "analyst", "occurredAt": 1763380000000, "auditTraceId": "trace-268",
+            "bundle": {"id": BUNDLE["id"], "name": bundle_name}, "fromStage": "Intake", "toStage": "Validation",
+            "policy": {"id": "pol-app", "name": "App deployment policy"}, "project": {"id": PROJECT["id"], "name": PROJECT["name"]}}
+
+
+def instruction_for(bundle_name, dataset_path):
+    """The task's instruction: the subscription's template, filled from the event, with the live script's placeholders replaced."""
+    filled = render(s.get("instructionTemplate") or "", stage_change(bundle_name))
+    return filled.replace("__DOC_DATASET_ID__", DATASET["id"]).replace("__DOC_DATASET_PATH__", str(dataset_path))
+
+
+def gateway_policy(task_key):
+    """The task's gateway policy, as harness.gateway_policy() builds it for this agent and an event task: the event names the bundle
+    and the project, so both are task resources (service.resources_from_context), the bundle with the row "Other resources attached
+    to the task" and the project with Project files (service.assign_access). The service part compares it with the real one."""
+    a = {**g["access"], "inputs": {}}
+    return {"project": dict(PROJECT), "taskKey": task_key, "access": a,
+            "resources": [{"type": "project", "id": PROJECT["id"], "name": PROJECT["name"], "access": a["project"], "input": None},
+                          {"type": "bundle", "id": BUNDLE["id"], "name": BUNDLE["name"], "access": a["named"], "input": None}],
+            "tools": {"jobs": True, "push": False, "files": False}, "branchPushed": False, "planLock": False}
+
+
+# ------------------------------------------------------------------------------------------------- the fake Domino, in Domino's shape
+POLICY_YAML = yaml.safe_load((ROOT / "governance" / "app-deployment-policy.yaml").read_text())
+
+
+def published_policy():
+    """GET /api/governance/v1/policies/{id}: a guardrails.Policy (api-governance.swagger.json), as Domino makes it from the AML policy
+    file: each evidence item and each artifact gets its own UUID, and an item's externalId is its YAML id after "Local."."""
+    stages = []
+    for st in POLICY_YAML["stages"]:
+        items = [{"id": str(uuid.uuid4()), "name": e["name"], "description": e.get("description"), "externalId": e["id"].split(".", 1)[-1],
+                  "policyId": "pol-app", "policyVersionId": "pv-1", "visible": True,
+                  "artifacts": [{"id": str(uuid.uuid4()), "artifactType": a["artifactType"], "details": a["details"],
+                                 "policyEntityId": f"pe-{n}", "visible": True} for n, a in enumerate(e.get("definition") or [])]}
+                 for e in st.get("evidenceSet") or []]
+        stages.append({"id": str(uuid.uuid4()), "name": st["name"], "policyVersionId": "pv-1", "evidenceSet": items,
+                       "approvals": st.get("approvals") or []})
+    return {"id": "pol-app", "name": "App deployment policy", "status": "Published", "description": "", "archived": False,
+            "createdAt": "2026-11-17T09:00:00Z", "createdBy": {"id": "u-gov", "userName": "gov_admin"}, "stages": stages,
+            "gates": [], "taxonomyTags": [], "taxonomyProperties": []}
+
+
+class FakeDomino:
+    """The Job's sidecar for one case: Domino's APIs as the specs have them (reference_materials/domino-api-specs in the service repo).
+    Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, POST /findings (guardrails.Finding), POST
+    /rpc/submit-result-to-policy (guardrails.ComputedPolicy), POST /bundles/{id}/attachments (guardrails.Attachment), errors as
+    {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
+    holds each request: (method, path, query, body)."""
+
+    def __init__(self, job_statuses=("Running", "Succeeded"), log="", snapshot_statuses=("pending", "active")):
+        self.policy = published_policy()
+        self.bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": PROJECT["id"], "projectName": PROJECT["name"],
+                       "projectOwner": "analyst", "policyId": "pol-app", "policyName": "App deployment policy", "policyVersionId": "pv-1",
+                       "policyVersion": "1", "stage": "Validation", "state": "Active", "createdAt": "2026-11-17T10:00:00Z",
+                       "createdBy": {"id": "u-analyst", "userName": "analyst"}, "attachments": [], "stages": [], "policies": []}
+        self.job_statuses, self.log, self.snapshot_statuses = list(job_statuses), log, list(snapshot_statuses)
+        self.calls, self.snapshots = [], {}
+
+    def http(self, method, path, query=None, body=None, raw=False, ctype=None, headers=None):
+        self.calls.append((method, path, query, body))
+        parts = path.strip("/").split("/")
+        if method == "GET" and path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
+            return 200, self.bundle
+        if method == "GET" and path == "/api/governance/v1/policies/pol-app":
+            return 200, self.policy
+        return 404, {"message": f"{path} not found"}
+
+
+# ------------------------------------------------------------------------------------------------------ the relay, as a Job sets it up
+class Relay:
+    """The Job's relay (proxies.relay) with the Job's Gateway (run.Gateway): as the framework lane starts it, with no relay tool of its
+    own (run.py). Each case gets a new Gateway on its own fake Domino; `calls` holds the graph's tool calls, (name, arguments)."""
+
+    def __init__(self):
+        self.gw, self.calls, self.events = None, [], []
+        self.server, _ = proxies.relay(0, RELAY_TOKEN, [], self.events.append, None, gateway=self, inbox=None, on_error="fail", hide=())
+        proxies.serve(self.server)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def start(self, domino, task_key):
+        self.gw = runtime.Gateway(gateway_policy(task_key), self.events.append, http=domino.http)
+        self.calls.clear()
+        self.events.clear()
+
+    def names(self):
+        return list(gateway.TOOLS)
+
+    def defs(self):
+        return self.gw.defs()
+
+    def call(self, name, args):
+        self.calls.append((name, args))
+        return self.gw.call(name, args)
+
+    @property
+    def held(self):
+        return self.gw.held if self.gw else None
+
+
+relay = Relay()
+model = fake_model.start()
+TMP = Path(tempfile.mkdtemp(prefix="v268-", dir="/tmp" if os.path.isdir("/tmp") else None))   # a short path: a Unix socket's limit
+SOCKET = str(TMP / "agui.sock")
+server_log = open(TMP / "serve.log", "w")
+(TMP / "state").mkdir()   # the state folder: the bootstrapper makes it, and the adapter keeps the checkpoint there
+env = {"PATH": os.environ.get("PATH", ""), "HOME": str(TMP), "PYTHONPATH": str(AGUI), "PYTHONDONTWRITEBYTECODE": "1",
+       "AGENT_SERVICE_URL": relay.url, "SESSION_TOKEN": RELAY_TOKEN, "AGENT_MODEL": "sonnet", "AGENT_MODEL_FORMAT": "anthropic",
+       "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{model.server_address[1]}/anthropic", "NO_PROXY": "127.0.0.1,localhost",
+       "TASK_KEY": "AGT-268"}
+agent_server = subprocess.Popen([sys.executable, str(SERVE), "--framework", "langgraph", "--entrypoint", ENTRYPOINT, "--socket", SOCKET,
+                                 "--code", str(ROOT), "--state", str(TMP / "state")], env=env, cwd=str(ROOT), stdout=server_log,
+                                stderr=subprocess.STDOUT)
+
+
+def healthy():
+    """The agent server's /health answer, or None while nothing listens on the socket (client.health raises OSError then)."""
+    try:
+        return client.health(SOCKET)
+    except (OSError, client.ClientError):
+        return None
+
+
+for _ in range(300):
+    if agent_server.poll() is not None or healthy():
+        break
+    time.sleep(0.1)
+up = agent_server.poll() is None and (healthy() or {}).get("framework") == "langgraph"
+check("the platform's serve module loads the entry point from this repo and serves it with the LangGraph adapter", up,
+      (TMP / "serve.log").read_text()[-1500:])
+
+
+def close():
+    agent_server.terminate()
+    try:
+        agent_server.wait(10)
+    except subprocess.TimeoutExpired:
+        agent_server.kill()
+    relay.server.shutdown()
+    model.shutdown()
+    shutil.rmtree(TMP, ignore_errors=True)
+
+
+if not up:
+    close()
+    done()
+
+
+def run_task(case, domino, thread_id=None, task_key="AGT-268", messages=None):
+    """One AG-UI run of the task, as the framework lane's driver makes it: the instruction as the user message, the operating rules and
+    the task brief as the context. -> {"result", "error", "events", "thread"}. `case` names the fake model's script ([certify <case>] in
+    the bundle's name, so in the instruction)."""
+    relay.start(domino, task_key)
+    fake_model.seen.clear()
+    folder = TMP / f"data-{case}"
+    folder.mkdir(exist_ok=True)
+    th = messages or thread.Thread(thread_id or f"t-{case}")
+    if not messages:
+        th.add_user(instruction_for(f"{BUNDLE['name']} [certify {case}]", folder))
+    context = [{"description": "Domino Agents: the operating rules and the task brief",
+                "value": (d.get("systemPrompt") or "") + "\n\n## Operating rules\n\n(the platform's rules)\n\n## Task brief\n\n(the brief)"}]
+    body = th.run_input(f"run-{case}-{uuid.uuid4().hex[:6]}", tools=[], context=context)
+    rules, tr, got, error = stream.Rules(), events.Translator(), [], None
+    try:
+        for ev in client.run(SOCKET, body, deadline=time.time() + 120):
+            got.append(ev)
+            rules.see(ev)
+            tr.feed(ev)
+            if rules.final:
+                break
+        rules.end(tr.open_calls(set()))
+    except (stream.StreamError, client.ClientError, OSError) as e:
+        error = str(e)
+    if (rules.final or {}).get("type") == "RUN_ERROR":
+        error = rules.final.get("message") or "RUN_ERROR"
+    th.absorb(tr.messages, tr.state)
+    final = (rules.final or {}).get("result")
+    return {"result": final if final is not None else tr.last_text, "error": error, "events": got, "thread": th, "folder": folder}
+
+
+def tools(calls):
+    return [n for n, _ in calls]
+
+
+# ------------------------------------------------------------------------------------------------------------ the case: a clean App
+fake_model.SCRIPTS["C268main"] = lambda conv: fake_model.answer("done")
+dom = FakeDomino()
+ran = run_task("C268main", dom)
+check("MAIN the run ends with no error", ran["error"] is None, ran["error"])
+check("MAIN collect: the graph first reads the bundle and its policy (get_bundle, then get_policy), with the event's bundle ID",
+      relay.calls[:2] == [("get_bundle", {"bundleId": BUNDLE["id"]}), ("get_policy", {"bundleId": BUNDLE["id"]})], relay.calls[:3])
+check("MAIN the task has a result, which names the bundle", BUNDLE["id"] in (ran["result"] or ""), ran["result"])
+
+close()
 done()
