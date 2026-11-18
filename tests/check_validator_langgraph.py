@@ -14,7 +14,10 @@ The task is the one the event subscription makes: the instruction is the subscri
 Without the service or the packages, that part prints a SKIP line.
 
   python tests/check_validator_langgraph.py
-  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_langgraph.py   # the AML venv: README, the check
+  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_langgraph.py   # the AML venv: the graph part
+  docker run ... python tests/check_validator_langgraph.py                                     # the service part (Linux)
+
+The commands are in governance/validator-langgraph/README.md, "The check".
 """
 import json
 import os
@@ -112,6 +115,21 @@ check("it names no Domino resource: no 24-hex ID and no host", not re.search(r"\
       json.dumps(s)[:300])
 check("it has no default resource and no write-back", s.get("defaultResources") == [] and s.get("writeBack") == [], s)
 
+# ------------------------------------------------------------------------------------------------------------- the README pages
+page = (FOLDER / "README.md").read_text() if (FOLDER / "README.md").is_file() else ""
+check("the folder's README says what the live script fills: the three placeholders of the subscription",
+      all(x in page for x in ("__DEMO_PROJECT_ID__", "__DOC_DATASET_ID__", "__DOC_DATASET_PATH__", "/mnt/data/")), page[:200])
+check("the folder's README gives the wizard's settings: the exact name, the entry point, Start Domino jobs, and each access row",
+      all(x in page for x in (f"`{NAME}`", f"`{ENTRYPOINT}`", "Start Domino jobs", "Project files: Read & write",
+                              "Project datasets: Read & write", "Other resources attached to the task: Read & write",
+                              "Resources not attached to the task: No access", "Fail and report")), page[:200])
+check("the folder's README gives both ways to run the check: the AML venv, and Docker with the service's checks image",
+      "tests/check_validator_langgraph.py" in page and "domino-agent-service-checks:<tag>" in page, page[-300:])
+check("the repo's README has a section for the LangGraph validator, which links the folder's README",
+      "## The LangGraph validator" in (ROOT / "README.md").read_text()
+      and "governance/validator-langgraph/README.md" in (ROOT / "README.md").read_text())
+check("no em dash in the validator's files", not [f.name for f in FOLDER.iterdir() if f.is_file() and "\u2014" in f.read_text()])
+
 # ----------------------------------------------------------------------------------- the shared parts of the service and graph checks
 PROJECT = {"id": "p-demo", "name": "aml-app-validation", "gitBased": True}   # the demo project: Git-based, as spec #260 decision 5
 BUNDLE = {"id": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9", "name": "aml-case-management v3"}   # Domino gives a bundle a UUID
@@ -176,14 +194,14 @@ def service_part(service):
         return
     if not sys.platform.startswith("linux"):
         print("SKIP: the service part needs Linux (the service's app imports its sandbox). On a Mac, run the check with Docker, in the "
-              "image of the service's checks (README, \"The LangGraph validator\")", flush=True)
+              "image of the service's checks (governance/validator-langgraph/README.md, \"The check\")", flush=True)
         return
     try:
         import requests  # noqa: F401  (the service's own packages: the image of its checks has them)
         import fastapi  # noqa: F401
     except ImportError as e:
-        print(f"SKIP: the service part needs the service's packages, and this Python has no {e.name} (README, \"The LangGraph "
-              "validator\")", flush=True)
+        print(f"SKIP: the service part needs the service's packages, and this Python has no {e.name} "
+              "(governance/validator-langgraph/README.md, \"The check\")", flush=True)
         return
     sys.path.insert(0, str(service / "tests"))
     import agent_folder_seam as seam
@@ -264,7 +282,7 @@ if service:
 # --------------------------------------------------------------------------------------------- the graph, as the framework lane runs it
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the service and the graph weren't checked. Set it to a domino-agent-service checkout "
-         "(README, \"The LangGraph validator\")")
+         "(governance/validator-langgraph/README.md, \"The check\")")
 SERVE = service / "agent_runtime" / "lanes" / "framework" / "serve.py"
 if not SERVE.is_file() or not (service / "tests" / "certify" / "fake_model.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout with the framework lane", False)
@@ -277,7 +295,7 @@ try:
     import yaml
 except ImportError as e:
     done(f"this Python has no {e.name}: run the check with a Python that has the agent-langgraph Environment's packages (the AML venv, "
-         "README, \"The LangGraph validator\")")
+         "governance/validator-langgraph/README.md, \"The check\")")
 sys.path[:0] = [str(service / "tests" / "certify"), str(service), str(service / "tests")]   # certify/ first: its fake_model.py
 if not sys.platform.startswith("linux"):   # agent_runtime/sandbox.py calls Linux's prctl when it is imported. The relay and the gateway
     # never call it (it sandboxes the harness), so on another OS an empty module stands in for it. On Linux the real one loads.
