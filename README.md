@@ -712,6 +712,15 @@ queued or failed task, earlier tasks, another agent's task, `newest`, the token 
 requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App URL that isn't
 https. Nothing calls a Domino host. The live run is domino-agent-service #270.
 
+## The agent folder validator
+
+One of the two App validators of the App deployment policy (domino-agent-service spec #260): a harness agent (opencode),
+`App validator (agent folder)`, whose definition is the agent folder `governance/validator-folder/`. When a bundle moves to the
+Validation stage, it reads the App's code, scans it in a Domino Job, commits a validation doc to its task branch, attaches the doc to
+the bundle, files the real findings and fills the evidence item "Validation (agent folder)". It follows the checklist of its own skill,
+`skills/app-validation`. What it does, what the owner adds before it can run (the service account and its token, the sharing, the
+event subscription), and its check (`tests/check_validator_folder.py`): [governance/validator-folder/README.md](governance/validator-folder/README.md).
+
 ## Live check
 
 To run it again, follow the runbook in domino-agent-service, `tests/live_framework/README.md`
