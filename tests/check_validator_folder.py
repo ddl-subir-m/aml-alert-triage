@@ -18,12 +18,13 @@ With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. N
 #270.
 
   python tests/check_validator_folder.py                                                   # the files only
-  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_folder.py   # on Linux: everything (README)
+  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_folder.py   # on Linux: everything (its README)
 """
 import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -238,7 +239,7 @@ check("the repo's README has a section for this validator that links to the fold
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
-         "it to a domino-agent-service checkout (README, \"The agent folder validator\")")
+         "it to a domino-agent-service checkout (governance/validator-folder/README.md, \"The check\")")
 service = Path(service).expanduser().resolve()
 if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "agent_runtime" / "proxies.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and proxies.py)", False)
@@ -258,7 +259,7 @@ if not (service / "tests" / "agent_folder_seam.py").is_file() or not (service / 
     done()
 if not sys.platform.startswith("linux"):
     done("needs Linux for the deploy and the event's task: the service's app imports agent_runtime/sandbox.py. On a Mac, run it "
-         "with Docker, in the image of the service's checks (README, \"The agent folder validator\")")
+         "with Docker, in the image of the service's checks (governance/validator-folder/README.md, \"The check\")")
 sys.path.insert(0, str(service / "tests"))
 import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
 
@@ -388,7 +389,7 @@ check("the approver (an editor) can read the task, as the scripted check does", 
 for _ in range(100):   # the Job starts in the background
     if len(seam.JOBS) > n:
         break
-    seam.time.sleep(0.1)
+    time.sleep(0.1)
 job = seam.JOBS[-1] if len(seam.JOBS) == n + 1 else {}
 check("its Domino Job starts at once, in the bundle's project, as the service account (its stored token)",
       job.get("credential") == ("bearer", token) and (job.get("body") or {}).get("projectId") == seam.PROJECT["id"],

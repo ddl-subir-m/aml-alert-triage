@@ -93,9 +93,8 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_fo
 One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only: the files that deploy uploads, the
 checklist's rules and the order of its tools, the instructions' rules, the subscription's file, no Domino host or ID in the folder,
 and this page. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name against the service's
-gateway and relay. The rest needs Linux (on a Mac, Docker, as for `tests/check_harness_agent.py` in the repo's README): it starts the
-agent service with a fake Domino (the service's seam helper, `tests/agent_folder_seam.py`), commits the folder in a temporary clone,
-and then:
+gateway and relay. The rest needs Linux: it starts the agent service with a fake Domino (the service's seam helper,
+`tests/agent_folder_seam.py`), commits the folder in a temporary clone, and then:
 
 - `domino-agent deploy --dry-run` passes the service's folder rules, and `deploy` registers the agent: its settings, its skill and
   "can't run yet".
@@ -104,5 +103,13 @@ and then:
 - The Job's spec has the skill, the access rows, the permissions and the limits. The gateway's decisions for this task allow the
   attachment, the findings and the evidence on the event's bundle, `run_job` and `git_push`, and no project dataset.
 - A stage move to another stage, or in another project, starts nothing.
+
+On a Mac, run it with Docker, in the image of the service's checks (in domino-agent-service, `./tests/linux_checks.sh` builds it
+once; `docker images domino-agent-service-checks` lists it), from the root of this repo:
+
+```
+docker run --rm -v /path/to/domino-agent-service:/service:ro -v "$PWD:/aml:ro" -w /aml -e AGENT_SERVICE_REPO=/service \
+  -e PYTHONDONTWRITEBYTECODE=1 domino-agent-service-checks:<tag> python tests/check_validator_folder.py
+```
 
 Nothing calls a Domino host. The live run is domino-agent-service #270.
