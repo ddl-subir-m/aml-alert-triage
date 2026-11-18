@@ -163,6 +163,14 @@ def answer(text):
     return got if isinstance(got, dict) else None
 
 
+def answered(text, *keys):
+    """One value of a gateway tool's JSON answer, by its keys ("job", "id": the answer's job.id), or None."""
+    value = answer(text)
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
 async def call(tool, /, **args):
     """One gateway tool call through the relay. -> (ok, the answer's text). A denial or Domino's error is not ok. (`tool` is positional
     only: write_governance_finding has an argument `name`.)"""
@@ -235,7 +243,7 @@ async def scan(state):
     """The shared scan in a Domino Job: run_job, then wait_job until the Job is done, then get_job_logs for its summary. The scan ran
     only when the Job succeeded and its summary says that both tools ran."""
     ok, text = await call("run_job", command=SCAN, title="App validation scan (LangGraph)")
-    job_id = ((answer(text) or {}).get("job") or {}).get("id") if ok else None
+    job_id = answered(text, "job", "id") if ok else None
     if not job_id:
         return {"scan": {"ok": False, "why": f"the scan Job didn't start: {text[:300]}"}}
     done, waiting = None, False
@@ -281,7 +289,7 @@ async def analyze(state):
     with_structured_output sends. An answer that can't be used is asked again once; then the analysis says why it failed."""
     model = validator_model().bind_tools([ANALYSIS]).with_config(metadata={"emit-messages": False, "emit-tool-calls": False})
     system = "\n\n".join([m.content for m in system_prompt(state)] + [(HERE / "analyze.md").read_text()])
-    asked, why = facts(state), None
+    asked, why = briefing(state), None
     for _ in range(2):
         got = await model.ainvoke([SystemMessage(system), HumanMessage(asked + (f"\n\nYour last answer could not be used: {why}. Call "
                                                                                  f"{ANALYSIS['title']} once, with every field." if why else ""))])
@@ -291,7 +299,7 @@ async def analyze(state):
     return {"analysis": ruled(unanalyzed(state, why), state.get("scan") or {}), "problems": [f"analyze: {why}"]}
 
 
-def facts(state):
+def briefing(state):
     """What the model reads: the task, the bundle, the scan, the App's code, the start of the README, the shared rules and the doc's
     template."""
     scan, bundle = state.get("scan") or {}, state.get("bundle") or {}
@@ -328,10 +336,10 @@ def read_analysis(message):
     meta = message.response_metadata or {}
     if meta.get("stop_reason") == "max_tokens" or meta.get("finish_reason") == "length":
         return None, f"the model's answer stopped at its output limit ({MAX_TOKENS} tokens)"
-    call = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)
-    if not call:
+    made = next((c for c in message.tool_calls or [] if c.get("name") == ANALYSIS["title"]), None)   # the model's tool call
+    if not made:
         return None, f"the model's answer has no {ANALYSIS['title']} call"
-    a = call.get("args") or {}
+    a = made.get("args") or {}
     missing = [k for k in ANALYSIS["required"] if k not in a]
     verdict = str(a.get("verdict") or "").strip().lower()
     if missing or verdict not in VERDICTS:
@@ -400,7 +408,7 @@ async def write(state):
     except OSError as e:
         return {"doc": {"location": f"not written: {e}"}, "problems": [f"write: the doc could not be written to {mount}: {e}"]}
     ok, text = await call("write_dataset_snapshot", datasetId=dataset_id)
-    snapshot_id = ((answer(text) or {}).get("snapshot") or {}).get("id") if ok else None
+    snapshot_id = answered(text, "snapshot", "id") if ok else None
     if not snapshot_id:
         return {"doc": {"location": f"written to {mount}/{filename}, with no snapshot"}, "problems": [f"write_dataset_snapshot: {text[:300]}"]}
     doc = {"location": f"dataset {dataset_id}, snapshot {snapshot_id}, file {filename}", "filename": filename, "datasetId": dataset_id,
@@ -422,7 +430,7 @@ async def snapshot_ready(dataset_id, snapshot_id):
         if n:
             await asyncio.sleep(SNAPSHOT_EVERY)
         ok, text = await call("get_dataset_snapshot", datasetId=dataset_id, snapshotId=snapshot_id)
-        status = ((answer(text) or {}).get("snapshot") or {}).get("status") if ok else None
+        status = answered(text, "snapshot", "status") if ok else None
         if not ok or status in SNAPSHOT_ENDED:
             break
     return status, text
@@ -494,8 +502,7 @@ def scan_results(scan):
 
 
 async def findings(state, config):
-    """Each real finding on the bundle, then this validator's evidence item, then the task's result. The result is streamed as the
-    run's last text: the task's result is the run's last text, and a message that a node only puts in the state is not sent."""
+    """Each real finding on the bundle, then this validator's evidence item, then the task's result (streamed: emit)."""
     a, doc, bundle_id = state.get("analysis") or {}, state.get("doc") or {}, state["bundle_id"]
     filed, problems = [], []
     for f in a.get("findings") or []:
@@ -528,18 +535,23 @@ async def findings(state, config):
                         f"Evidence item {EVIDENCE}: {filled}."]
                        + ([("Not done:"), *(f"- {x}" for x in (state.get("problems") or []) + problems)]
                           if state.get("problems") or problems else []))
-    message_id = f"msg-{uuid.uuid4().hex[:16]}"
-    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
-    return {"result": result, "messages": [AIMessage(result, id=message_id)], "problems": problems}
+    return {"result": result, "messages": [await emit(result, config)], "problems": problems}
 
 
 async def repeat(state, config):
     """A later run of a task that has validated: no step again (each one would file the findings again), only its result."""
     result = (f"{state['result']}\n\nThis task validated bundle {state.get('bundle_id')} already, so it did nothing again. A new move "
               "of the bundle to the Validation stage starts a new validation.")
+    return {"messages": [await emit(result, config)]}
+
+
+async def emit(text, config):
+    """The run's last text, streamed: a task's result is the run's last text, and a message that a node only puts in the state is not
+    sent. The bridge (ag-ui-langgraph) streams the custom event manually_emit_message as a text message. -> the same message, for the
+    state."""
     message_id = f"msg-{uuid.uuid4().hex[:16]}"
-    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
-    return {"messages": [AIMessage(result, id=message_id)]}
+    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": text}, config=config)
+    return AIMessage(text, id=message_id)
 
 
 def first(state):

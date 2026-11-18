@@ -93,7 +93,7 @@ def get_tasks(app, query, tok):
     return tasks
 
 
-def facts(summary):
+def result_lines(summary):
     """The verdict, critical vulns and doc location lines of a validator's result (its task's summary), Markdown aside."""
     found = {}
     for line in (summary or "").splitlines():   # "- **Verdict:** approve", "_Doc location_: `a_b`": marks around, never inside
@@ -119,7 +119,7 @@ def show(app, title, agent, tasks, where):
     t, status = tasks[0], tasks[0].get("status") or "unknown"
     field("task", f"{t.get('key')}  {t.get('title')}")
     field("status", f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status)
-    got = facts(t.get("summary"))
+    got = result_lines(t.get("summary"))
     if status in ENDED:
         field("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none")
     for label in (x.lower() for x in LABELS):
