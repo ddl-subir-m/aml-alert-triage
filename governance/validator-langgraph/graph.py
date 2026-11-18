@@ -45,6 +45,7 @@ SKIP = {".git", "__pycache__", ".venv", "node_modules"}
 LIMIT = 200
 APP = ("app.sh", "case_server")   # the App under validation: its start script and its server
 EVIDENCE = "Validation (LangGraph)"   # the evidence item this validator fills, and no other
+INTAKE = ("Purpose", "Users", "Data class")   # the fields of the Intake evidence (its stage and its item are both "Intake")
 FIELDS = ("Verdict", "Critical vulns", "Summary", "Doc location")   # its fields' labels (governance/app-deployment-policy.yaml)
 SCAN = "python governance/scan.py"   # the shared scan, as both validators run it (governance/README.md)
 SUMMARY = ("== scan summary ==", "== end of scan summary ==")   # its summary's markers: Domino adds lines after it, so not the last line
@@ -67,7 +68,7 @@ ANALYSIS = {   # the model's structured output: the one tool it calls
     "type": "object",
     "properties": {
         "app": {**TEXT, "description": "The App's name, as its code and README name it"},
-        "purpose": {**TEXT, "description": "What the App does, in two or three sentences"},
+        "purpose": {**TEXT, "description": "What the App does, in two or three sentences, and where it differs from the Intake purpose"},
         "tech_stack": {**TEXT, "description": "The language, the frameworks, the server and the storage"},
         "architecture": {**TEXT, "description": "The parts and how they connect: the entry point, the routes or tools, the state, who can "
                                                 "call what"},
@@ -124,6 +125,7 @@ class Validation(State, total=False):
     bundle_id: str
     bundle: dict      # get_bundle's answer
     evidence: dict    # this validator's evidence item: {"id", "fields": {label: artifact ID}}
+    intake: dict      # the Intake values that the analyst filled: {label: value, or None when not filled}; None: not read
     code: dict        # {path: text}: the App's files
     scan: dict        # {"ok", "jobId", "number", "status", "summary", "why"}: the scan Job and its summary
     analysis: dict    # the model's analysis, after the shared rules: with "findings" (named) and "critical_vulns"
@@ -176,18 +178,44 @@ async def collect(state):
     policy = answer(text) if ok else None
     if not policy:
         problems.append(f"get_policy: {text[:300]}")
-    return {"bundle_id": bundle_id, "bundle": bundle or {}, "code": code, "problems": problems, "evidence": evidence_item(policy)}
+    return {"bundle_id": bundle_id, "bundle": bundle or {}, "code": code, "problems": problems, "evidence": evidence_item(policy),
+            "intake": intake_values(policy)}
+
+
+def item_of(policy, stage, name):
+    """An evidence item of the policy (get_policy's answer), by its stage's name and its own name: the policy file sets no IDs, Domino
+    gives them. None when the policy has no such item."""
+    for st in (policy or {}).get("stages") or []:
+        for item in st.get("evidenceSet") or [] if st.get("name") == stage else []:
+            if item.get("name") == name:
+                return item
+    return None
+
+
+def label(artifact):
+    return (artifact.get("details") or {}).get("label")
 
 
 def evidence_item(policy):
-    """This validator's evidence item in the policy (get_policy's answer), found by its name, with each field's artifact ID by its label
-    (the policy file sets no IDs: Domino gives them). {} when the policy has none."""
-    for stage in (policy or {}).get("stages") or []:
-        for item in stage.get("evidenceSet") or []:
-            if item.get("name") == EVIDENCE:
-                return {"id": item.get("id"), "fields": {(a.get("details") or {}).get("label"): a.get("id")
-                                                         for a in item.get("artifacts") or [] if a.get("id")}}
-    return {}
+    """This validator's evidence item, with each field's artifact ID by its label. {} when the policy has none."""
+    item = item_of(policy, "Validation", EVIDENCE)
+    return {"id": item.get("id"), "fields": {label(a): a.get("id") for a in item.get("artifacts") or [] if a.get("id")}} if item else {}
+
+
+def intake_values(policy):
+    """The Intake values that the analyst filled: {label: value}, with None for a field that nobody filled. get_policy gives a filled
+    field its latest value in result.artifactContent, and a field with no `result` is not filled. None when the policy has no Intake."""
+    item = item_of(policy, "Intake", "Intake")
+    if not item:
+        return None
+    got = {label(a): (a.get("result") or {}).get("artifactContent") for a in item.get("artifacts") or []}
+    return {k: shown(got.get(k)) for k in INTAKE}
+
+
+def shown(value):
+    """An artifact's value as text (a radio's value is its option's value), or None when it is empty."""
+    text = value if isinstance(value, str) else json.dumps(value) if value is not None else ""
+    return text.strip() or None
 
 
 async def scan(state):
@@ -265,8 +293,10 @@ def facts(state):
     rules = "\n\n".join(section(shared, heading) for heading in RULES)
     template = (ROOT / "governance" / "validation-doc.md").read_text()
     about = {k: bundle.get(k) for k in ("id", "name", "projectName", "stage", "policyName") if bundle.get(k)}
+    values = state.get("intake")
+    told = "\n".join(f"{k}: {v or 'not filled'}" for k, v in values.items()) if values is not None else "(not read)"
     return "\n\n".join([f"## The task\n\n{instruction_of(state)}", f"## The bundle\n\n{json.dumps(about) if about else '(not read)'}",
-                         f"## The scan\n\n{scanned}", f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
+                         f"## The Intake evidence (what the analyst filled)\n\n{told}", f"## The scan\n\n{scanned}", f"## The App's code\n\n{code}", f"## The project's README (its start)\n\n{readme}",
                          f"## The rules (governance/README.md)\n\n{rules}", f"## The doc's template (governance/validation-doc.md)\n\n{template}"])
 
 
@@ -386,11 +416,14 @@ async def snapshot_ready(dataset_id, snapshot_id):
 
 
 def intake(state):
-    """The doc's fields from the bundle's Intake evidence (users, data class). No gateway tool reads a bundle's results yet, so they
-    are not read: the doc says so, and lists it under what the validator could not check."""
-    return {"users_and_data_class": "Not read: the gateway tools give no read of the bundle's evidence results, so this validator did not "
-                                    "read the Intake evidence (users, data class).",
-            "could_not_check": "The Intake evidence (users, data class): no gateway tool reads a bundle's results."}
+    """The doc's "Users and data class", from the Intake values that the analyst filled (collect read them with get_policy), and the
+    line for what the validator could not check when they could not be read (else None)."""
+    values = state.get("intake")
+    if values is None:
+        return {"users_and_data_class": "Not read: get_policy gave no Intake evidence item (the stage Intake, its item Intake).",
+                "could_not_check": "The Intake evidence (users, data class): get_policy gave no Intake evidence item."}
+    return {"users_and_data_class": f"Users: {values.get('Users') or 'not filled'}. Data class: {values.get('Data class') or 'not filled'}. "
+                                    "From the bundle's Intake evidence, as the analyst filled it.", "could_not_check": None}
 
 
 def render_doc(state, now):
@@ -420,7 +453,8 @@ def doc_fields(state, now):
             "false_hits": table(["Hit", "Why it is false"], [[h["hit"], h["reason"]] for h in a.get("false_hits") or []]),
             "critical_vulns": a.get("critical_vulns") or "no", "critical_vulns_reason": a.get("critical_vulns_reason") or "",
             "verdict": a.get("verdict") or "do not approve", "verdict_reason": a.get("verdict_reason") or "",
-            "could_not_check": "\n".join(f"- {x}" for x in [*(a.get("could_not_check") or []), known["could_not_check"]])}
+            "could_not_check": "\n".join(f"- {x}" for x in [*(a.get("could_not_check") or []), known["could_not_check"]] if x)
+                               or "Nothing that the validator knows of."}
 
 
 def table(head, rows):

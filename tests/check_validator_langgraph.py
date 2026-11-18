@@ -125,6 +125,9 @@ check("the folder's README gives the wizard's settings: the exact name, the entr
                               "Resources not attached to the task: No access", "Fail and report")), page[:200])
 check("the folder's README gives both ways to run the check: the AML venv, and Docker with the service's checks image",
       "tests/check_validator_langgraph.py" in page and "domino-agent-service-checks:<tag>" in page, page[-300:])
+check("the folder's README says that collect reads the Intake values with get_policy, and no longer that no gateway tool reads them",
+      "Intake values" in page and "result.artifactContent" in page and "No gateway tool reads" not in page,
+      [ln for ln in page.splitlines() if "Intake" in ln])
 check("the repo's README has a section for the LangGraph validator, which links the folder's README",
       "## The LangGraph validator" in (ROOT / "README.md").read_text()
       and "governance/validator-langgraph/README.md" in (ROOT / "README.md").read_text())
@@ -365,18 +368,21 @@ def scan_log(fixture="clean", fail=None):
 
 
 JOB_SECONDS = 0.45   # how long the scan Job runs: longer than one wait_job call (gateway.WAIT_S), shorter than two
+INTAKE = {"Purpose": "Triage fake AML alerts and track SAR cases for the compliance team.", "Users": "AML analysts of the compliance team",
+          "Data class": "Confidential"}   # what the analyst filled in the bundle's Intake evidence
 
 
 class FakeDomino:
     """The Job's sidecar for one case: Domino's APIs as the specs have them (reference_materials/domino-api-specs in the service repo).
-    Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, POST /findings (guardrails.Finding), POST
-    /rpc/submit-result-to-policy (guardrails.ComputedPolicy), POST /bundles/{id}/attachments (guardrails.Attachment), errors as
-    {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
+    Governance (api-governance.swagger.json): guardrails.Bundle, guardrails.Policy, GET /results/latest (a bare list of
+    guardrails.ArtifactResult), POST /findings (guardrails.Finding), POST /rpc/submit-result-to-policy (guardrails.ComputedPolicy),
+    POST /bundles/{id}/attachments (guardrails.Attachment), errors as {"message"}. Jobs and datasets (public-api.json): JobEnvelopeV1, LogsEnvelopeV1, DatasetRwEnvelopeV1, SnapshotEnvelopeV1. `calls`
     holds each request: (method, path, query, body)."""
 
-    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active"), job_answer=None):
+    def __init__(self, job_end="Succeeded", log=None, snapshot_statuses=("pending", "active"), job_answer=None, intake=INTAKE):
         self.job_answer = job_answer   # the Job's GET answers 200 with this, when set: a body with no job in it
         self.policy = published_policy()
+        self.intake = intake   # the Intake values that the analyst filled, by label; None: nothing filled (Domino answers 404)
         self.bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": PROJECT["id"], "projectName": PROJECT["name"],
                        "projectOwner": "analyst", "policyId": "pol-app", "policyName": "App deployment policy", "policyVersionId": "pv-1",
                        "policyVersion": "1", "stage": "Validation", "state": "Active", "createdAt": "2026-11-17T10:00:00Z",
@@ -391,6 +397,16 @@ class FakeDomino:
             return 200, self.bundle
         if method == "GET" and path == "/api/governance/v1/policies/pol-app":
             return 200, self.policy
+        if method == "GET" and path == "/api/governance/v1/results/latest":   # ?bundleID=: required (the spec's query parameter)
+            if (query or {}).get("bundleID") != BUNDLE["id"]:
+                return 400, {"message": "bundleID is required"}
+            if self.intake is None:
+                return 404, {"message": f"no results for bundle {BUNDLE['id']}"}
+            item = next(e for st in self.policy["stages"] for e in st["evidenceSet"] if e["name"] == "Intake")
+            return 200, [{"id": f"res-{a['id']}", "artifactId": a["id"], "artifactContent": self.intake[a["details"]["label"]],
+                          "bundleId": BUNDLE["id"], "evidenceId": item["id"], "createdAt": "2026-11-17T10:30:00Z",
+                          "createdBy": {"id": "u-analyst", "userName": "analyst"}, "isLatest": True}
+                         for a in item["artifacts"] if a["details"]["label"] in self.intake]
         if method == "POST" and path == "/api/jobs/v1/jobs":
             self.job_started = time.time()
             self.job = {"id": "job-1", "number": 41, "title": body.get("title"), "runCommand": body.get("runCommand"),
@@ -660,6 +676,9 @@ check("MAIN the model reads the scan's summary (each bandit hit), the App's code
       and (ROOT / "case_server" / "server.py").read_text()[:400] in said and "Bundle ID: " + BUNDLE["id"] in said, said[:300])
 check("MAIN the model reads the App's start script, app.sh, with its path (analyze.md's step 1 names it)",
       "### app.sh" in said and (ROOT / "app.sh").read_text().strip()[:400] in said, said[said.find("## The App's code"):][:300])
+check("MAIN the model reads the Intake values that the analyst filled (get_policy's result.artifactContent): it compares the purpose",
+      all(f"{label}: {value}" in said for label, value in INTAKE.items()) and "where the code differs from the Intake" in said,
+      said[said.find("## The Intake"):][:300])
 check("MAIN the model reads the shared rules: the severity scale, the rule for critical vulns and the rule for a failed scan "
       "(governance/README.md)", "## The severity scale" in said and "## Critical vulns" in said and "S0 (critical)" in said
       and "## A failed scan" in said, said[:300])
@@ -703,10 +722,10 @@ check("MAIN the doc's false hits: each bandit hit with the reason", all(f"| {h['
       doc[doc.find("### False hits"):][:600])
 check("MAIN the doc's verdict and critical vulns, with their reasons", "Critical vulns: no" in doc and MAIN["critical_vulns_reason"] in doc
       and "Verdict: approve after fixes" in doc and MAIN["verdict_reason"] in doc, doc[doc.find("## Critical vulns"):][:400])
-check("MAIN the Intake fields say Not read (no gateway tool reads a bundle's results yet), and the doc says so under what the validator "
-      "could not check", "Not read" in doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
-      and "Intake" in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc,
-      doc[doc.find("## Users and data class"):][:300])
+users = doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
+check("MAIN the doc's Users and data class are the Intake values that the analyst filled, from get_policy, and what the validator "
+      "could not check names no Intake value", f"Users: {INTAKE['Users']}. Data class: {INTAKE['Data class']}." in users
+      and "Intake" not in doc[doc.find("## What the validator could not check"):] and MAIN["could_not_check"][0] in doc, users)
 item = next(e for st in dom.policy["stages"] for e in st["evidenceSet"] if e["name"] == EVIDENCE)
 field = {(x["details"] or {}).get("label"): x["id"] for x in item["artifacts"]}
 filed = [a for n, a in relay.calls if n == "write_governance_finding"]
@@ -848,7 +867,10 @@ check("AGAIN its result is the validation's result, and says that a new move to 
       (again["result"] or "").startswith(before) and "new validation" in (again["result"] or ""), (again["result"] or "")[-300:])
 
 # ----------------------------------------------------------------------------------------- the case: the snapshot fails
-ran, lines, doc, filed, filled = run_case("C268snapfail", FakeDomino(snapshot_statuses=("failed",)), MAIN)
+ran, lines, doc, filed, filled = run_case("C268snapfail", FakeDomino(snapshot_statuses=("failed",), intake=None), MAIN)
+users = doc[doc.find("## Users and data class"):doc.find("## Tech stack")]
+check("SNAPFAIL with no Intake value filled (Domino's 404 on the results), the doc's Users and data class say not filled",
+      "Users: not filled. Data class: not filled." in users and tools(relay.calls)[:2] == ["get_bundle", "get_policy"], users)
 check("SNAPFAIL a failed snapshot is not attached, and the run goes on: the findings, then the evidence item",
       "write_bundle_attachment" not in tools(relay.calls) and tools(relay.calls)[-1] == "write_policy_result" and len(filed) == 2,
       tools(relay.calls))

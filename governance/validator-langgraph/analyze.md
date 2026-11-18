@@ -9,6 +9,8 @@ Call no other tool, and write no text outside that call.
 
 1. Read the App's code: its start script and its server. Find what the App does, its parts and how they connect, who can call each
    route or tool, where its state is, and how each dependency is installed.
+   The Intake evidence below is what the analyst wrote about the App: in `purpose`, say where the code differs from the Intake
+   purpose. Its data class tells you how much harm a leak or a change of the App's data can do.
 2. Look at each scanner hit in the scan's summary. A hit is real when the App's code makes it reachable or harmful. A hit is false
    when the code shows that it can't do harm: put it in `false_hits`, with the reason and the file and line that show it.
 3. Look for real problems that no scanner shows. Ask: who can call each route or tool, what can a caller change or delete, what does
