@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent   # the project's root: this file 
 REQUIREMENTS = "case_server/requirements.txt"
 SOURCE = "case_server"
 START, END = "== scan summary ==", "== end of scan summary =="
+RAN = "result: both tools ran"   # the summary's result line when both tools ran (the LangGraph graph compares with this one)
 TOOLS = {"pip-audit": "pip_audit", "bandit": "bandit"}   # each tool's name and its module (`python -m <module>`)
 INSTALL = {"pip-audit": "pip-audit>=2.7,<3", "bandit": "bandit>=1.7,<2"}   # tested: pip-audit 2.10.1, bandit 1.9.4
 LINE = 320   # the longest line of the summary: pip-audit's description of PYSEC-2021-142 is about 500 characters
@@ -161,7 +162,7 @@ def main():
 
     failed = [name for name, (report, _) in (("pip-audit", audit), ("bandit", bandit)) if report is None]
     if not failed:
-        result = "result: both tools ran"
+        result = RAN
     else:
         result = (f"result: {' and '.join(failed)} could not run ({'its' if len(failed) == 1 else 'their'} messages: "
                   + ", ".join(f"{name}.log" for name in failed) + ")")

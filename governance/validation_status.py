@@ -25,6 +25,8 @@ import urllib.request
 # The validators, in the order of the Validation stage: the evidence item's name, and the agent's name (#267 and #268).
 VALIDATORS = (("Validation (agent folder)", "App validator (agent folder)"),
               ("Validation (LangGraph)", "App validator (LangGraph)"))
+LABELS = ("Verdict", "Critical vulns", "Doc location")   # the first lines of each validator's result: "<label>: <value>". The one
+# source: the LangGraph graph writes its result with these, and the agent folder's checklist names them (its check compares).
 WIDTH = 16   # the label column: "critical vulns: " is the longest label
 OUTPUT = "validation_status.txt"
 LINES = []   # every line said, for the output file
@@ -95,7 +97,7 @@ def facts(summary):
     """The verdict, critical vulns and doc location lines of a validator's result (its task's summary), Markdown aside."""
     found = {}
     for line in (summary or "").splitlines():   # "- **Verdict:** approve", "_Doc location_: `a_b`": marks around, never inside
-        m = re.match(r"[\s>#*_`-]*(verdict|critical vulns|doc location)[*_`]*\s*:(.+)$", line, re.I)
+        m = re.match(rf"[\s>#*_`-]*({'|'.join(LABELS)})[*_`]*\s*:(.+)$", line, re.I)
         value = m.group(2).strip(" \t*_`") if m else ""
         if value and m.group(1).lower() not in found:
             found[m.group(1).lower()] = value
@@ -120,7 +122,7 @@ def show(app, title, agent, tasks, where):
     got = facts(t.get("summary"))
     if status in ENDED:
         field("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none")
-    for label in ("verdict", "critical vulns", "doc location"):
+    for label in (x.lower() for x in LABELS):
         if status in ("review", "done"):
             field(label, got.get(label, "not in the task's result"))
         elif status in ENDED:

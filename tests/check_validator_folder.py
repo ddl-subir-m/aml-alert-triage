@@ -23,6 +23,7 @@ With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. N
 import json
 import os
 import re
+import runpy
 import sys
 import time
 from pathlib import Path
@@ -142,7 +143,9 @@ check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == 
 check("each step ends with its completion criterion (a 'Done when' line)",
       steps and all("Done when:" in part for part in re.split(r"^## \d+\. ", skill, flags=re.M)[1:]), steps)
 result = [ln.strip() for ln in skill.split("## ")[-1].splitlines()]
-want = [f"Verdict: {' | '.join(VERDICTS)}", "Critical vulns: yes | no", "Doc location: "]
+# The labels are the scripted check's (governance/validation_status.py LABELS: the one source, which the LangGraph graph also uses)
+LABELS = tuple(runpy.run_path(str(ROOT / "governance" / "validation_status.py")).get("LABELS") or ("(no LABELS)",) * 3)
+want = [f"{LABELS[0]}: {' | '.join(VERDICTS)}", f"{LABELS[1]}: yes | no", f"{LABELS[2]}: "]
 got = [next((ln for ln in result if ln.startswith(w.split(":")[0] + ":")), None) for w in want]
 check("the last step gives the result's three lines, in order, with the scripted check's labels and the exact Verdict values",
       all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),

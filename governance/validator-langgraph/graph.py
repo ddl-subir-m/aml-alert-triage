@@ -23,6 +23,7 @@ The entry point is governance/validator-langgraph/graph.py:build_graph. The defi
 fake.
 """
 import asyncio
+import importlib.util
 import json
 import operator
 import os
@@ -41,6 +42,18 @@ from domino_agui.langgraph import State, system_prompt
 
 ROOT = Path(__file__).resolve().parents[2]   # the project's root: this file is governance/validator-langgraph/graph.py
 HERE = Path(__file__).resolve().parent
+
+
+def shared(name):
+    """A shared part of governance/ as a module: the one source of the lines that the scan prints (scan.py) and that the scripted
+    check reads (validation_status.py). The Job runs this graph from the repo, so the parts are there."""
+    spec = importlib.util.spec_from_file_location(f"governance_{name}", ROOT / "governance" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SCANNER, STATUS = shared("scan"), shared("validation_status")
 SKIP = {".git", "__pycache__", ".venv", "node_modules"}
 LIMIT = 200
 APP = ("app.sh", "case_server")   # the App under validation: its start script and its server
@@ -48,7 +61,7 @@ EVIDENCE = "Validation (LangGraph)"   # the evidence item this validator fills, 
 INTAKE = ("Purpose", "Users", "Data class")   # the fields of the Intake evidence (its stage and its item are both "Intake")
 FIELDS = ("Verdict", "Critical vulns", "Summary", "Doc location")   # its fields' labels (governance/app-deployment-policy.yaml)
 SCAN = "python governance/scan.py"   # the shared scan, as both validators run it (governance/README.md)
-SUMMARY = ("== scan summary ==", "== end of scan summary ==")   # its summary's markers: Domino adds lines after it, so not the last line
+SUMMARY = (SCANNER.START, SCANNER.END)   # its summary's markers: Domino adds lines after it, so not the last line
 WAITS = 30   # wait_job calls before the graph stops waiting for the scan: each one waits up to 45 s, so about 20 minutes
 MAX_TOKENS = 16000   # the model's output limit (domino-agui#1: the ready-made model sets none, and an alias then gets 4,096)
 VERDICTS = ("approve", "approve after fixes", "do not approve")   # the policy's Verdict values, exactly
@@ -239,7 +252,7 @@ async def scan(state):
     ok, logs = await call("get_job_logs", jobId=job_id)
     summary = scan_summary(logs if ok else "") or scan_summary(text)
     result = next((ln for ln in (summary or "").splitlines() if ln.startswith("result:")), "")
-    ran = status == "Succeeded" and result == "result: both tools ran"
+    ran = status == "Succeeded" and result == SCANNER.RAN
     why = None if ran else (f"the scan Job {number} ended {status}" + (f": {result[len('result: '):]}" if result else "")
                             + ("" if summary else ", and its log has no scan summary"))
     return {"scan": {"ok": ran, "jobId": job_id, "number": number, "status": status, "summary": summary, "why": why}}
@@ -469,7 +482,7 @@ def scan_results(scan):
     """The scan's table (each tool, its version and its hits, from the summary) and its Job; or why the scan did not run to its end."""
     tools = []   # [tool, version, what it said, [its hits]]
     for ln in (scan.get("summary") or "").splitlines():
-        m = re.match(r"(pip-audit|bandit) (\S+) on .+?: (.*)$", ln)
+        m = re.match(rf"({'|'.join(SCANNER.TOOLS)}) (\S+) on .+?: (.*)$", ln)
         if m:
             tools.append([*m.groups(), []])
         elif ln.startswith("- ") and tools:
@@ -507,7 +520,8 @@ async def findings(state, config):
     else:
         filled = "not filled"
         problems.append(f"write_policy_result: the bundle's policy has no evidence item {EVIDENCE!r} with the fields {', '.join(FIELDS)}")
-    result = "\n".join([f"Verdict: {a.get('verdict')}", f"Critical vulns: {a.get('critical_vulns')}", f"Doc location: {location}", "",
+    head = [f"{k}: {v}" for k, v in zip(STATUS.LABELS, (a.get("verdict"), a.get("critical_vulns"), location))]   # the scripted check's
+    result = "\n".join([*head, "",
                         f"Bundle: {bundle_id}. {a.get('summary') or ''}".strip(), "",
                         f"Findings filed ({len(filed)}): {'; '.join(filed) or 'none'}",
                         f"False hits ({len(a.get('false_hits') or [])}): {'; '.join(h['hit'] for h in a.get('false_hits') or []) or 'none'}",
