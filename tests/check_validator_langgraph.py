@@ -593,7 +593,7 @@ ORDER = re.compile(r"get_bundle get_policy run_job( wait_job)+ get_job_logs writ
 check("MAIN the gateway calls, in the ticket's order: get_bundle, get_policy, run_job, wait_job until done, get_job_logs, "
       "write_dataset_snapshot, the snapshot wait, write_bundle_attachment, the findings, write_policy_result, and no other",
       ORDER.fullmatch(" ".join(tools(relay.calls))) is not None, tools(relay.calls))
-steps = [e.get("stepName") for e in ran["events"] if e.get("type") == "STEP_STARTED"]
+steps = [e.get("stepName") for e in ran["events"] if e.get("type") == "STEP_STARTED" and e.get("stepName") != "__start__"]   # LangGraph's own
 check("MAIN the graph's five steps run once each, in order: collect, scan, analyze, write, findings",
       steps == ["collect", "scan", "analyze", "write", "findings"], steps)
 check("MAIN the result names the findings it filed and the false hits",
@@ -660,6 +660,31 @@ check("NOANALYSIS the verdict is do not approve, and the result and the doc say 
       lines[0] == "Verdict: do not approve" and "analyze: the model's answer has no validation_analysis call" in ran["result"]
       and "The validator's analysis failed" in doc, ran["result"])
 check("NOANALYSIS the model's text stays out of the task's stream", "seems fine" not in json.dumps(ran["events"]), "")
+
+# ----------------------------------------------------------------------------------- the case: the demo branch, with a planted CVE
+DEMO = {**MAIN, "real_findings": [
+    {"title": "pyyaml 5.3.1 runs code from an uploaded YAML file (PYSEC-2021-142)", "severity": "S0", "source": "scan",
+     "evidence": "case_server/requirements.txt pins pyyaml==5.3.1; POST /upload calls yaml.full_load", "fix": "Pin pyyaml 5.4 or later, "
+     "and use yaml.safe_load."}, *MAIN["real_findings"]],
+    "critical_vulns_reason": "The pyyaml finding is S0: a caller reaches it through POST /upload.", "verdict": "do not approve"}
+ran, lines, doc, filed, filled = run_case("C268demo", FakeDomino(log=scan_log("vulnerable"), snapshot_statuses=("active",)), DEMO)
+said = fake_model.seen[0]["conv"].text() if fake_model.seen else ""
+check("DEMO the model reads pip-audit's hit in the scan's summary", "PYSEC-2021-142" in said, said[said.find("## The scan"):][:300])
+check("DEMO a real S0 finding makes critical vulns yes, in the result, the doc and the evidence item",
+      lines[:2] == ["Verdict: do not approve", "Critical vulns: yes"] and "Critical vulns: yes" in doc
+      and filled.get("Critical vulns") == "yes", (lines[:2], filled.get("Critical vulns")))
+check("DEMO the scanner's finding is filed, with its severity", ("[LangGraph] " + DEMO["real_findings"][0]["title"], "S0")
+      in [(a["name"], a["severity"]) for a in filed], [(a["name"], a["severity"]) for a in filed])
+
+# ------------------------------------------------------------------------------- the case: a person sends a message to the task
+before = ran["result"]
+th = ran["thread"]
+th.add_user("Please check it again.")
+again = run_task("C268demo", FakeDomino(), messages=th)
+check("AGAIN a later run of the same task (a message to it) validates nothing again: no gateway call and no model call",
+      again["error"] is None and relay.calls == [] and fake_model.seen == [], (again["error"], tools(relay.calls), len(fake_model.seen)))
+check("AGAIN its result is the validation's result, and says that a new move to Validation starts a new validation",
+      (again["result"] or "").startswith(before) and "new validation" in (again["result"] or ""), (again["result"] or "")[-300:])
 
 close()
 done()

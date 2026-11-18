@@ -11,6 +11,9 @@ run does the same steps in the same order:
             "Validation (LangGraph)" only; then the task's result, streamed as the last text: its first lines are "Verdict: ...",
             "Critical vulns: ..." and "Doc location: ...", which the scripted check reads (governance/validation_status.py)
 
+A task validates once. A later run of the same task (a person's message to it) does nothing again, so no finding is filed twice:
+its result is the validation's result. A new move of the bundle to Validation starts a new task, so a new validation.
+
 The gateway tools are called from this code through the relay (domino_agui.contract.relay(): a ToolResult with is_error, so a denial
 is seen as one), never by the model. The instruction is the event subscription's (subscription.json): the graph reads the bundle ID
 and the doc dataset from its lines "Bundle ID: ...", "Doc dataset ID: ..." and "Doc dataset path: ..." (the dataset's mount in the
@@ -468,15 +471,31 @@ async def findings(state, config):
     return {"result": result, "messages": [AIMessage(result, id=message_id)], "problems": problems}
 
 
+async def repeat(state, config):
+    """A later run of a task that has validated: no step again (each one would file the findings again), only its result."""
+    result = (f"{state['result']}\n\nThis task validated bundle {state.get('bundle_id')} already, so it did nothing again. A new move "
+              "of the bundle to the Validation stage starts a new validation.")
+    message_id = f"msg-{uuid.uuid4().hex[:16]}"
+    await adispatch_custom_event("manually_emit_message", {"message_id": message_id, "message": result}, config=config)
+    return {"messages": [AIMessage(result, id=message_id)]}
+
+
+def first(state):
+    """The first step: collect, or repeat for a task that has validated (its thread keeps the result)."""
+    return "repeat" if state.get("result") else "collect"
+
+
 def build_graph(checkpointer):
     """The compiled graph, with the checkpointer that the platform's adapter gives (the thread lives in the state folder)."""
     g = StateGraph(Validation)
+    g.add_node("repeat", repeat)
     g.add_node("collect", collect)
     g.add_node("scan", scan)
     g.add_node("analyze", analyze)
     g.add_node("write", write)
     g.add_node("findings", findings)
-    g.add_edge(START, "collect")
+    g.add_conditional_edges(START, first, ["collect", "repeat"])
+    g.add_edge("repeat", END)
     g.add_edge("collect", "scan")
     g.add_edge("scan", "analyze")
     g.add_edge("analyze", "write")
