@@ -94,4 +94,49 @@ values = [v for s in stages for e in s.get("evidenceSet") or [] if isinstance(e,
 check("every option value is text (quoted: an unquoted yes or no is a boolean to a YAML 1.1 reader)",
       values and all(isinstance(v, str) for v in values), [v for v in values if not isinstance(v, str)])
 
+status = validation.get("Validation status") or {}
+check("Validation has the evidence item \"Validation status\" (Local.validation-status) for the scripted check",
+      status.get("id") == "Local.validation-status", {n: e.get("id") for n, e in validation.items()})
+arts = status.get("definition") or []
+check("...with one artifact, a scripted check (policyScriptedCheck)",
+      len(arts) == 1 and isinstance(arts[0], dict) and arts[0].get("artifactType") == "policyScriptedCheck", arts)
+sc = (arts[0].get("details") or {}) if arts and isinstance(arts[0], dict) else {}
+check("the scripted check has a name and a label: validation-status, Validation status",
+      (sc.get("name"), sc.get("label")) == ("validation-status", "Validation status"), (sc.get("name"), sc.get("label")))
+COMMAND = "governance/validation_status.py ${bundle_id} ${service_url}"
+check("its command runs governance/validation_status.py with the bundle ID and the agent service App's URL, in that order",
+      sc.get("command") == COMMAND, sc.get("command"))
+params = [p for p in sc.get("parameters") or [] if isinstance(p, dict)]
+placeholders = re.findall(r"\$\{([a-z_]+)\}", sc.get("command") or "")
+check("each ${name} in the command is a parameter, and each parameter is in the command (Domino puts its value there)",
+      placeholders and sorted(placeholders) == sorted(p.get("name") for p in params), (placeholders, [p.get("name") for p in params]))
+check("each parameter is text, with a default (the value that a click runs with, when the person who clicks changes nothing)",
+      params and all(p.get("type") == "text" and isinstance(p.get("default"), str) and p["default"] for p in params), params)
+default = {p.get("name"): p.get("default") for p in params}
+check("bundle_id's default is newest: with no bundle ID typed, the check shows the newest validation of each validator in the project",
+      default.get("bundle_id") == "newest", default)
+check("service_url's default is the placeholder __AGENT_SERVICE_URL__ (the live script fills it)",
+      default.get("service_url") == "__AGENT_SERVICE_URL__", default)
+check("it shows a text output file (outputTypes: txt)", sc.get("outputTypes") == ["txt"], sc.get("outputTypes"))
+check("its Environment and hardware tier are the placeholders __ENVIRONMENT_ID__ and __HARDWARE_TIER_ID__ (they depend on the deployment)",
+      (sc.get("environmentId"), sc.get("hardwareTierId")) == ("__ENVIRONMENT_ID__", "__HARDWARE_TIER_ID__"),
+      (sc.get("environmentId"), sc.get("hardwareTierId")))
+check("its volume size is a whole number of GiB", isinstance(sc.get("volumeSizeGiB"), int) and sc["volumeSizeGiB"] > 0, sc.get("volumeSizeGiB"))
+
+approval = stage.get("Approval") or {}
+approvals = [a for a in approval.get("approvals") or [] if isinstance(a, dict)]
+check("Approval has one approval, Deployment sign off, by a person: the placeholder __APPROVER__ (the live script fills it)",
+      [(a.get("name"), a.get("approvers")) for a in approvals] == [("Deployment sign off", ["__APPROVER__"])],
+      [(a.get("name"), a.get("approvers")) for a in approvals])
+check("Approval has no evidence item: the approver reads the Validation stage, then approves or not", not approval.get("evidenceSet"),
+      approval.get("evidenceSet"))
+
+PLACEHOLDERS = {"__ENVIRONMENT_ID__", "__HARDWARE_TIER_ID__", "__AGENT_SERVICE_URL__", "__APPROVER__"}
+body = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
+check("the placeholders are these four, and the file's head names each one", set(re.findall(r"__[A-Z_]+__", body)) == PLACEHOLDERS
+      and all(re.search(rf"^#.*{p}", raw, re.M) for p in PLACEHOLDERS), set(re.findall(r"__[A-Z_]+__", body)))
+check("the file is for a PUBLIC repo: no host name, no cloud-dogfood, no Domino object ID",
+      not re.search(r"https?://|\.domino\.tech|cloud-dogfood|\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-", raw), "a host or an ID")
+check("no em dash", "—" not in raw)
+
 sys.exit(1 if failed else 0)

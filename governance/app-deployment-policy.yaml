@@ -4,6 +4,15 @@
 # it went from Draft to Published. The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
 # POST /rpc/submit-result-to-policy). Domino gives each artifact its own ID when it reads this file: read them with GET /policies/{id}
 # (the gateway tool get_policy), and find each field by its evidence item's name and its label.
+#
+# The live script makes the policy (POST /policies with the name "App deployment policy"), puts this file as its definition
+# (PUT /policies/{id}/definition), and publishes it (PUT /policies/{id}/status). Before that, it replaces four placeholders, because
+# their values depend on the deployment:
+#   __ENVIRONMENT_ID__     the scripted check's Environment (any one with Python 3)
+#   __HARDWARE_TIER_ID__   the scripted check's hardware tier
+#   __AGENT_SERVICE_URL__  the agent service App's own URL (the one that ends in /apps-internal/<App ID>): the check's default
+#   __APPROVER__           who approves in the Approval stage: a user or an organization of the demo project
+# The enforcement on new App versions is not in this file: it is a policy enforcer (POST /policy-enforcers).
 stages:
   - name: Intake
     evidenceSet:
@@ -102,4 +111,31 @@ stages:
               type: textinput
               label: Doc location
               helpText: Where the validation doc is (its dataset snapshot and file). The bundle's attachment links it.
+      - id: Local.validation-status
+        name: Validation status
+        description: >-
+          Click Run to see each validator's task: its status, verdict and doc. The check runs as you, reads the agent service App,
+          and never starts or changes an agent. Type the bundle's ID in bundle_id, or keep newest.
+        definition:
+          - artifactType: policyScriptedCheck
+            details:
+              name: validation-status
+              label: Validation status
+              command: governance/validation_status.py ${bundle_id} ${service_url}
+              parameters:
+                - name: bundle_id
+                  type: text
+                  default: "newest"
+                - name: service_url
+                  type: text
+                  default: "__AGENT_SERVICE_URL__"
+              outputTypes:
+                - txt
+              environmentId: "__ENVIRONMENT_ID__"
+              hardwareTierId: "__HARDWARE_TIER_ID__"
+              volumeSizeGiB: 4
   - name: Approval
+    approvals:
+      - name: Deployment sign off
+        approvers:
+          - "__APPROVER__"
