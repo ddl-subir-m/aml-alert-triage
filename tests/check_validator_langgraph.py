@@ -196,9 +196,11 @@ def service_part(service):
         print("SKIP: the service part needs Linux (the service's app imports its sandbox). On a Mac, run the check with Docker, in the "
               "image of the service's checks (governance/validator-langgraph/README.md, \"The check\")", flush=True)
         return
-    try:
-        import requests  # noqa: F401  (the service's own packages: the image of its checks has them)
+    try:   # the service's own packages (its requirements.txt): the image of its checks has them
         import fastapi  # noqa: F401
+        import requests  # noqa: F401
+        import ruamel.yaml  # noqa: F401
+        import uvicorn  # noqa: F401
     except ImportError as e:
         print(f"SKIP: the service part needs the service's packages, and this Python has no {e.name} "
               "(governance/validator-langgraph/README.md, \"The check\")", flush=True)
