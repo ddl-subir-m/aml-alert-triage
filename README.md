@@ -1,5 +1,9 @@
 # aml-alert-triage
 
+> **This is the demo branch `demo/app-validation`. It is vulnerable on purpose.** It is `main` plus one commit, with one planted
+> critical vulnerability for the App validation demo (domino-agent-service spec #260): the validators must find it. Do not deploy
+> this branch for anything else, and do not copy its code. `main` has no planted vulnerability. All the data is fake.
+
 The AML alert triage reference workflow for the Domino Agent Service: an agent on the framework lane triages transaction monitoring
 alerts, through a fake case-management system that runs as a Domino-hosted tool server. Escalating an alert to a SAR case needs a
 reviewer's approval. The agent is one definition and three 1-line entry points: it runs on LangGraph, CrewAI or the Anthropic SDK
