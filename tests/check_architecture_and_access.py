@@ -383,8 +383,18 @@ rrule("the access rows, with attached Read & write for the event's bundle", "oth
       "bundle")
 rrule("share it with the analyst who moves the stage", "share", "analyst", "moves the stage")
 rrule("...and with the approver as an owner or an editor", "approver", "owner or an editor")
-rrule("make the subscription from subscription.json, with the demo project's ID", "subscription.json", "__DEMO_PROJECT_ID__",
-      "post /api/agents/{id}/triggers")
+rrule(f"its file table names the subscription's file, {SUB}, and deploy uploads it", f"| `{SUB}` |", "| yes |")
+rrule("domino-agent deploy, 0.4.0 or later, makes the subscription from its file (ADR 0049)", "domino-agent deploy", "0.4.0",
+      "subscription", "adr 0049")
+rrule("...an older command sends no trigger file: the agent gets no subscription", "before 0.4.0", "no subscription")
+rrule(f"the filter names the demo project by its name, {DEMO_PROJECT}, so any project with that name matches", f"`{DEMO_PROJECT}`",
+      "any project", "that name")
+rrule("the first deploy prints the subscription's Trigger line", f"trigger: added subscription {SUB_NAME} ({SUB})")
+rrule("a subscription of this agent made with the API before: delete it after the deploy, else each stage move starts two tasks",
+      "api", "delete", "two tasks")
+gone = [w for w in ("subscription.json", "__DEMO_PROJECT_ID__", "/api/agents/{id}/triggers") if w in readme]
+check("the folder's README names no subscription.json, no project ID placeholder and no create through the API (deploy owns it)",
+      not gone, gone)
 rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
 rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
 rrule("the demo project's default branch has the shared rules", "default branch", "governance/readme.md",

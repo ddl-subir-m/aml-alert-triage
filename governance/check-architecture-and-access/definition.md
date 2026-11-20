@@ -4,8 +4,9 @@
 # App with the checklist of its own skill, skills/architecture-and-access: all access, the tech stack, the design and the
 # dependencies. `domino-agent deploy governance/check-architecture-and-access` registers it. The data is fake.
 # It is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, no Job.
-# The fields are on domino-agent-service's reference page, docs/definition-file.md. What the owner adds before it can run (the
-# service account and its token, the sharing, the event subscription) is in README.md, next to this file.
+# The fields are on domino-agent-service's reference page, docs/definition-file.md. Its event subscription is the file
+# subscriptions/bundle-enters-validation.md. What the owner adds before it can run (the service account and its token, the sharing)
+# is in README.md, next to this file.
 name: architecture-and-access
 title: Architecture and access   # exact: the check's name in governance/checks.json (Validation status finds the task by it)
 description: >-
