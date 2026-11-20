@@ -277,11 +277,12 @@ rule("a failed or denied call: go on with the other steps, and name it under wha
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", OWN, SUBAGENT_NAME, "domino_git_push", "domino_write_bundle_attachment",
+TASK_CALL = f"`subagent_type` `{SUBAGENT_NAME}`"   # the task call of step 3 (step 2 names route-reviewer before it)
+order = ["domino_get_bundle", "domino_get_policy", OWN, TASK_CALL, "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the custom subagent {SUBAGENT_NAME} (both "
-      "before the writes), push, attachment, findings, evidence, result",
+check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the task call of the custom subagent "
+      f"{SUBAGENT_NAME} (both before the writes), push, attachment, findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
