@@ -1,6 +1,6 @@
 ---
 # Check 2 of the App validation demo, "Architecture and access" (domino-agent-service spec #388, Implementation Decision 9): a
-# registered agent of the harness lane (opencode). When a governance bundle moves to the Validation stage, it checks the bundle's
+# registered agent (opencode). When a governance bundle moves to the Validation stage, it checks the bundle's
 # App with the checklist of its own skill, skills/architecture-and-access: all access, the tech stack, the design and the
 # dependencies. `domino-agent deploy governance/check-architecture-and-access` registers it. The data is fake.
 # It is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, no Job.

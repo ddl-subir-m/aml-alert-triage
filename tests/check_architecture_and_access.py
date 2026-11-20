@@ -1,4 +1,4 @@
-"""Check 2, Architecture and access (governance/check-architecture-and-access/): a registered agent of the harness lane (opencode),
+"""Check 2, Architecture and access (governance/check-architecture-and-access/): a registered agent (opencode),
 an agent folder that `domino-agent deploy` registers (domino-agent-service spec #388, Implementation Decision 9, ticket #394). It is
 the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, Run a Job off. Seen from
 outside: its files as `domino-agent deploy` uploads them, its checklist skill as the agent reads it, the templates of its event
@@ -382,6 +382,10 @@ leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
+# The folder and its pull request are demo text (spec #459, scene 3b): the words of the two glossaries, never "lane"
+laned = sorted(rel for rel, body in [*every.items(), ("this check's docstring", __doc__ or "")] if re.search(r"\blanes?\b", body, re.I))
+check('no file of the folder, and not the docstring of this check, has the word "lane" (it is "a registered agent (opencode)")',
+      not laned, laned)
 
 # ------------------------------------------------------------------------------------------------------------ the folder's README
 # The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.

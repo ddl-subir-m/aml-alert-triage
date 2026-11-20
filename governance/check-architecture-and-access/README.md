@@ -1,7 +1,7 @@
 # Check 2: Architecture and access
 
 One of the three checks of the App validation demo (domino-agent-service spec #388, Implementation Decision 9). It is a registered
-agent of the harness lane (opencode), "Architecture and access", and this folder is its definition: `domino-agent deploy` registers it
+agent (opencode), "Architecture and access", and this folder is its definition: `domino-agent deploy` registers it
 from git (domino-agent-service ADR 0037). When an analyst moves an App's governance bundle to the Validation stage of the App
 deployment policy, its event subscription starts a task. The task checks the App's architecture and access.
 It fills only its own evidence item, "Validation: Architecture and access". All the data is fake.
