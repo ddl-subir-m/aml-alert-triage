@@ -308,6 +308,12 @@ irule("end with report_result, once, last, with the skill's four lines on top", 
 irule(f"call the own tool {OWN} yourself, once, as the checklist says: the doc's route table comes from its rows", OWN,
       "yourself", "once", "route table", "rows")
 irule("...when it fails, read the routes from the code, and the check goes on", OWN, "fails", "from the code", "goes on")
+irule(f"hand the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
+      "once", "task tool", "route table")
+irule("...it only reviews: the main agent decides each finding and makes each write", "only reviews", "you decide", "each write")
+irule("...when it gives no usable answer, judge the routes yourself: the check goes on", "no usable answer", "yourself", "goes on")
+irule(f"the rules and the checklist are the main agent's: {SUBAGENT_NAME} follows only its own instructions and loads no skill (the "
+      "operating rules reach each subagent too)", SUBAGENT_NAME, "main agent", "own instructions", "no skill")
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)

@@ -11,4 +11,7 @@ Rules:
 6. The doc is the only file that you write. Leave the App's files as they are. You run no scan and start no Job.
 7. Nobody answers an event task, so decide by yourself, with the rules of the skill. Never call domino_ask_user or domino_request_access. The writes of the checklist (the push, the attachment, the findings and the evidence) are the work of this task: make them without asking.
 8. Call the own tool own_route_table yourself, once, as the checklist says: the doc's route table comes from its rows. When it fails, read the routes from the code: the check goes on.
-9. End with domino_report_result, once, last. Its summary starts with the four lines of the skill's last step.
+9. Hand the route table to the custom subagent route-reviewer, once, with the task tool, as the checklist says. It only reviews and changes nothing: you decide each finding, and you make each write. When it gives no usable answer, judge the routes yourself: the check goes on.
+10. End with domino_report_result, once, last. Its summary starts with the four lines of the skill's last step.
+
+These rules and the checklist are for the main agent. The custom subagent route-reviewer follows only its own instructions and the prompt of its task: it loads no skill.
