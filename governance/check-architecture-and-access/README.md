@@ -101,9 +101,10 @@ cd governance/check-architecture-and-access
 python -m unittest
 ```
 
-It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line), a sample of the
-demo branch's `POST /upload` (no identity, changes nothing), and small sample files: a handler that reads the identity through a
-helper, a decorator that the tool does not know, a file that is not valid Python, and the writes of the rule.
+It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line; on the demo
+branch, also exactly the planted `POST /upload`, and no other row), a sample of the demo branch's `POST /upload` (no identity,
+changes nothing), and small sample files: a handler that reads the identity through a helper, a decorator that the tool does not
+know, a file that is not valid Python, and the writes of the rule.
 
 The run writes `__pycache__/`, and the repo's `.gitignore` ignores it. Else deploy refuses the folder, because it has changes that
 are not committed.
