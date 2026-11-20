@@ -1,6 +1,8 @@
-"""The own tool route_table of check 2, "Architecture and access". The agent sees it as own_route_table. It reads the App's Python
-code with the standard library `ast`, and never imports or runs it. Its unit test is test_route_table.py, next to definition.md."""
+"""The own tool route_table of check 2, "Architecture and access". The agent sees it as own_route_table. It reads the App's
+Python code with the standard library `ast`, and never imports or runs it. Its unit test is test_route_table.py, next to
+definition.md."""
 import ast
+import os
 import re
 from pathlib import Path
 
@@ -8,19 +10,43 @@ from domino_agent import tool
 
 MCP_ENDPOINT = "/mcp"   # FastMCP's streamable HTTP endpoint: each MCP tool call is a POST to it
 IDENTITY_HEADER = "domino-username"   # the header in which the Apps proxy gives the caller's identity
-# A SQL text that writes: it starts with one of these (case aside)
+# A SQL text that writes starts with one of these, in upper or in lower case (_is_sql_write)
 SQL_WRITE = re.compile(r"\s*(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+\S+\s+SET|DELETE\s+FROM"
                        r"|(CREATE|DROP|ALTER)\s+(TABLE|INDEX|VIEW|TRIGGER))\b", re.I)
+# A call of one of these names writes a file or a folder (pathlib, os, shutil)
+WRITE_CALLS = ("write_text", "write_bytes", "mkdir", "makedirs", "touch", "rename", "remove", "unlink", "rmdir", "rmtree")
+FILE_MODE = re.compile(r"^[rwaxbt+]+$")   # the mode of open()
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 UNREAD = "unread"   # a way into the App that the tool can't read: it gets no row
+GIVE = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
 
 
 @tool
 def route_table(folder: str) -> dict:
-    """The table of the ways into a Python App."""
-    project = Path.cwd()
+    """The table of the ways into a Python App: each MCP tool (`@<server>.tool`) and each custom route (`@<server>.custom_route`)
+    of its code. Give the folder of the App's Python code, relative to the project folder, for example `case_server`. The tool
+    parses the code with `ast`, and never imports or runs it.
+
+    The result has `folder`, `files` (the files that it read), `rows` and `not_read`. Each row has `kind` (`MCP tool` or
+    `route`), `method`, `path` (for an MCP tool: the MCP endpoint and the tool's name, such as `/mcp (tool: get_alert)`),
+    `handler`, `file` and `line` (of the handler's `def`), `reads_identity`, `identity_at`, `changes_state` and `changes_at`
+    (`identity_at` and `changes_at` are the file and line of the evidence, or null).
+
+    reads_identity: the handler, or a function of the same file that it calls (at any depth), has the text `domino-username`
+    (the header with the caller's identity) in its code.
+
+    changes_state: the handler, or a function of the App's code that it calls (found by its name, at any depth, in each file),
+    has a write: a SQL text that starts with INSERT INTO, REPLACE INTO, UPDATE ... SET, DELETE FROM, or CREATE, DROP or ALTER of
+    a table, index, view or trigger; `open` with a mode with w, a, x or +; a call of write_text, write_bytes, mkdir, makedirs,
+    touch, rename, remove, unlink, rmdir or rmtree; or a `global` or `nonlocal` statement. A docstring is not code, and a
+    function of a package is not followed. So false means that the rule found no write, not that there is none.
+
+    not_read: each file that is not valid Python, each decorator that the tool does not know on a handler, each decorator with
+    a path (it can be a route of another framework), and each route whose path or methods are not plain values. A tool or a
+    route that the code adds with no decorator has no row."""
+    project = Path.cwd().resolve()
     modules, not_read = {}, []   # {file: its tree}, [what the tool could not read]
-    for path in sorted((project / folder).rglob("*.py")):
+    for path in _python_files(project, folder):
         rel = path.relative_to(project).as_posix()
         try:
             modules[rel] = ast.parse(path.read_bytes(), filename=rel)
@@ -47,13 +73,29 @@ def route_table(folder: str) -> dict:
                                  "changes_state": bool(changes_at), "changes_at": changes_at})
                 elif any(ways):
                     not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator that the tool does not know, on the "
-                                     f"handler {fn.name}: @{_shown(dec)}. It can change who can call the handler, or what it does"})
+                                     f"handler {fn.name}: @{_shown(dec)}. It can change who can call the handler, or what it "
+                                     "does"})
                 elif _has_path(dec):
                     not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator with a path that the tool does not "
                                      f"know, on the function {fn.name}: @{_shown(dec)}. It can be a route of another framework"})
     rows.sort(key=lambda r: (r["file"], r["line"]))
     not_read.sort(key=lambda n: (n["file"], n["line"] or 0))
     return {"folder": folder, "files": sorted(set(modules) | {n["file"] for n in not_read}), "rows": rows, "not_read": not_read}
+
+
+def _python_files(project, folder):
+    """The .py files of `folder` (relative to `project`), in the order of their paths. A hidden folder (such as .venv) and
+    __pycache__ are not read. ValueError for a folder that is not in the project folder, or that does not exist."""
+    base = (project / folder).resolve()
+    if base != project and project not in base.parents:
+        raise ValueError(f"the folder {folder!r} is not in the project folder. {GIVE}")
+    if not base.is_dir():
+        raise ValueError(f"no folder {folder!r} in the project folder. {GIVE}")
+    found = []
+    for dirpath, dirnames, filenames in os.walk(base):   # a link to a folder is not walked into
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
+        found += [Path(dirpath) / f for f in filenames if f.endswith(".py") and not f.startswith(".")]
+    return sorted(found)
 
 
 def _way(dec, fn):
@@ -66,7 +108,8 @@ def _way(dec, fn):
         return None
     if func.attr == "tool":
         name = _value(_argument(call, 0, "name")) if call else None
-        return {"kind": "MCP tool", "method": "POST", "path": f"{MCP_ENDPOINT} (tool: {name if isinstance(name, str) else fn.name})"}
+        name = name if isinstance(name, str) else fn.name
+        return {"kind": "MCP tool", "method": "POST", "path": f"{MCP_ENDPOINT} (tool: {name})"}
     path, methods = (_value(_argument(call, i, key)) for i, key in ((0, "path"), (1, "methods"))) if call else (None, None)
     if not isinstance(path, str) or not isinstance(methods, (list, tuple)) or not all(isinstance(m, str) for m in methods):
         return UNREAD
@@ -89,7 +132,8 @@ def _value(node):
 
 
 def _has_path(dec):
-    """Is the decorator `dec` a call whose first argument is a path (a string that starts with /), as a route of a framework is?"""
+    """Is the decorator `dec` a call whose first argument is a path (a string that starts with /), as for a route of a
+    framework?"""
     return (isinstance(dec, ast.Call) and bool(dec.args) and isinstance(dec.args[0], ast.Constant)
             and isinstance(dec.args[0].value, str) and dec.args[0].value.startswith("/"))
 
@@ -109,8 +153,8 @@ def _by_name(pairs):
 
 
 def _find(rel, fn, hit, index, seen):
-    """"<file>:<line>" of the first place where `hit` finds something in the function `fn` (of the file `rel`), or in a function of
-    `index` that it calls, found by the called name, at any depth. None when there is none."""
+    """"<file>:<line>" of the first place where `hit` finds something in the function `fn` (of the file `rel`), or in a function
+    of `index` that it calls, found by the called name, at any depth. None when there is none."""
     if id(fn) in seen:
         return None
     seen.add(id(fn))
@@ -139,8 +183,12 @@ def _texts(fn):
 def _called(fn):
     """The names that the function `fn` calls (`f(...)` and `x.f(...)`), in the order of the code."""
     calls = sorted((n for n in _body(fn) if isinstance(n, ast.Call)), key=lambda n: (n.lineno, n.col_offset))
-    return [c.func.id if isinstance(c.func, ast.Name) else c.func.attr for c in calls
-            if isinstance(c.func, (ast.Name, ast.Attribute))]
+    return [name for name in map(_name, calls) if name]
+
+
+def _name(call):
+    """The name that `call` calls: f of `f(...)` and of `x.f(...)`, or None for another form."""
+    return call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else None
 
 
 def _reads_identity(fn):
@@ -149,5 +197,23 @@ def _reads_identity(fn):
 
 
 def _writes(fn):
-    """The first line of `fn` with a write, or None."""
-    return min((line for line, s in _texts(fn) if SQL_WRITE.match(s)), default=None)
+    """The first line of `fn` with a write of the rule (route_table's docstring), or None."""
+    lines = [line for line, s in _texts(fn) if _is_sql_write(s)]
+    for n in _body(fn):
+        if isinstance(n, (ast.Global, ast.Nonlocal)):
+            lines.append(n.lineno)
+        elif isinstance(n, ast.Call) and (_name(n) in WRITE_CALLS or (_name(n) == "open" and _writes_a_file(n))):
+            lines.append(n.lineno)
+    return min(lines, default=None)
+
+
+def _is_sql_write(text):
+    """Is `text` a SQL text that writes? Its first word is in upper case or in lower case, as SQL is: "Delete from the cache" is
+    a text for a person."""
+    return bool(SQL_WRITE.match(text)) and (text.split()[0].isupper() or text.split()[0].islower())
+
+
+def _writes_a_file(call):
+    """Does the call `open(path, mode)` (or `path.open(mode)`) open the file to write: a mode with w, a, x or +?"""
+    mode = _value(_argument(call, 1 if isinstance(call.func, ast.Name) else 0, "mode"))
+    return isinstance(mode, str) and bool(FILE_MODE.match(mode)) and any(c in mode for c in "wax+")

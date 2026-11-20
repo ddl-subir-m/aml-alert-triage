@@ -6,6 +6,7 @@ Run it in this folder:
 
   python -m unittest
 """
+import json
 import os
 import shutil
 import tempfile
@@ -19,7 +20,8 @@ PROJECT = Path(__file__).resolve().parents[2]   # the repo root, as the project 
 
 
 def table(project, folder):
-    """The tool's result for `folder`, called in the folder `project` (in a task, the tool's working folder is the project folder)."""
+    """The tool's result for `folder`, called in the folder `project`. In a task, the tool's working folder is the project
+    folder."""
     before = os.getcwd()
     os.chdir(project)
     try:
@@ -66,7 +68,8 @@ class TheAppOfMain(unittest.TestCase):
             self.assertEqual((rows[name]["reads_identity"], rows[name]["changes_state"]), (False, False), name)
 
     def test_each_yes_cites_its_evidence_and_each_no_has_none(self):
-        """The file and line where the rule found the identity or the write: the header in acting_identity, the SQL in store.py."""
+        """The file and line where the rule found the identity or the write: the header in acting_identity, the SQL in
+        store.py."""
         server, store = (PROJECT / "case_server" / f for f in ("server.py", "store.py"))
         header = next(n for n, line in enumerate(server.read_text().splitlines(), 1) if '.get("domino-username")' in line)
         rows = {r["handler"]: r for r in self.result["rows"]}
@@ -78,6 +81,25 @@ class TheAppOfMain(unittest.TestCase):
             self.assertEqual(file, "case_server/store.py", name)
             self.assertIn(int(line), writes, name)
         self.assertEqual((rows["reset"]["identity_at"], rows["get_alert"]["changes_at"]), (None, None))
+
+    def test_it_reads_each_file_of_the_folder_and_nothing_is_in_not_read(self):
+        self.assertEqual((self.result["folder"], self.result["files"], self.result["not_read"]),
+                         ("case_server", ["case_server/board.py", "case_server/server.py", "case_server/store.py"], []))
+
+    def test_the_result_is_short(self):
+        """Well under the 51,200 bytes of a result that opencode gives the model."""
+        self.assertLess(len(json.dumps(self.result)), 8000)
+
+
+class TheToolsDescription(unittest.TestCase):
+    """The docstring is the tool's description: the model reads it in each call, and deploy refuses one of more than 2,000
+    characters."""
+
+    def test_it_fits_and_states_the_rules(self):
+        doc = route_table.__doc__
+        self.assertLessEqual(len(doc), 2000)
+        for word in ("changes_state", "reads_identity", "domino-username", "not_read", "INSERT", "open", "global"):
+            self.assertIn(word, doc)
 
 
 class Samples(unittest.TestCase):
@@ -134,6 +156,31 @@ class Samples(unittest.TestCase):
         self.assertEqual([(n["line"], n["what"].split(":")[0]) for n in result["not_read"]],
                          [(line_of(OTHER_FORMS, "@mcp.custom_route(PATH"), "a route whose path or methods are not plain values, "
                                                                            "on the handler hidden")])
+
+    def test_the_writes_of_the_rule_change_state_and_a_text_about_a_write_does_not(self):
+        rows = self.rows({"server.py": WRITES, "files.py": FILE_WRITES})
+        want = {"save_note": ("app/files.py", "with open(path, \"a\")"), "drop_cache": ("app/files.py", "path.unlink()"),
+                "count_up": ("app/server.py", "global COUNT"), "add_row": ("app/server.py", "db.execute(\"insert into")}
+        for name, (file, start) in want.items():
+            body = FILE_WRITES if file == "app/files.py" else WRITES
+            self.assertEqual((rows[name]["changes_state"], rows[name]["changes_at"]), (True, f"{file}:{line_of(body, start)}"),
+                             name)
+        for name in ("read_note", "explain"):
+            self.assertEqual((rows[name]["changes_state"], rows[name]["changes_at"]), (False, None), name)
+
+    def test_a_hidden_folder_is_not_read(self):
+        result = self.run_on({"server.py": UPLOAD, ".venv/lib/server.py": OTHER_FORMS})
+        self.assertEqual((result["files"], [r["handler"] for r in result["rows"]]), (["app/server.py"], ["upload"]))
+
+    def test_a_folder_that_is_not_in_the_project_folder_is_an_error(self):
+        project = Path(tempfile.mkdtemp(prefix="route-table-"))
+        self.addCleanup(shutil.rmtree, project)
+        (project / "app").mkdir()
+        for folder, why in (("..", "not in the project folder"), ("/etc", "not in the project folder"),
+                            ("no-such-folder", "no folder")):
+            with self.assertRaises(ValueError) as e:
+                table(project, folder)
+            self.assertIn(why, str(e.exception), folder)
 
     def test_a_clean_app_has_nothing_in_not_read(self):
         self.assertEqual(self.run_on({"server.py": UPLOAD})["not_read"], [])
@@ -238,6 +285,71 @@ OTHER_FORMS = '''\
     @mcp.custom_route(PATH, methods=["GET"])
     async def hidden(request):
         return "a path that is a name"
+    '''
+
+
+WRITES = '''\
+    from mcp.server.fastmcp import FastMCP
+
+    from files import append_note, clear_cache, note_text
+
+    mcp = FastMCP("sample")
+    COUNT = 0
+
+
+    @mcp.tool()
+    def save_note(text: str) -> str:
+        return append_note(text)
+
+
+    @mcp.tool()
+    def read_note() -> str:
+        return note_text()
+
+
+    @mcp.custom_route("/cache", methods=["DELETE"])
+    async def drop_cache(request):
+        return clear_cache()
+
+
+    @mcp.custom_route("/count", methods=["POST"])
+    async def count_up(request):
+        global COUNT
+        COUNT += 1
+        return COUNT
+
+
+    @mcp.tool()
+    def add_row(db, name: str) -> str:
+        db.execute("insert into notes (name) values (?)", (name,))
+        return "added"
+
+
+    @mcp.tool()
+    def explain() -> str:
+        """UPDATE notes SET text = 'x' would change a note: this docstring changes nothing."""
+        return "Delete from the cache with DELETE /cache."
+    '''
+FILE_WRITES = '''\
+    from pathlib import Path
+
+    NOTES = Path("notes.txt")
+
+
+    def append_note(text):
+        with open(path, "a") as f:
+            f.write(text)
+        return "saved"
+
+
+    def note_text():
+        with open(NOTES, "r") as f:
+            return f.read()
+
+
+    def clear_cache(path=Path("cache.json")):
+        path.unlink()
+        return "cleared"
     '''
 
 
