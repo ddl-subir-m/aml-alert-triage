@@ -221,7 +221,7 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_purpose_and_
 One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only: the store skill's rules and the order
 of its tools, the instructions' rules, the reference settings (each value of decision 8), the subscription's file, `compare.py` (run
 with no site-packages), the steps on this page (one row for each key of `agent.json` and of `subscription.json`, with the wizard's
-label), and no Domino host, ID or user name in the folder. The names, the evidence item, the field labels, the verdicts and the
+label), and no Domino host, ID or token in the folder. The names, the evidence item, the field labels, the verdicts and the
 severities come from `governance/checks.json`. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks
 each tool name against the service's gateway and relay, and each label in quotes in the tables against the wizard's code. The rest
 needs Linux: it starts the agent service with a fake Domino (the service's seam helper, `tests/agent_folder_seam.py`), and then:

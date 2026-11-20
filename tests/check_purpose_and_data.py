@@ -6,7 +6,7 @@ and compares them, and a README with the wizard steps. Seen from outside, as che
 With no service, it checks the files: the store skill's rules and the order of its tools, the instructions' rules, the reference
 settings (each value of decision 8), the subscription's file (its filter and its two templates, which name the bundle ID), the
 compare helper, the README's wizard steps (each setting of the reference settings, with the wizard's own label), and no Domino host,
-ID or user name (the repo is public). The names, the evidence item, the field labels, the verdicts and the severities come from
+ID or token (the repo is public). The names, the evidence item, the field labels, the verdicts and the severities come from
 governance/checks.json.
 
 With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), it checks each tool name against the service's
