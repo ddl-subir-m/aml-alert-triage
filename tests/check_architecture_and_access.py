@@ -190,6 +190,8 @@ FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 a
 own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
 check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
 rule("the doc says what the check could not check, always the default branch", "`could_not_check`", "default branch")
+rule("the doc's Architecture section has a table of each route: method, path, who can call it, what it changes",
+     "architecture section", "table of each route", "method", "path", "who can call it", "what it changes")
 
 # The push, the attachment, the findings, the evidence and the result
 rule("push the doc with git_push, and keep its ok, branch, commit and dryRun", "domino_git_push", "`ok`", "branch", "commit", "dryrun")
