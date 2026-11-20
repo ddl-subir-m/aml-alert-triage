@@ -12,7 +12,7 @@ The live script reads the agent back and compares it with this copy. All the dat
 |---|---|
 | `SKILL.md` | The store skill `purpose-and-data`: the checklist, from the bundle to the filled evidence item. A wizard agent can't have an own skill, so its checklist is a skill of the App's skills store. |
 | `instructions.md` | The agent's system prompt: its rules. |
-| `agent.json` | The reference settings: the agent as the wizard's Save sends it (`POST /api/agents`), with placeholders. Each key has its row in the steps below. |
+| `agent.json` | The reference settings: the agent as the wizard's Save sends it (`POST /api/agents`), with placeholders, and with no value of a deployment (an ID, the hardware tier). Each key has its row in the steps below. |
 | `subscription.json` | The event subscription: the body of `POST /api/agents/{id}/triggers`, as the Triggers tab's form sends it, with the demo project's ID as a placeholder. |
 | `compare.py` | Fills the placeholders, and compares what the App stores with `agent.json` and `subscription.json`. Stdlib only. |
 | `README.md` | This page. |
@@ -89,7 +89,7 @@ on step 5: "Project sandbox" sets Project datasets to Read only and turns Git pu
 
 | Setting | Set it to | In agent.json |
 |---|---|---|
-| "What runs the agent?" | the card "Domino Agent Harness (opencode)" | `lane` |
+| "What runs the agent?" | the card "Domino Agent Harness (opencode)": the Save sends no lane for it, and the App stores `harness` | `lane` |
 | "Name" | `Purpose and data`, exactly: the scripted check Validation status finds the check's task by this name | `name` |
 | "Description" | the `description` of agent.json | `description` |
 | "Where can it work?" | "Any project" | `scope` |
