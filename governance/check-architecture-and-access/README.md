@@ -76,6 +76,8 @@ the folder `tools/` is the switch.
 - Each row is one way into the App: each MCP tool (`@mcp.tool`, a POST to the MCP endpoint, with the path
   `/mcp (tool: <name>)`) and each custom route (`@mcp.custom_route`). A row has the kind, the method, the path, the handler with
   its file and line, `reads_identity` and `changes_state`, with the file and line of the evidence (`identity_at`, `changes_at`).
+  `mcp` is the App's server: a name that the same file binds to `FastMCP(...)`. A `.tool` or `.custom_route` decorator of
+  another name gets no row: it goes in `not_read`.
 - `reads_identity`: the handler, or a function of the same file that it calls, has the text `domino-username` (the header with
   the caller's identity).
 - `changes_state`: the handler, or a function of the App's code that it calls, has a write: a SQL text that writes, `open` to

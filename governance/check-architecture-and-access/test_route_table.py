@@ -166,6 +166,17 @@ class Samples(unittest.TestCase):
                          [(line_of(OTHER_FORMS, "@mcp.custom_route(PATH"), "a route whose path or methods are not plain values, "
                                                                            "on the handler hidden")])
 
+    def test_only_a_name_that_the_file_binds_to_fastmcp_is_the_apps_server(self):
+        result = self.run_on({"server.py": OTHER_SERVERS})
+        self.assertEqual([(r["kind"], r["path"], r["handler"]) for r in result["rows"]],
+                         [("MCP tool", "/mcp (tool: lookup)", "lookup"), ("route", "/status", "status")])
+        self.assertEqual([(n["line"], n["what"].split(":")[0]) for n in result["not_read"]],
+                         [(line_of(OTHER_SERVERS, "@scheduler.tool"), "a decorator that the tool does not know, on the handler "
+                                                                      "nightly"),
+                          (line_of(OTHER_SERVERS, "@router.custom_route"), "a decorator that the tool does not know, on the "
+                                                                           "handler side")])
+        self.assertIn("@scheduler.tool", result["not_read"][0]["what"])
+
     def test_the_writes_of_the_rule_change_state_and_a_text_about_a_write_does_not(self):
         rows = self.rows({"server.py": WRITES, "files.py": FILE_WRITES})
         want = {"save_note": ("app/files.py", "with open(path, \"a\")"), "drop_cache": ("app/files.py", "path.unlink()"),
@@ -294,6 +305,37 @@ OTHER_FORMS = '''\
     @mcp.custom_route(PATH, methods=["GET"])
     async def hidden(request):
         return "a path that is a name"
+    '''
+
+
+OTHER_SERVERS = '''\
+    from mcp.server.fastmcp import FastMCP
+
+    from tasks import make_router, scheduler
+
+    mcp = FastMCP("sample")
+    api: FastMCP = FastMCP("second")
+    router = make_router()
+
+
+    @mcp.tool()
+    def lookup() -> str:
+        return "a tool of the App's server"
+
+
+    @api.custom_route("/status", methods=["GET"])
+    async def status(request):
+        return "a route of the second FastMCP server"
+
+
+    @scheduler.tool
+    def nightly() -> str:
+        return "not a tool of a FastMCP server"
+
+
+    @router.custom_route("/side", methods=["GET"])
+    async def side(request):
+        return "not a route of a FastMCP server"
     '''
 
 

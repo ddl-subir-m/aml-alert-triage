@@ -18,13 +18,14 @@ WRITE_CALLS = ("write_text", "write_bytes", "mkdir", "makedirs", "touch", "renam
 FILE_MODE = re.compile(r"^[rwaxbt+]+$")   # the mode of open()
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 UNREAD = "unread"   # a way into the App that the tool can't read: it gets no row
+OTHER = "other"     # a .tool or .custom_route decorator of a name that the file does not bind to FastMCP(...): it gets no row
 GIVE = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
 
 
 @tool
 def route_table(folder: str) -> dict:
     """The table of the ways into a Python App: each MCP tool (`@<server>.tool`) and each custom route (`@<server>.custom_route`)
-    of its code. Give the folder of the App's Python code, relative to the project folder, for example `case_server`. The tool
+    of its code. `<server>` is a name that the same file binds to `FastMCP(...)`. Give the folder of the App's Python code, relative to the project folder, for example `case_server`. The tool
     parses the code with `ast`, and never imports or runs it.
 
     The result has `folder`, `files` (the files that it read), `rows` and `not_read`. Each row has `kind` (`MCP tool` or
@@ -59,12 +60,17 @@ def route_table(folder: str) -> dict:
     rows = []
     for rel, fns in functions.items():
         same_file = _by_name((rel, fn) for fn in fns)
+        servers = _servers(modules[rel])
         for fn in fns:
-            ways = [_way(dec, fn) for dec in fn.decorator_list]
+            ways = [_way(dec, fn, servers) for dec in fn.decorator_list]
             for dec, way in zip(fn.decorator_list, ways):
                 if way == UNREAD:
                     not_read.append({"file": rel, "line": dec.lineno, "what": "a route whose path or methods are not plain "
                                      f"values, on the handler {fn.name}: @{_shown(dec)}. It has no row"})
+                elif way == OTHER:
+                    not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator that the tool does not know, on the "
+                                     f"handler {fn.name}: @{_shown(dec)}. This file does not bind its name to FastMCP(...). It "
+                                     "has no row"})
                 elif way:
                     identity_at = _find(rel, fn, _reads_identity, same_file, set())
                     changes_at = _find(rel, fn, _writes, everywhere, set())
@@ -98,14 +104,26 @@ def _python_files(project, folder):
     return sorted(found)
 
 
-def _way(dec, fn):
+def _servers(tree):
+    """The names that the module `tree` binds to `FastMCP(...)` (`mcp = FastMCP(...)`, also in a function): the App's servers."""
+    names = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and isinstance(n.value, ast.Call) and _name(n.value) == "FastMCP":
+            names |= {t.id for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)}
+    return names
+
+
+def _way(dec, fn, servers):
     """The start of a row ({"kind", "method", "path"}) for the decorator `dec` on the function `fn`: `@<server>.tool`, with or
     without its arguments (the tool's name is its `name`, else the function's name), or `@<server>.custom_route(path, methods)`.
-    UNREAD for a custom route whose path or methods are not plain values. None for another decorator."""
+    `<server>` is a name of `servers`. OTHER for `.tool` or `.custom_route` of another name. UNREAD for a custom route whose path
+    or methods are not plain values. None for another decorator."""
     call = dec if isinstance(dec, ast.Call) else None
     func = call.func if call else dec
     if not isinstance(func, ast.Attribute) or func.attr not in ("tool", "custom_route"):
         return None
+    if not isinstance(func.value, ast.Name) or func.value.id not in servers:
+        return OTHER
     if func.attr == "tool":
         name = _value(_argument(call, 0, "name")) if call else None
         name = name if isinstance(name, str) else fn.name
