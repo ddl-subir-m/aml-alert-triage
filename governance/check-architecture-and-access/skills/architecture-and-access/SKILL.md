@@ -69,6 +69,7 @@ Done when: each problem is a real finding or a false hit, each real finding has 
 - `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/architecture-and-access-<bundleId>.md`.
 - `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call.
 - `tech_stack`, `architecture`, `access` and `dependencies`: the facts of step 2, with their evidence. `dependencies` is a table.
+- In the doc's Architecture section, add a table of each route: method, path, who can call it, what it changes.
 - `real_findings`: the table of the real findings, with the same names and severities that you file. `false_hits`: the table of the false hits, with their reasons.
 
 Done when: the file has no `{{` and no `<!--` left, it has only the top part and your middle part, and each section has its text.
