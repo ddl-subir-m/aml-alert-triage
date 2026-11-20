@@ -643,25 +643,28 @@ Nothing calls a Domino host. The live run is domino-agent-service #246.
 
 ## The App deployment policy
 
-The governance policy of the App validation demo (domino-agent-service spec #260). Before an App is deployed, its bundle goes through
-three stages. Two validator agents fill the Validation stage, and a person approves.
+The governance policy of the App validation demo (domino-agent-service specs #260 and #388). Before an App is deployed, its bundle
+goes through three stages. Three agents each do one check in the Validation stage, and a person approves. The agents advise. The
+approver decides.
 
 | Stage | Evidence item | Its fields | Who fills it |
 |---|---|---|---|
 | Intake | Intake | Purpose, Users, Data class (Public, Internal, Confidential, Restricted) | The analyst |
-| Validation | Validation (agent folder) | Verdict, Critical vulns, Summary, Doc location | The agent folder validator |
-| Validation | Validation (LangGraph) | The same four | The LangGraph validator |
-| Validation | Validation status | A scripted check: a click on Run shows each validator's task | The approver clicks |
+| Validation | Validation: Purpose and data | Verdict, Highest severity, Summary, Doc location | The agent Purpose and data |
+| Validation | Validation: Architecture and access | The same four | The agent Architecture and access |
+| Validation | Validation: Vulnerability scan | The same four | The agent Vulnerability scan |
+| Validation | Validation status | A scripted check: a click on Run shows one row for each check, and a count of the verdicts | The approver clicks |
 | Approval | (the approval Deployment sign off) | | The approver |
 
 | File | What it holds |
 |---|---|
+| `governance/checks.json` | The one source of the names and labels: the three checks (name, evidence item, folder), the four fields' labels, the verdicts and the severities. JSON, so that a stdlib script can read it |
 | `governance/app-deployment-policy.yaml` | The policy's definition, in Domino's policy YAML |
 | `governance/validation_status.py` | The scripted check. Stdlib only |
 
 ### Make the policy
 
-The live script of the demo (domino-agent-service #270) makes it. It replaces the four placeholders in a copy of the file, then
+The live script of the demo (domino-agent-service #397) makes it. It replaces the four placeholders in a copy of the file, then
 calls Domino's governance API: `POST /api/governance/v1/policies` with the name `App deployment policy`, `PUT .../policies/{id}/definition`
 with `{"definition": "<the YAML>"}`, and `PUT .../policies/{id}/status` with `{"status": "Published"}`. A Governance admin can do the
 same in Domino. The enforcement on new App versions is a policy enforcer (`POST /api/governance/v1/policy-enforcers`), not a part of
@@ -674,29 +677,49 @@ the file.
 | `__AGENT_SERVICE_URL__` | The agent service App's own URL, the one that ends in `/apps-internal/<App ID>`: the check's default |
 | `__APPROVER__` | Who approves: a user or an organization that is a member of the demo project |
 
-A validator fills its own evidence item with `write_policy_result`. Domino gives each field its own artifact ID when it reads the
-file, so the validator reads the IDs with `get_policy`: it finds its item by its name, and each field by its label. The values:
-Verdict is `approve`, `approve after fixes` or `do not approve`; Critical vulns is `yes` or `no`; Summary and Doc location are text.
+A check fills its own evidence item with `write_policy_result`. Domino gives each field its own artifact ID when it reads the
+file, so the check reads the IDs with `get_policy`: it finds its item by its name, and each field by its label. The values:
+Verdict is `approve`, `do not approve` or `could not check`; Highest severity is `S0`, `S1`, `S2`, `S3` or `none` (the highest
+severity of the check's real findings); Summary and Doc location are text.
 
 ### The scripted check
 
 The approver clicks Run on the Validation stage. Domino runs `governance/validation_status.py <bundle_id> <service_url>` as a Job, as
 the approver, with their token. The check reads the agent service App's task search (`GET /api/tasks` with `q` = the bundle ID and
-the event trigger), and prints one block for each validator: the agent, the task, its status, its verdict, its critical vulns, its
-doc location and the task's link. A validator with no task yet shows `not started`. A task that still runs shows its status. It
-writes the same lines to `validation_status.txt`, which Domino shows to the approver.
+the event trigger). It prints a table with one row for each check: its verdict, its highest severity, and its task's key and
+status. Below each row are the task's title, the doc location and the task's link. A check with no task says `not started`. A
+task that still runs shows its status. Then one count line counts the verdicts. It writes the same lines to
+`validation_status.txt`, which Domino shows to the approver.
 
+```
+Check                   | Verdict         | Highest severity | Task
+Purpose and data        | do not approve  | S1               | AGT-12, review
+    title:         Purpose and data: bundle <bundle ID>
+    doc location:  agent/AGT-12 at <commit>, docs/validation/<file>.md
+    task link:     <the App's URL>/#/tasks/<task ID>
+Architecture and access | could not check | none             | AGT-13, review
+    ...
+Vulnerability scan      | not yet         | not yet          | AGT-14, running
+    ...
+
+1 of 3 says do not approve, 1 of 3 says could not check, 1 of 3 has no verdict yet (running).
+The checks advise. You decide.
+```
+
+- **The count line.** Each check is counted once, as it is: `<n> of 3 say(s) <verdict>` for each verdict (in the policy's order),
+  then `has no verdict yet (<status>)` for a task that still runs, `has no verdict (failed)` for a task that ended with none, and
+  `is not started`. There is no merged verdict.
 - **The bundle ID.** Domino doesn't give it to a scripted check, so it is a parameter. Its default, `newest`, shows the newest event
-  task of each validator in the Job's project. To see one bundle, type its ID.
-- **What it reads.** A validator is found by its agent's name: `App validator (agent folder)` and `App validator (LangGraph)`. The
-  verdict, critical vulns and doc location are lines of the validator's result: `Verdict: ...`, `Critical vulns: ...`,
-  `Doc location: ...`.
-- **Who sees what.** The App shows a task only to the people who may read it. The approver must be an owner or an editor of both
-  agents.
+  task of each check in the Job's project. To see one bundle, type its ID.
+- **What it reads.** The checks and the labels come from `governance/checks.json`, next to the script. A check is found by its
+  agent's name, which is the check's name. The verdict, highest severity and doc location are lines of the check's result (its
+  `report_result`): `Verdict: ...`, `Highest severity: ...`, `Doc location: ...`.
+- **Who sees what.** The App shows a task only to the people who may read it. The approver must be an owner or an editor of the
+  three agents.
 - **It changes nothing.** It sends only GET requests to the App, and never starts or changes an agent. It sends the token only to
   an https URL, and never prints it.
-- **An error.** No token, an App URL that isn't https, or an App error (`App error: HTTP <status>: <detail>`) ends the check with
-  exit code 1.
+- **An error.** No `checks.json`, no token, an App URL that isn't https, or an App error (`App error: HTTP <status>: <detail>`)
+  ends the check with exit code 1.
 
 ### The check
 
@@ -705,12 +728,13 @@ python tests/check_validation_policy.py
 ```
 
 One line per case, with a non-zero exit code on any failure. It needs PyYAML (`pip install pyyaml`) to read the policy. It checks
-the three stages, the evidence items and their fields, the scripted check's command and parameters, the placeholders, and that the
-file has no host name and no Domino ID. Then it runs the scripted check with `python -S` against a fake App on 127.0.0.1 (in the
-shape of the agent service's task search) and a fake Domino API proxy: both validators done, one not started, a running, waiting,
-queued or failed task, earlier tasks, another agent's task, `newest`, the token (sent, never printed), the output file, only GET
-requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App URL that isn't
-https. Nothing calls a Domino host. The live run is domino-agent-service #270.
+`checks.json` against the spec, the three stages, the evidence items and their fields against `checks.json`, the scripted check's
+command and parameters, the placeholders, and that the file has no host name and no Domino ID. Then it runs the scripted check with
+`python -S` against a fake App on 127.0.0.1 (in the shape of the agent service's task search) and a fake Domino API proxy: three
+rows and the count line, a check with no task, a running, waiting, queued, failed or cancelled task, earlier tasks, another agent's
+task, no merged verdict, another `checks.json` next to a copy of the script, `newest`, the token (sent, never printed), the output
+file, only GET requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App
+URL that isn't https. Nothing calls a Domino host. The live run is domino-agent-service #397.
 
 ## Live check
 

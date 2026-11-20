@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {"name": "Purpose and data", "evidenceItem": "Validation: Purpose and data", "folder": "governance/check-purpose-and-data"},
+    {"name": "Architecture and access", "evidenceItem": "Validation: Architecture and access", "folder": "governance/check-architecture-and-access"},
+    {"name": "Vulnerability scan", "evidenceItem": "Validation: Vulnerability scan", "folder": "governance/check-vulnerability-scan"}
+  ],
+  "fields": {"verdict": "Verdict", "severity": "Highest severity", "summary": "Summary", "doc": "Doc location"},
+  "verdicts": ["approve", "do not approve", "could not check"],
+  "severities": ["S0", "S1", "S2", "S3", "none"]
+}
