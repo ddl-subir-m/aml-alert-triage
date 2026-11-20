@@ -114,10 +114,17 @@ The examples show how to pick a severity. They are not a list of the expected fi
 
 ## Finding names
 
-Each finding's name starts with the validator's short name in brackets, then a short title: `[folder] <title>` or
-`[LangGraph] <title>`. Two validators can file findings that look the same, and the name says which validator filed each one.
+Each finding's name is `[<check name>] <what> in <where>`: the check's name in brackets, what the problem is, and where it is (a
+route, a file, a dependency or an Intake field). The name says which check filed the finding, so that the analyst can send it to the
+right team.
 
-A validator files only the real findings. A false hit goes in the doc only, under "False hits", with the reason.
+| Check | An example |
+|---|---|
+| Purpose and data | `[Purpose and data] Data class Internal for Restricted data in the Intake` |
+| Architecture and access | `[Architecture and access] Anyone who can open the App can delete all state in POST /reset` |
+| Vulnerability scan | `[Vulnerability scan] Code execution through yaml.full_load in POST /upload` |
+
+A check files only its real findings. A false hit goes in its doc only, under "False hits", with the reason.
 
 ## A failed scan
 

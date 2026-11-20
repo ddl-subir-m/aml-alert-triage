@@ -366,9 +366,21 @@ for name, severity, said in AGREED:
     hit = [r for r in examples if len(r) > 2 and r[0] == name and all(w in one_line(r[1]).lower() for w in said)]
     check(f"the scale's example for {name}: {said[0]} is {severity}", [r[2] for r in hit] == [severity], hit or examples)
 check("each example's severity is on the scale", examples and all(len(r) > 2 and r[2] in SCALE for r in examples), examples)
-flat = " ".join(rules.split())
-check("governance/README.md says that each finding's name starts with the validator's short name, [folder] or [LangGraph]",
-      "[folder]" in flat and "[LangGraph]" in flat and "starts with" in flat, flat[:300])
+
+# The finding names: spec #388, Implementation Decision 7. The name says which check filed it and where the problem is.
+names = section(rules, "Finding names")
+check("governance/README.md has the finding name rule [<check name>] <what> in <where>",
+      "`[<check name>] <what> in <where>`" in names, one_line(names)[:300])
+for name in CHECKS:
+    shown = re.findall(rf"`\[{re.escape(name)}\] [^`]+ in [^`]+`", names)
+    check(f"the finding name rule has an example for {name}, in the rule's shape", len(shown) == 1, shown or one_line(names)[:300])
+check("the Vulnerability scan's example is the spec's: [Vulnerability scan] Code execution through yaml.full_load in POST /upload",
+      "`[Vulnerability scan] Code execution through yaml.full_load in POST /upload`" in names, one_line(names)[:300])
+check("a check files only its real findings, and a false hit goes in its doc only, with the reason",
+      re.search(r"files only its real findings\. A false hit goes in its doc only, [^.]*with the reason", one_line(names)) is not None,
+      one_line(names)[:400])
+check("governance/README.md names no validator of spec #260: no [folder], no [LangGraph] finding names",
+      "[folder]" not in rules and "[LangGraph]" not in rules, [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
 
 # ---------------------------------------------------------------------------------------------- the shared rules: a failed scan
 # Spec #388, Implementation Decision 10: only check 3 runs the scan now. A failed scan gives "could not check" (it replaces spec #260's
