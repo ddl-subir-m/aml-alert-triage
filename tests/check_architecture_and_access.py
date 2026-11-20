@@ -573,10 +573,10 @@ elif UNIT_TEST in every:
     ran = subprocess.run([sys.executable, "-B", "-m", "unittest", "-v"], cwd=FOLDER, env=env, capture_output=True, text=True,
                          timeout=120)
     count = re.search(r"^Ran (\d+) tests? in", ran.stderr, re.M)
-    told = [ln for ln in ran.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:", "Ran ", "OK", "FAILED"))]
+    result_lines = [ln for ln in ran.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:", "Ran ", "OK", "FAILED"))]
     check(f"the own tool's unit test passes ({UNIT_TEST}, python -m unittest in the folder): on the App's code, the demo branch's "
           "POST /upload and small sample files", ran.returncode == 0 and count and int(count.group(1)) > 0
-          and ran.stderr.rstrip().endswith("OK"), told or ran.stderr[-600:])
+          and ran.stderr.rstrip().endswith("OK"), result_lines or ran.stderr[-600:])
 check(f"governance/README.md (the shared rules, the hub of the three checks) names this folder, {PATH}/",
       f"`{PATH}/`" in text(ROOT / "governance" / "README.md"))
 
@@ -761,16 +761,24 @@ check(f"the Job's spec has the own tool: the text of {TOOL} and the tool {TOOL_N
       and own_spec.get("timeoutSeconds") and own_spec.get("maxResultBytes"),
       {k: (sorted(v) if k == "files" else v) for k, v in own_spec.items() if k != "tools"})
 oc = spec.get("opencodeConfig") or {}
+oc_agents = oc.get("agent") or {}   # opencode's agent block: build (the main agent), the custom subagent, general and explore
+
+
+def permission_of(name):
+    """The permission map of the entry `name` of opencode's agent block, or {}."""
+    return (oc_agents.get(name) or {}).get("permission") or {}
+
+
 check(f"...and opencode gets the own tools' server, own, and the main agent may call {OWN} (own_*: allow)",
-      "own" in (oc.get("mcp") or {}) and (((oc.get("agent") or {}).get("build") or {}).get("permission") or {}).get("own_*")
-      == "allow", {"mcp": sorted(oc.get("mcp") or {}), "build": (oc.get("agent") or {}).get("build")})
+      "own" in (oc.get("mcp") or {}) and permission_of("build").get("own_*") == "allow",
+      {"mcp": sorted(oc.get("mcp") or {}), "build": oc_agents.get("build")})
 provider = next(iter(oc.get("provider") or {}), "(no provider)")
-compiled = (oc.get("agent") or {}).get(SUBAGENT_NAME) or {}
+compiled = oc_agents.get(SUBAGENT_NAME) or {}
 check(f"the Job's spec has the custom subagent {SUBAGENT_NAME}: a subagent of opencode with its description, the agent's model and "
       "its instructions", {k: compiled.get(k) for k in ("description", "mode", "model", "prompt")}
       == {"description": SUB_DESCRIPTION, "mode": "subagent", "model": f"{provider}/{MODEL}", "prompt": sub_text},
       {k: compiled.get(k) for k in ("description", "mode", "model")})
-sub_perm, main_perm = compiled.get("permission") or {}, oc.get("permission") or {}
+sub_perm, main_perm = permission_of(SUBAGENT_NAME), oc.get("permission") or {}
 # domino_write_project_*: the service denies the project's write tools for `access.project: read` (agent_service/custom_subagents.py,
 # WRITES): the proof of Project files read
 DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "domino_write_project_*", "task",
@@ -780,8 +788,8 @@ check("...it may read the project's files as the main agent does, and nothing mo
       sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
       and {k: sub_perm.get(k) for k in DENIED} == dict.fromkeys(DENIED, "deny"), {k: sub_perm.get(k) for k in ("read", *DENIED)})
 check("...the main agent may start it (task: allow), and the built-in subagent stays off (opencode's general and explore disabled)",
-      main_perm.get("task") == "allow" and {k: (oc.get("agent") or {}).get(k) for k in ("general", "explore")}
-      == {"general": {"disable": True}, "explore": {"disable": True}}, (main_perm.get("task"), sorted(oc.get("agent") or {})))
+      main_perm.get("task") == "allow" and {k: oc_agents.get(k) for k in ("general", "explore")}
+      == {"general": {"disable": True}, "explore": {"disable": True}}, (main_perm.get("task"), sorted(oc_agents)))
 check(f"...and the agent's rules name {SUBAGENT_NAME} with its description, and say that the built-in subagent is off",
       f"`{SUBAGENT_NAME}`: {SUB_DESCRIPTION}" in rules and "The built-in subagent is off" in rules, rules[-600:])
 skills = [(s.get("name"), s.get("own"), s.get("content")) for s in spec.get("skills") or []]

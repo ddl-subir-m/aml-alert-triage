@@ -19,7 +19,7 @@ FILE_MODE = re.compile(r"^[rwaxbt+]+$")   # the mode of open()
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 UNREAD = "unread"   # a way into the App that the tool can't read: it gets no row
 OTHER = "other"     # a .tool or .custom_route decorator of a name that the file does not bind to FastMCP(...): it gets no row
-GIVE = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
+FOLDER_HINT = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
 
 
 @tool
@@ -97,9 +97,9 @@ def _python_files(project, folder):
     __pycache__ are not read. ValueError for a folder that is not in the project folder, or that does not exist."""
     base = (project / folder).resolve()
     if base != project and project not in base.parents:
-        raise ValueError(f"the folder {folder!r} is not in the project folder. {GIVE}")
+        raise ValueError(f"the folder {folder!r} is not in the project folder. {FOLDER_HINT}")
     if not base.is_dir():
-        raise ValueError(f"no folder {folder!r} in the project folder. {GIVE}")
+        raise ValueError(f"no folder {folder!r} in the project folder. {FOLDER_HINT}")
     found = []
     for dirpath, dirnames, filenames in os.walk(base):   # a link to a folder is not walked into
         dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
@@ -159,10 +159,10 @@ def _has_path(dec):
             and isinstance(dec.args[0].value, str) and dec.args[0].value.startswith("/"))
 
 
-def _shown(node, limit=80):
-    """The code of `node`, cut to `limit` characters."""
+def _shown(node):
+    """The code of `node`, cut to 80 characters."""
     text = ast.unparse(node)
-    return text if len(text) <= limit else text[:limit - 3] + "..."
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 def _by_name(pairs):
@@ -192,8 +192,8 @@ def _find(rel, fn, hit, index, seen):
 
 def _body(fn):
     """Each node of the body of the function `fn`, with no docstring and no other string statement (a text that runs nothing)."""
-    said = {id(s.value) for s in ast.walk(fn) if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)}
-    return [n for stmt in fn.body for n in ast.walk(stmt) if id(n) not in said]
+    text_statements = {id(s.value) for s in ast.walk(fn) if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)}
+    return [n for stmt in fn.body for n in ast.walk(stmt) if id(n) not in text_statements]
 
 
 def _texts(fn):
