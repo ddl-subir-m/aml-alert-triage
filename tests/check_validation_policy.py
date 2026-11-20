@@ -38,6 +38,35 @@ def check(name, ok, detail=""):
         failed.append(name)
 
 
+# ------------------------------------------------------------------------------------------ the one source of the names and labels
+# The spec's decisions 5 and 7 (domino-agent-service #388): the three checks, their evidence items and folders, the four fields'
+# labels, the verdicts and the severities. These literals are the spec's text; checks.json must say the same.
+CHECKS_FILE = ROOT / "governance" / "checks.json"
+SPEC_CHECKS = [
+    {"name": "Purpose and data", "evidenceItem": "Validation: Purpose and data", "folder": "governance/check-purpose-and-data"},
+    {"name": "Architecture and access", "evidenceItem": "Validation: Architecture and access",
+     "folder": "governance/check-architecture-and-access"},
+    {"name": "Vulnerability scan", "evidenceItem": "Validation: Vulnerability scan", "folder": "governance/check-vulnerability-scan"}]
+SPEC_FIELDS = {"verdict": "Verdict", "severity": "Highest severity", "summary": "Summary", "doc": "Doc location"}
+SPEC_VERDICTS = ["approve", "do not approve", "could not check"]
+SPEC_SEVERITIES = ["S0", "S1", "S2", "S3", "none"]
+try:
+    source = json.loads(CHECKS_FILE.read_text())
+except (OSError, ValueError) as e:
+    source = e
+check("governance/checks.json is in the repo and parses to a JSON object", isinstance(source, dict), source)
+source = source if isinstance(source, dict) else {}
+check("its keys are checks, fields, verdicts and severities, and only those",
+      sorted(source) == ["checks", "fields", "severities", "verdicts"], sorted(source))
+check("checks: Purpose and data, Architecture and access, Vulnerability scan, in that order, each with its name, its evidence item "
+      "(Validation: <name>) and its folder (governance/check-<name in lower case, with dashes>)",
+      source.get("checks") == SPEC_CHECKS, source.get("checks"))
+check("fields: the four labels Verdict, Highest severity, Summary, Doc location, by their keys verdict, severity, summary, doc",
+      source.get("fields") == SPEC_FIELDS, source.get("fields"))
+check("verdicts: approve, do not approve, could not check", source.get("verdicts") == SPEC_VERDICTS, source.get("verdicts"))
+check("severities: S0, S1, S2, S3, none", source.get("severities") == SPEC_SEVERITIES, source.get("severities"))
+
+
 # ------------------------------------------------------------------------------------------------------------------- the policy
 try:
     import yaml
