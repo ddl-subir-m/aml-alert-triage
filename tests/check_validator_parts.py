@@ -236,37 +236,6 @@ check("the summary says that the install failed, with pip's first error",
 
 shutil.rmtree(tmp, ignore_errors=True)
 
-# ------------------------------------------------------------------------------------------------------------------ the doc template
-# The sections of spec #260, Implementation Decision 7, in its order.
-SECTIONS = ["App and version", "Purpose", "Users and data class", "Tech stack", "Architecture", "Dependencies", "Scan results",
-            "Findings", "Critical vulns", "Verdict for the approver", "What the validator could not check"]
-TEMPLATE = ROOT / "governance" / "validation-doc.md"
-doc = TEMPLATE.read_text() if TEMPLATE.is_file() else ""
-headings = [ln[3:].strip() for ln in doc.splitlines() if ln.startswith("## ")]
-check("the doc template has every section of the spec, in its order, and no other", headings == SECTIONS, headings)
-parts = {}
-for ln in doc.splitlines():
-    if ln.startswith("## "):
-        parts[ln[3:].strip()] = ""
-    elif parts:
-        parts[list(parts)[-1]] += ln.lower() + "\n"
-check("each section has a {{field}} for the validator to fill", bool(parts) and all(re.search(r"\{\{[a-z_]+\}\}", t) for t in parts.values()),
-      [h for h, t in parts.items() if not re.search(r"\{\{[a-z_]+\}\}", t)])
-
-
-def says(section, *words):
-    text = parts.get(section, "")
-    check(f"the doc template's {section!r} section says: {', '.join(words)}", all(w in text for w in words), text[:300])
-
-
-says("App and version", "commit")
-says("Users and data class", "intake")
-says("Dependencies", "installed")
-says("Scan results", "tool", "version", "hits")
-says("Findings", "severity", "evidence", "false", "reason")
-says("Critical vulns", "yes", "no", "s0")
-says("Verdict for the approver", "approve", "approve after fixes", "do not approve")
-
 # ---------------------------------------------------------------------------------------------------- the shared rules: the checks
 # Spec #388, Implementation Decisions 5 to 7: three checks, each one built its own way, each one owns one part. The names are the
 # ones of the spec (and of governance/checks.json, which this check does not read).
@@ -409,6 +378,73 @@ check("a failed scan gives the Verdict could not check, and never do not approve
 check("a failed scan gives no finding from the scan", "No finding comes from the scan" in failed_scan, failed_scan[:400])
 check("after a failed scan, the Summary and the doc's Scan results and 'What this check could not check' say that the scan failed, "
       "and why", all(w in failed_scan for w in ("Summary", "Scan results", "What this check could not check", "why")), failed_scan[:400])
+
+# ------------------------------------------------------------------------------------------------------------------ the doc template
+# Spec #388, Implementation Decision 7: one shared top part (the App, the commit, the bundle, the check's name, the four evidence
+# fields, and "What this check could not check"), then one middle part for each check, each with its findings. A check keeps the top
+# part and its own middle part. Its headings are the check's name, so that a check finds its part by its name.
+TEMPLATE = ROOT / "governance" / "validation-doc.md"
+doc = TEMPLATE.read_text() if TEMPLATE.is_file() else ""
+TOP = ["App and version", "Evidence", "What this check could not check"]
+MIDDLE = {"Purpose and data": ["Purpose", "Users", "Data class", "Findings"],
+          "Architecture and access": ["Tech stack", "Architecture", "Access", "Dependencies", "Findings"],
+          "Vulnerability scan": ["Scan results", "Findings"]}
+FINDINGS = ["Real findings", "False hits"]
+tree, path, text = {}, (), {}
+for ln in doc.splitlines():
+    m = re.match(r"^(#{1,4}) (.*)", ln)
+    if m:
+        level = len(m.group(1))
+        path = path[:level - 1] + ("",) * (level - 1 - len(path)) + (m.group(2).strip(),)
+        tree.setdefault(path[:-1], []).append(path[-1])
+        text[path] = ""
+    elif path:
+        text[path] += ln.lower() + "\n"
+title = [p for p in text if len(p) == 1]
+check("the doc template has one title, which names the App", len(title) == 1 and "{{app}}" in title[0][0], title)
+top_line = text.get(title[0], "") if title else ""
+check("the line under the title names the check, the bundle and when the doc was written",
+      all(f in top_line for f in ("{{check}}", "{{bundle_id}}", "{{written_at}}")), top_line[:300])
+h2 = tree.get(title[0], []) if title else []
+check("the doc template has the shared top part, then a middle part for each check, named by the check, in the checks' order",
+      h2 == TOP + CHECKS, h2)
+for name in CHECKS:
+    got = tree.get(title[0] + (name,), []) if title else []
+    check(f"the middle part {name!r} has its sections, in order: {', '.join(MIDDLE[name])}", got == MIDDLE[name], got)
+    got = tree.get(title[0] + (name, "Findings"), []) if title else []
+    check(f"the middle part {name!r} has its own findings: the real ones and the false hits", got == FINDINGS, got)
+leaves = [p for p in text if p not in tree]
+check("each section of the template has a {{field}} to fill", leaves and all(re.search(r"\{\{[a-z_]+\}\}", text[p]) for p in leaves),
+      [" > ".join(p[1:]) for p in leaves if not re.search(r"\{\{[a-z_]+\}\}", text[p])])
+top = title[0] if title else ("",)
+ev = [ln[2:] for ln in text.get(top + ("Evidence",), "").splitlines() if re.match(r"^- [a-z ]+: \{\{", ln)]
+check("the top part's Evidence has the four evidence fields, in order, each as '- <label>: {{field}}'",
+      [ln.split(":")[0] for ln in ev] == [f.lower() for f in FIELDS], ev)
+
+
+def says(where, *words):
+    got = text.get(top + where, "")
+    check(f"the doc template's {' > '.join(where)!r} says: {', '.join(words)}", all(w in got for w in words), got[:300])
+
+
+says(("App and version",), "repository", "commit")
+says(("Evidence",), "approve", "do not approve", "could not check", "s0", "s3", "none", "same values as the evidence item")
+says(("What this check could not check",), "the commit of the app version under review", "default branch", "running app")
+says(("Purpose and data", "Purpose"), "code", "readme", "intake's purpose")
+says(("Purpose and data", "Users"), "intake's users")
+says(("Purpose and data", "Data class"), "kind of data", "built to hold", "intake's data class", "not by whether the sample data is fake",
+     "public", "internal", "confidential", "restricted")
+says(("Architecture and access", "Tech stack"), "language", "frameworks", "server", "storage")
+says(("Architecture and access", "Architecture"), "entry point", "routes", "where the state is", "who can call what")
+says(("Architecture and access", "Access"), "who can open the app", "what it changes", "identity")
+says(("Architecture and access", "Dependencies"), "version or range", "pinned", "how and when it is installed")
+says(("Vulnerability scan", "Scan results"), "tool", "version", "hits", "did not check", "governance/scan.py")
+for name in CHECKS:
+    says((name, "Findings", "Real findings"), "name", "severity", "evidence", "fix", f"[{name.lower()}]")
+    says((name, "Findings", "False hits"), "reason")
+check("the doc template has no rule of spec #260 left: no Critical vulns, no 'not analyzed', no 'approve after fixes', no validator",
+      not re.search(r"critical vulns|not analyzed|approve after fixes|validator", doc, re.I),
+      sorted(set(m.group(0) for m in re.finditer(r"critical vulns|not analyzed|approve after fixes|validator", doc, re.I))))
 
 # --------------------------------------------------------------------------------------------- words that a public reader can follow
 # The repo is public. Its validator files say what was learned, never "as the probe did" (a private note). And they use the
