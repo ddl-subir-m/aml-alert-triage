@@ -30,12 +30,18 @@ def table(project, folder):
         os.chdir(before)
 
 
-def def_line(path, name):
-    """The line of `def <name>(` in the file `path` (1 is the first), found in the text."""
-    for n, line in enumerate(path.read_text().splitlines(), 1):
-        if line.lstrip().startswith((f"def {name}(", f"async def {name}(")):
+def by_handler(result):
+    """The rows of the tool's `result`, as {handler: row}."""
+    return {r["handler"]: r for r in result["rows"]}
+
+
+def line_of(text, part):
+    """The line of `text` (1 is the first) that first has the text `part`: in a file of the App, or in a sample as its file has
+    it (dedent keeps the lines)."""
+    for n, line in enumerate(text.splitlines(), 1):
+        if part in line:
             return n
-    raise AssertionError(f"no def {name} in {path}")
+    raise AssertionError(f"no line with {part!r}")
 
 
 class TheAppOfMain(unittest.TestCase):
@@ -44,52 +50,48 @@ class TheAppOfMain(unittest.TestCase):
 
     def setUp(self):
         self.result = table(PROJECT, "case_server")
+        self.row = by_handler(self.result)   # {handler: its row}
 
     def test_five_mcp_tools_and_two_custom_routes_each_with_its_handler_file_and_line(self):
-        server = PROJECT / "case_server" / "server.py"
-        want = [("MCP tool", "POST", f"/mcp (tool: {n})", n, "case_server/server.py", def_line(server, n))
+        server = (PROJECT / "case_server" / "server.py").read_text()
+        want = [("MCP tool", "POST", f"/mcp (tool: {n})", n, "case_server/server.py", line_of(server, f"def {n}("))
                 for n in ("get_alert", "get_customer_profile", "get_transactions", "close_alert", "escalate_to_sar")]
-        want += [("route", "POST", "/reset", "reset", "case_server/server.py", def_line(server, "reset")),
-                 ("route", "GET", "/", "case_board", "case_server/server.py", def_line(server, "case_board"))]
-        if '@mcp.custom_route("/upload", methods=["POST"])' in server.read_text():   # the demo branch: exactly this one row more
-            want.append(("route", "POST", "/upload", "upload", "case_server/server.py", def_line(server, "upload")))
+        want += [("route", "POST", "/reset", "reset", "case_server/server.py", line_of(server, "def reset(")),
+                 ("route", "GET", "/", "case_board", "case_server/server.py", line_of(server, "def case_board("))]
+        if '@mcp.custom_route("/upload", methods=["POST"])' in server:   # the demo branch: exactly this one row more
+            want.append(("route", "POST", "/upload", "upload", "case_server/server.py", line_of(server, "def upload(")))
         want.sort(key=lambda r: (r[4], r[5]))   # the tool's order: by file, then line
         got = [(r["kind"], r["method"], r["path"], r["handler"], r["file"], r["line"]) for r in self.result["rows"]]
         self.assertEqual(got, want)
 
     def test_the_demo_branchs_post_upload_when_it_is_there_reads_no_identity_and_changes_nothing(self):
-        rows = {r["handler"]: r for r in self.result["rows"]}
-        if "upload" in rows:
-            self.assertEqual((rows["upload"]["reads_identity"], rows["upload"]["changes_state"]), (False, False))
+        if "upload" in self.row:
+            self.assertEqual((self.row["upload"]["reads_identity"], self.row["upload"]["changes_state"]), (False, False))
 
     def test_close_alert_and_escalate_to_sar_read_the_identity_and_change_state(self):
-        rows = {r["handler"]: r for r in self.result["rows"]}
         for name in ("close_alert", "escalate_to_sar"):
-            self.assertEqual((rows[name]["reads_identity"], rows[name]["changes_state"]), (True, True), name)
+            self.assertEqual((self.row[name]["reads_identity"], self.row[name]["changes_state"]), (True, True), name)
 
     def test_post_reset_reads_no_identity_and_changes_state(self):
-        rows = {r["handler"]: r for r in self.result["rows"]}
-        self.assertEqual((rows["reset"]["reads_identity"], rows["reset"]["changes_state"]), (False, True))
+        self.assertEqual((self.row["reset"]["reads_identity"], self.row["reset"]["changes_state"]), (False, True))
 
     def test_get_slash_and_the_three_get_tools_change_nothing(self):
-        rows = {r["handler"]: r for r in self.result["rows"]}
         for name in ("case_board", "get_alert", "get_customer_profile", "get_transactions"):
-            self.assertEqual((rows[name]["reads_identity"], rows[name]["changes_state"]), (False, False), name)
+            self.assertEqual((self.row[name]["reads_identity"], self.row[name]["changes_state"]), (False, False), name)
 
     def test_each_yes_cites_its_evidence_and_each_no_has_none(self):
         """The file and line where the rule found the identity or the write: the header in acting_identity, the SQL in
         store.py."""
         server, store = (PROJECT / "case_server" / f for f in ("server.py", "store.py"))
-        header = next(n for n, line in enumerate(server.read_text().splitlines(), 1) if '.get("domino-username")' in line)
-        rows = {r["handler"]: r for r in self.result["rows"]}
-        self.assertEqual(rows["close_alert"]["identity_at"], f"case_server/server.py:{header}")
+        header = line_of(server.read_text(), '.get("domino-username")')
+        self.assertEqual(self.row["close_alert"]["identity_at"], f"case_server/server.py:{header}")
         writes = {n for n, line in enumerate(store.read_text().splitlines(), 1)
                   if any(w in line for w in ('"UPDATE ', '"INSERT ', "'DROP TABLE"))}
         for name in ("close_alert", "escalate_to_sar", "reset"):
-            file, _, line = rows[name]["changes_at"].partition(":")
+            file, _, line = self.row[name]["changes_at"].partition(":")
             self.assertEqual(file, "case_server/store.py", name)
             self.assertIn(int(line), writes, name)
-        self.assertEqual((rows["reset"]["identity_at"], rows["get_alert"]["changes_at"]), (None, None))
+        self.assertEqual((self.row["reset"]["identity_at"], self.row["get_alert"]["changes_at"]), (None, None))
 
     def test_it_reads_each_file_of_the_folder_and_nothing_is_in_not_read(self):
         self.assertEqual((self.result["folder"], self.result["files"], self.result["not_read"]),
@@ -124,7 +126,8 @@ class Samples(unittest.TestCase):
         return table(project, "app")
 
     def rows(self, files):
-        return {r["handler"]: r for r in self.run_on(files)["rows"]}
+        """The tool's result for app/ with `files`, as {handler: row}."""
+        return by_handler(self.run_on(files))
 
     def test_the_demo_branchs_post_upload_reads_no_identity_and_changes_nothing(self):
         # The route as the demo branch demo/app-validation has it in case_server/server.py (the planted yaml.full_load)
@@ -402,11 +405,6 @@ FILE_WRITES = '''\
         path.unlink()
         return "cleared"
     '''
-
-
-def line_of(text, start):
-    """The line of the sample `text` that starts with `start` (after its indent), as the sample file has it."""
-    return next(n for n, line in enumerate(textwrap.dedent(text).splitlines(), 1) if line.lstrip().startswith(start))
 
 
 if __name__ == "__main__":

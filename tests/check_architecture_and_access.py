@@ -559,11 +559,12 @@ brule("...and on Linux, deploy registers the custom subagent, and the Job's spec
 # --------------------------------------------------------------------------------------------- the own tool's unit test
 # test_route_table.py, as the README says to run it (python -m unittest, in the folder). It needs domino_agent: the domino-agent
 # package of this Python, or the package of the AGENT_SERVICE_REPO checkout. -B: no __pycache__ (the folder can be read only).
-SERVICE_REPO = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+SERVICE_REPO = os.environ.get("AGENT_SERVICE_REPO", "").strip()   # the one read of it: the unit test, and the service parts below
+service = Path(SERVICE_REPO).expanduser().resolve() if SERVICE_REPO else None   # the domino-agent-service checkout, or None
 env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 package = importlib.util.find_spec("domino_agent") is not None
-if not package and SERVICE_REPO and (Path(SERVICE_REPO).expanduser() / "domino_agent" / "__init__.py").is_file():
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(Path(SERVICE_REPO).expanduser().resolve()), env.get("PYTHONPATH")) if p)
+if not package and service and (service / "domino_agent" / "__init__.py").is_file():
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(service), env.get("PYTHONPATH")) if p)
     package = True
 if not package:
     print("SKIP: this Python has no domino_agent (no domino-agent package and no AGENT_SERVICE_REPO), so the own tool's unit test, "
@@ -579,11 +580,9 @@ elif UNIT_TEST in every:
 check(f"governance/README.md (the shared rules, the hub of the three checks) names this folder, {PATH}/",
       f"`{PATH}/`" in text(ROOT / "governance" / "README.md"))
 
-service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
          f"it to a domino-agent-service checkout ({PATH}/README.md, \"The check\")")
-service = Path(service).expanduser().resolve()
 if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "agent_runtime" / "proxies.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and proxies.py)", False)
     done()
