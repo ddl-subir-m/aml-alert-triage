@@ -313,8 +313,7 @@ check("each placeholder of the two templates is a field of the stage-change payl
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
 
 # The AML repo is public: no Domino host, no ID of a Domino object, no token in the folder (the live script fills the placeholder)
-leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
-                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}", body)})
+leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/three_checks.py, LEAK)
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)

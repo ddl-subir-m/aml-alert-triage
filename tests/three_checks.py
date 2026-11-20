@@ -81,3 +81,14 @@ def rules(says, body, units=str.splitlines):
     def rule(name, *words):
         check(f"{says}: {name}", any(all(w.lower() in u for w in words) for u in found), words)
     return rule
+
+
+# ------------------------------------------------------------------------------------------------------------- the public repo
+# What the public repo must not hold: the ID of a Domino object (24 hex digits, an agent's agt_ ID, a store skill's skl_ ID), a
+# Domino host, an App's own URL (apps-internal/<App ID>), or a token (a JWT starts with eyJ).
+LEAK = re.compile(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|skl_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}")
+
+
+def leaks(files):
+    """Each match of LEAK in `files` ({path: text}), as "<path>: <match>", sorted."""
+    return sorted({f"{rel}: {m.group(0)}" for rel, body in files.items() for m in LEAK.finditer(body)})

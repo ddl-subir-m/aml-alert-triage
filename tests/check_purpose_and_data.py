@@ -473,9 +473,7 @@ hub = text(ROOT / "governance" / "README.md")
 check("governance/README.md (the hub of the three checks) names this folder", f"`{FOLDER.relative_to(ROOT)}/`" in hub)
 
 # ----------------------------------------------------------------------------------------------- the public repo: no leak, no dash
-leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
-                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|skl_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+"
-                                     r"|eyJ[\w-]{20,}", body)})
+leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/three_checks.py, LEAK)
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_purpose_and_data.py", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
