@@ -1,10 +1,15 @@
-"""The agent folder validator (governance/validator-folder/): the App validator of the harness lane (opencode), domino-agent-service
-spec #260, Implementation Decision 8, ticket #267. Seen from outside: its files as `domino-agent deploy` uploads them, its checklist
-skill as the agent reads it, the templates of its event subscription, and the agent that a local agent service registers from it.
+"""Check 2, Architecture and access (governance/check-architecture-and-access/): a registered agent of the harness lane (opencode),
+an agent folder that `domino-agent deploy` registers (domino-agent-service spec #388, Implementation Decision 9, ticket #394). It is
+the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, Run a Job off. Seen from
+outside: its files as `domino-agent deploy` uploads them, its checklist skill as the agent reads it, the templates of its event
+subscription, and the agent that a local agent service registers from it.
 
-With no service, it checks the folder's files: the ones that deploy uploads, the checklist's rules and the order of its tools, the
-instructions' rules, the tool names (as a harness agent sees them: domino_<name>), the subscription's file (its filter and its two
-templates, which name the bundle ID), no Domino host or ID (the repo is public), and the READMEs.
+The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
+and the rules from governance/README.md and governance/validation-doc.md (the shared rules of the three checks).
+
+With no service, it checks the folder's files: the ones that deploy uploads, the settings of definition.md, the checklist's rules and
+the order of its tools, the instructions' rules, the tool names (as a harness agent sees them: domino_<name>), the subscription's file
+(its filter and its two templates, which name the bundle ID), no Domino host or ID (the repo is public), and the folder's README.
 
 With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), it checks each tool name against the service's
 gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with
@@ -12,25 +17,25 @@ a fake Domino (the service's seam helper, tests/agent_folder_seam.py), with the 
   - `domino-agent deploy --dry-run` passes the service's folder rules; `deploy` registers the agent, which can't run yet.
   - The owner makes the subscription from subscription.json. A stage move (the audit poller's payload) starts no task before the
     service account's token, nor for an analyst who may not use the agent; then one task, as the service account, and its Job.
-  - The Job's spec (the skill, the access rows, the permissions, the limits) and the gateway's decisions for that task on the event's
-    bundle: the attachment, the findings and the evidence are allowed by the row "Other resources attached to the task".
+  - The Job's spec (the skill, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
+    for that task on the event's bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
+    attached to the task", and run_job is denied.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
-#270.
+#397.
 
-  python tests/check_validator_folder.py                                                   # the files only
-  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_folder.py   # on Linux: everything (its README)
+  python tests/check_architecture_and_access.py                                                   # the files only
+  AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_architecture_and_access.py   # on Linux: everything (README)
 """
 import json
 import os
 import re
-import runpy
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FOLDER = ROOT / "governance" / "validator-folder"
-UPLOADED = ("definition.md", "instructions.md", "skills/app-validation/SKILL.md")   # what deploy uploads of the folder
+PATH = "governance/check-architecture-and-access"   # the folder, as checks.json names it
+FOLDER = ROOT / PATH
 failed = []
 
 
@@ -54,25 +59,78 @@ def text(path):
 
 
 def known(rel):
-    """Is `rel` (a path in the folder) a file that deploy uploads? definition.md, instructions.md, skills/<name>/<file> and
-    subagents/<file>.md (the service's docs/definition-file.md, "The limits and the refusals")."""
+    """Is `rel` (a path in the folder) a file that deploy uploads? definition.md, instructions.md, skills/<name>/<file>,
+    subagents/<file>.md, tools/<file> and a file in schedules/ or subscriptions/ (the service's domino_agent/folder_format.is_known).
+    A hidden part or __pycache__ is not one."""
     parts = rel.split("/")
+    if any(not p or p.startswith(".") or p == "__pycache__" for p in parts):
+        return False
     return rel in ("definition.md", "instructions.md") or (len(parts) >= 3 and parts[0] == "skills") \
-        or (len(parts) == 2 and parts[0] == "subagents" and rel.endswith(".md"))
+        or (len(parts) == 2 and parts[0] == "subagents" and rel.endswith(".md")) \
+        or (len(parts) >= 2 and parts[0] in ("tools", "schedules", "subscriptions"))
 
+
+# ------------------------------------------------------------------------------------------------- the names, from checks.json
+# governance/checks.json is the one source of the names and labels of the three checks (ticket #392)
+try:
+    CHECKS = json.loads(text(ROOT / "governance" / "checks.json"))
+except ValueError as e:
+    CHECKS = {"error": str(e)}
+CHECKS = CHECKS if isinstance(CHECKS, dict) else {}
+me = next((c for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") == PATH), {})
+check(f"governance/checks.json has this check, with its folder {PATH}, its name and its evidence item",
+      bool(me.get("name") and me.get("evidenceItem")), CHECKS.get("error") or CHECKS.get("checks"))
+NAME = me.get("name") or "(no name in checks.json)"   # the agent's title, the findings' prefix, the doc's {{check}}
+EVIDENCE = me.get("evidenceItem") or "(no evidence item in checks.json)"   # its evidence item in the policy
+LABELS = [(CHECKS.get("fields") or {}).get(k) or f"(no {k} label)" for k in ("verdict", "severity", "summary", "doc")]
+VERDICTS = list(CHECKS.get("verdicts") or ["(no verdicts)"])
+SEVERITIES = list(CHECKS.get("severities") or ["(no severities)"])
+OTHERS = [c.get("name") for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") != PATH]
+SLUG = NAME.lower().replace(" ", "-")   # architecture-and-access: the Registration's name, the skill's name, the doc's file name
+SKILL = f"skills/{SLUG}/SKILL.md"
+UPLOADED = ("definition.md", "instructions.md", SKILL)   # what deploy uploads of the folder
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
 files = {k: v for k, v in every.items() if known(k)}
-check("governance/validator-folder/ uploads definition.md, instructions.md and one own skill, app-validation, and nothing else",
+check(f"{PATH}/ uploads definition.md, instructions.md and one own skill, {SLUG}, and nothing else",
       sorted(files) == sorted(UPLOADED), sorted(files))
 settings, instructions, skill = (files.get(k, "") for k in UPLOADED)
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
 top = re.match(r"---\n(.*?)\n---\n", skill, re.S)
 check("the skill's SKILL.md has YAML on top with its folder's name and a description (else opencode never offers it)",
-      bool(top) and re.search(r"^name: app-validation$", top.group(1), re.M) and re.search(r"^description: \S.{20,}$", top.group(1), re.M),
-      skill[:300])
+      bool(top) and re.search(rf"^name: {re.escape(SLUG)}$", top.group(1), re.M)
+      and re.search(r"^description: \S.{20,}$", top.group(1), re.M), skill[:300])
+
+
+def fields_of(definition):
+    """definition.md's settings as {"field" or "group.field": its value}, with the comments removed. Stdlib only, so a plain reading:
+    a field at the start of a line, or a field of a group (tools, access, limits) two spaces in. Enough for the values below; the
+    service's own reading is the deploy on Linux."""
+    got, group = {}, None
+    for ln in definition.split("\n---")[0].splitlines():
+        m = re.match(r"^( {0,2})([a-z][a-z-]*):(?:\s+([^#]*?))?\s*(?:#.*)?$", ln)
+        if not m:
+            continue
+        indent, key, value = m.group(1), m.group(2), (m.group(3) or "").strip()
+        if not indent:
+            group = key if not value else None
+            got[key] = value
+        elif group:
+            got[f"{group}.{key}"] = value
+    return got
+
+
+MODEL = "google/gemini-3.8-flash"   # spec #388 decision 7: the same model for the three checks (sonnet is refused: domino-agent-service#270)
+WANT = {"name": SLUG, "title": NAME, "model": MODEL, "identity": "service-account", "on-error": "fail",
+        "tools.subagents": "false", "tools.jobs": "false", "tools.push": "true",
+        "access.project": "write", "access.datasets": "none", "access.attached": "write", "access.other": "none",
+        "limits.minutes": "45", "limits.turns": "120", "limits.wait-minutes": "0"}
+got = fields_of(settings)
+check(f"definition.md: the title {NAME} (Validation status finds the task by its agent's name), the model {MODEL}, the service "
+      "account, Run a Job off, Git push on, and the other settings as the folder validator of spec #260",
+      {k: got.get(k) for k in WANT} == WANT, {k: (got.get(k), v) for k, v in WANT.items() if got.get(k) != v})
 
 # ------------------------------------------------------------------------------------------------------- the checklist (the skill)
 EVIDENCE = "Validation (agent folder)"   # the evidence item's name in governance/app-deployment-policy.yaml (#266)

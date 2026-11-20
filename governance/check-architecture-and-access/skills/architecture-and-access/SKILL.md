@@ -1,6 +1,6 @@
 ---
-name: app-validation
-description: The checklist of an App validation, from the governance bundle to the filled evidence item. Use it in every task of this agent.
+name: architecture-and-access
+description: The checklist of the check Architecture and access, from the governance bundle to the filled evidence item. Use it in every task of this agent.
 ---
 # Validate the App of a governance bundle
 

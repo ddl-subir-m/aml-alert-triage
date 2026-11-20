@@ -1,16 +1,19 @@
 ---
-# The agent folder validator of the App validation demo (domino-agent-service spec #260, Implementation Decision 8): a harness agent
-# (opencode). When a governance bundle moves to the Validation stage, it validates the bundle's App with the checklist of its own
-# skill, skills/app-validation. `domino-agent deploy governance/validator-folder` registers it. The data is fake.
+# Check 2 of the App validation demo, "Architecture and access" (domino-agent-service spec #388, Implementation Decision 9): a
+# registered agent of the harness lane (opencode). When a governance bundle moves to the Validation stage, it checks the bundle's
+# App with the checklist of its own skill, skills/architecture-and-access: all access, the tech stack, the design and the
+# dependencies. `domino-agent deploy governance/check-architecture-and-access` registers it. The data is fake.
+# It is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, no Job.
 # The fields are on domino-agent-service's reference page, docs/definition-file.md. What the owner adds before it can run (the
 # service account and its token, the sharing, the event subscription) is in README.md, next to this file.
-name: app-validator-folder
-title: App validator (agent folder)   # exact: the scripted check (governance/validation_status.py) finds the agent by this name
+name: architecture-and-access
+title: Architecture and access   # exact: the check's name in governance/checks.json (Validation status finds the task by it)
 description: >-
-  Validates the App of a governance bundle that moved to the Validation stage: reads the App's code, scans it in a Domino Job,
-  sorts the real findings from the false hits, commits a validation doc to its task branch, attaches the doc to the bundle, files
-  the real findings, and fills the evidence item "Validation (agent folder)". Fake data only.
-model: google/gemini-3.8-flash   # not sonnet: Anthropic's cyber safeguards refuse this work (domino-agent-service#270)
+  Checks the architecture and access of the App of a governance bundle that moved to the Validation stage: who can call each route
+  and what it changes, which identity each write records, the tech stack, the design, and how each dependency is pinned and
+  installed. It commits its doc to its task branch, attaches the doc to the bundle, files its real findings, and fills the evidence
+  item "Validation: Architecture and access". Fake data only.
+model: google/gemini-3.8-flash   # the same model for the three checks; not sonnet: Anthropic's cyber safeguards refuse this work (domino-agent-service#270)
 identity: service-account     # the owner adds the service account and its token (README.md): the file holds no user names
 inputs:
   - type: project             # a task runs as a Domino Job in the bundle's project: the event names it
@@ -21,7 +24,7 @@ limits:
   wait-minutes: 0             # nobody answers an event task, so a question ends the Job at once
 tools:
   subagents: false
-  jobs: true                  # the scan runs in a Domino Job (governance/scan.py), which reaches PyPI
+  jobs: false                 # no scan: known vulnerabilities are the part of the check "Vulnerability scan"
   push: true                  # the doc leaves the Job only through domino_git_push, to the task branch agent/<task key>
 access:
   project: write              # the doc goes in the project's files (the push needs it); the bundle of the task's project too
