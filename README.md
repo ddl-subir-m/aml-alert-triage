@@ -153,7 +153,7 @@ it), keeps the state on the AML project's dataset `aml-cases` (`/mnt/data/aml-ca
 ### Set it up on Domino
 
 Do these steps in your browser, in this order. The AML project is the Domino project `aml-alert-triage`, with this repo as its
-code. The platform App is `agent-framework-smoke` on cloud-dogfood.
+code. The platform App is `agent-framework-smoke` on the Domino test deployment.
 
 1. **Create the dataset.** In the AML project, create the dataset `aml-cases`. The App keeps its state file there
    (`/mnt/data/aml-cases/cases.db`), so the state survives an App restart. Create it before you publish the App. If the App is
@@ -169,7 +169,7 @@ code. The platform App is `agent-framework-smoke` on cloud-dogfood.
 
    The App's first log line shows the `mcp` version, the state file, and `loaded the seed` (a new state file) or `kept the
    state`. Its MCP URL is the App's URL as Domino gives it, plus `mcp`:
-   `https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
+   `https://apps.<your Domino domain>/apps-internal/<App ID>/mcp`. Don't add a slash at the end: the server answers
    `/mcp/` with a redirect that loses the App's path.
    The App's URL itself (without `mcp`) is the case board: open it in your browser to watch the alerts change.
 3. **Add the tool server.** Only a tool server admin can change the platform App's tool server list: anyone else gets a 403. A
@@ -191,7 +191,7 @@ Then create the agent (below).
 To load the seed again on Domino, call `POST /reset` on the App, from a Workspace in a project that can open it:
 
 ```bash
-curl -s -X POST "https://apps.cloud-dogfood.domino.tech/apps-internal/<App ID>/reset" \
+curl -s -X POST "https://apps.<your Domino domain>/apps-internal/<App ID>/reset" \
   -H "Authorization: Bearer $(curl -s http://localhost:8899/access-token | sed 's/^Bearer //')"
 ```
 
@@ -248,7 +248,7 @@ The three ready-made agents do the same things for the platform (the agent contr
 Each variant uses only the packages of its framework's certified Environment (domino-agent-service's
 `environments/agent-<framework>.lock`). The repo has no requirements file at its root: Domino installs a root `requirements.txt` at
 the start of each Job, which would change the Environment's packages. The ready-made agents came with domino-agui 0.2.0, so a
-variant runs only on an Environment revision that has them. On an older revision, the import fails. On cloud-dogfood, revision #4
+variant runs only on an Environment revision that has them. On an older revision, the import fails. On the Domino test deployment, revision #4
 and later of each Environment have them (domino-agent-service #155, November 11, 2026). Revision #7 installs domino-agui 0.2.0 from
 PyPI (domino-agent-service #193, November 13, 2026).
 
@@ -262,7 +262,7 @@ test, so it doesn't test the AML judgment.
 The three entry points are the same lines as domino-agent-service's examples (`examples/langgraph/graph.py`,
 `examples/crewai/flow.py`, `examples/domino_agui/anthropic_agent.py`). So the platform's certification of each Environment covers
 this repo's code too: C1 to C11 pass in both formats for all three, on a laptop and in Domino Jobs on revision #7 of each Environment
-on cloud-dogfood (November 13, 2026, domino-agent-service #193), and before that on revision #4 (November 11, 2026, #155). Its
+on the Domino test deployment (November 13, 2026, domino-agent-service #193), and before that on revision #4 (November 11, 2026, #155). Its
 records are domino-agent-service's `docs/certification/<framework>.md`.
 
 On November 10, 2026, C1 ran on each variant, in both formats, in the new images (domino-agui 0.2.0):
@@ -345,7 +345,7 @@ with no view-as switch and no console command.
    the App, Domino shows a consent page: they allow it.
 4. The platform App has an Environment certified for the variant's framework, on a revision with the ready-made agents
    (domino-agui 0.2.0; see "The agent"). The wizard lists the certified Environments, and the script asks the App for them
-   (`GET api/platform/certified-environments`). On cloud-dogfood, the platform App `agent-framework-smoke` certifies revision #7
+   (`GET api/platform/certified-environments`). On the Domino test deployment, the platform App `agent-framework-smoke` certifies revision #7
    of the three Environments (domino-agent-service #193, November 13, 2026).
 
 ### In the wizard
@@ -392,15 +392,15 @@ another framework, create that variant.
 
 ### Created in the wizard, November 10, 2026
 
-The operator walked these steps on cloud-dogfood. Every step passed.
+The operator walked these steps on the Domino test deployment. Every step passed.
 
 | | |
 |---|---|
-| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, with extended identity, from domino-agent-service PR #144 (`ce294da`, merged as `a728409`) |
-| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, after `POST /reset` |
-| Agent | `AML alert triage (wizard)`, model alias `sonnet`, LangGraph Environment `6ae24cb24abd2d2682011252` revision `6ae24cbd4abd2d2682011256` |
-| Analyst | `subir_mansukhani`, the agent's owner |
-| Reviewer | `subir_mansukhani_test`, an editor, in a second browser profile |
+| Platform App | `agent-framework-smoke`, with extended identity, from domino-agent-service PR #144 (`ce294da`, merged as `a728409`) |
+| Case-management App | `aml-case-management`, after `POST /reset` |
+| Agent | `AML alert triage (wizard)`, model alias `sonnet`, on the LangGraph Environment |
+| Analyst | The agent's owner |
+| Reviewer | A second person, an editor, in a second browser profile |
 
 | Step | Result |
 |---|---|
@@ -475,7 +475,7 @@ script creates it. The reviewers are in its `editors` list.
 | With `--view-as`: the App didn't take the header | Something between you and the App drops `X-Prototype-View-As`. Tell the platform team |
 | A redirect (the Apps proxy's sign-in or consent page) | Open the App once in your browser, then run the script again |
 | `toolServers names aml, which isn't in the tool server list` | Add the tool server `aml` (step 1 of "Before you create it"), then run the script again |
-| The App has no Environment certified for the framework (it prints the App's list) | An operator certifies an Environment revision for that framework and adds it to `AGENT_CERTIFIED_ENVIRONMENTS` (on cloud-dogfood, domino-agent-service #155). Then run the script again |
+| The App has no Environment certified for the framework (it prints the App's list) | An operator certifies an Environment revision for that framework and adds it to `AGENT_CERTIFIED_ENVIRONMENTS` (on the Domino test deployment, domino-agent-service #155). Then run the script again |
 | The App didn't list its certified Environments | The App is older than the list (`GET api/platform/certified-environments`): publish the current one, or give `--environment` |
 | `Environment ... isn't certified for <framework>` (with `--environment`) | Run it again without `--environment`: the script then takes the certified one |
 | Two agents with its name | Delete all but one on the App, then run the script again |
@@ -747,15 +747,15 @@ To run it again, follow the runbook in domino-agent-service, `tests/live_framewo
 (https://github.com/etanlightstone/domino-agent-service/blob/main/tests/live_framework/README.md). It links to the steps in this
 README. The sections below are the records of each run.
 
-The live check (#7) ran the workflow on cloud-dogfood on October 29, 2026, with the steps above as they were then: `register.py`
+The live check (#7) ran the workflow on the Domino test deployment on October 29, 2026, with the steps above as they were then: `register.py`
 through the view-as switch (`--view-as` today).
 
 | | |
 |---|---|
-| Platform App | `agent-framework-smoke`, App `6ae3e34d4abd2d2682012349`, domino-agent-service `main` at `cb9d366`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
-| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, AML `main` at `a06e213`, on the Domino Standard Environment, state on the dataset `aml-cases` |
-| Agent | `agt_8acd4c27ef`, registered with `agent/register.py`, model alias `sonnet`, LangGraph Environment revision `6ae24cbd4abd2d2682011256` |
-| Analyst | `subir_mansukhani`, the agent's owner, who started each task |
+| Platform App | `agent-framework-smoke`, domino-agent-service `main` at `cb9d366`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
+| Case-management App | `aml-case-management`, AML `main` at `a06e213`, on the Domino Standard Environment, state on the dataset `aml-cases` |
+| Agent | Registered with `agent/register.py`, model alias `sonnet`, on the LangGraph Environment revision |
+| Analyst | The agent's owner, who started each task |
 | Reviewer | `etan_lightstone`, an editor, through the view-as switch |
 
 | Alert | Task | What happened | Result |
@@ -773,7 +773,7 @@ Measured:
 
 - **Who acted.** The Apps proxy set `domino-username` on every call to the case-management App, so each close and SAR case named the
   analyst ("Who acted" above).
-- **The view-as header.** `register.py` printed "The App knows you as subir_mansukhani (through the prototype view-as switch)": the
+- **The view-as header.** `register.py` printed "The App knows you as <your user name> (through the prototype view-as switch)": the
   Apps proxy passes `X-Prototype-View-As` to an App with extended identity off.
 - **The Workspace token.** `POST /reset` from a Workspace in the AML project worked.
 
@@ -805,15 +805,15 @@ Model judgment (it doesn't fail the check):
 
 ### Rehearsal, November 2, 2026
 
-The demo rehearsal ran A-1003 three times on cloud-dogfood, after the changes of PR #10. It checked the two changes that the live
+The demo rehearsal ran A-1003 three times on the Domino test deployment, after the changes of PR #10. It checked the two changes that the live
 check asked for: the A-1003 question and the "Action taken" wording.
 
 | | |
 |---|---|
-| Platform App | `agent-framework-smoke`, App `6ae3e34d4abd2d2682012349`, domino-agent-service `main` at `8c34ea3`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
-| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, a new version from AML `main` at `a078450`, then `POST /reset` |
-| Agent | A new agent, registered with `agent/register.py` from `a078450`, model alias `sonnet`, LangGraph Environment revision `6ae24cbd4abd2d2682011256` |
-| Analyst | `subir_mansukhani`, who started each task |
+| Platform App | `agent-framework-smoke`, domino-agent-service `main` at `8c34ea3`, published with `smoke.py deploy --no-extended-identity` and `SMOKE_ALLOW_VIEW_AS=1` |
+| Case-management App | `aml-case-management`, a new version from AML `main` at `a078450`, then `POST /reset` |
+| Agent | A new agent, registered with `agent/register.py` from `a078450`, model alias `sonnet`, on the LangGraph Environment revision |
+| Analyst | The person who started each task |
 | Reviewer | `etan_lightstone`, an editor, through the view-as switch |
 
 | Task | What happened | Result |
@@ -828,20 +828,20 @@ Each was a new task, on an open A-1003.
 - **"Action taken".** It no longer says that an escalation that ran waits for approval. It still doesn't name the approver.
 - **The platform App's store.** The platform App published from `8c34ea3` had a new store: no agent, and no tool server `aml`.
   The tool server `aml` was added again (step 3 of "Set it up on Domino"), and `register.py` created a new agent. The live
-  check's agent `agt_8acd4c27ef` and its tasks aren't in that store.
+  check's agent and its tasks aren't in that store.
 
 ### Three frameworks, November 11, 2026
 
-The live check of domino-agent-service #155 ran the workflow on each variant (#15), on cloud-dogfood.
+The live check of domino-agent-service #155 ran the workflow on each variant (#15), on the Domino test deployment.
 
 | | |
 |---|---|
-| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, domino-agent-service `feat/148-ready-made-agents` at `50b5e86` (at `69bb8f7` for AGT-124), published with `smoke.py deploy`: extended identity on, the view-as switch off |
-| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, reset (`POST /reset`) before each variant |
-| Agents | AML `main` at `4e4f012`, registered with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph `agt_bcdeda48d8`, CrewAI `agt_c0824e63fe`, Anthropic SDK `agt_65272ade7c` |
+| Platform App | `agent-framework-smoke`, domino-agent-service `feat/148-ready-made-agents` at `50b5e86` (at `69bb8f7` for AGT-124), published with `smoke.py deploy`: extended identity on, the view-as switch off |
+| Case-management App | `aml-case-management`, reset (`POST /reset`) before each variant |
+| Agents | AML `main` at `4e4f012`, registered with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph, CrewAI and Anthropic SDK |
 | Environments | revision #3 of each (domino-agui 0.2.0); revision #4 of `agent-service-ddl-agui` for AGT-124 |
-| Analyst | `subir_mansukhani`, the agents' owner, who started each task |
-| Reviewer | `subir_mansukhani_test`, an editor, as a second real person (no view-as) |
+| Analyst | The agents' owner, who started each task |
+| Reviewer | A second real person, an editor (no view-as) |
 
 | Step | LangGraph | CrewAI | Anthropic SDK |
 |---|---|---|---|
@@ -872,12 +872,12 @@ images install domino-agui 0.2.0 from PyPI (https://pypi.org/project/domino-agui
 
 | | |
 |---|---|
-| Platform App | `agent-framework-smoke`, App `6af33a0370d68c5d28c8ca16`, domino-agent-service `feat/182-domino-agui-pypi` at `adf271f`, published with `smoke.py deploy`: extended identity on, the view-as switch off |
-| Case-management App | `aml-case-management`, App `6ae3f1feac77996e856a5725`, reset (`POST /reset`) before each variant |
-| Agents | AML `main` at `50f1fe0`, registered again with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph `agt_bcdeda48d8`, CrewAI `agt_c0824e63fe`, Anthropic SDK `agt_65272ade7c` |
+| Platform App | `agent-framework-smoke`, domino-agent-service `feat/182-domino-agui-pypi` at `adf271f`, published with `smoke.py deploy`: extended identity on, the view-as switch off |
+| Case-management App | `aml-case-management`, reset (`POST /reset`) before each variant |
+| Agents | AML `main` at `50f1fe0`, registered again with `agent/register.py` (one run for each `--framework`), model alias `sonnet`: LangGraph, CrewAI and Anthropic SDK |
 | Environments | revision #7 of each (domino-agui 0.2.0 from PyPI), certified in Domino Jobs #271 to #274 |
-| Analyst | `subir_mansukhani`, the agents' owner, who started each task |
-| Reviewer | `subir_mansukhani_test`, an editor, as a second real person (no view-as) |
+| Analyst | The agents' owner, who started each task |
+| Reviewer | A second real person, an editor (no view-as) |
 
 | Step | LangGraph | CrewAI | Anthropic SDK |
 |---|---|---|---|
