@@ -37,29 +37,11 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
+from three_checks import ROOT, check, done, text
+
 PATH = "governance/check-architecture-and-access"   # the folder, as checks.json names it
 FOLDER = ROOT / PATH
-failed = []
-
-
-def check(name, ok, detail=""):
-    print(("ok   " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
-    if not ok:
-        failed.append(name)
-
-
-def done(skip=None):
-    if skip:
-        print(f"SKIP: {skip}", flush=True)
-    sys.exit(1 if failed else 0)
-
-
-def text(path):
-    try:
-        return path.read_text()
-    except OSError as e:
-        return f"<{e}>"
 
 
 def known(rel):
@@ -76,14 +58,9 @@ def known(rel):
 
 # ------------------------------------------------------------------------------------------------- the names, from checks.json
 # governance/checks.json is the one source of the names and labels of the three checks (ticket #392)
-try:
-    CHECKS = json.loads(text(ROOT / "governance" / "checks.json"))
-except ValueError as e:
-    CHECKS = {"error": str(e)}
-CHECKS = CHECKS if isinstance(CHECKS, dict) else {}
-me = next((c for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") == PATH), {})
+CHECKS, me = shared.load_checks(PATH)
 check(f"governance/checks.json has this check, with its folder {PATH}, its name and its evidence item",
-      bool(me.get("name") and me.get("evidenceItem")), CHECKS.get("error") or CHECKS.get("checks"))
+      bool(me.get("name") and me.get("evidenceItem")), CHECKS.get("checks"))
 NAME = me.get("name") or "(no name in checks.json)"   # the agent's title, the findings' prefix, the doc's {{check}}
 EVIDENCE = me.get("evidenceItem") or "(no evidence item in checks.json)"   # its evidence item in the policy
 LABELS = [(CHECKS.get("fields") or {}).get(k) or f"(no {k} label)" for k in ("verdict", "severity", "summary", "doc")]

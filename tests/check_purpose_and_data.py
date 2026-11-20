@@ -31,36 +31,11 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-failed = []
-
-
-def check(name, ok, detail=""):
-    print(("ok   " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
-    if not ok:
-        failed.append(name)
-
-
-def done(skip=None):
-    if skip:
-        print(f"SKIP: {skip}", flush=True)
-    sys.exit(1 if failed else 0)
-
-
-def text(path):
-    try:
-        return path.read_text()
-    except OSError as e:
-        return f"<{e}>"
-
+import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
+from three_checks import ROOT, check, done, text
 
 # ------------------------------------------------------------------------------------------------- the names (governance/checks.json)
-try:
-    CHECKS = json.loads(text(ROOT / "governance" / "checks.json"))
-except ValueError as e:
-    CHECKS = {}
-    check("governance/checks.json is JSON", False, e)
-mine = next((c for c in CHECKS.get("checks") or [] if c.get("name") == "Purpose and data"), {})
+CHECKS, mine = shared.load_checks("governance/check-purpose-and-data")
 check("governance/checks.json names this check: Purpose and data, its evidence item and its folder",
       mine == {"name": "Purpose and data", "evidenceItem": "Validation: Purpose and data", "folder": "governance/check-purpose-and-data"},
       mine)
