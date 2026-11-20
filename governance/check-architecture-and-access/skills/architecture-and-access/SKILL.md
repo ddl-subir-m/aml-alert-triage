@@ -34,7 +34,15 @@ Done when: you have the evidenceId and the four artifact IDs, or you know which 
 
 ## 2. Read the App
 
-Read the App's code and its start script in the project folder: `README.md`, `app.sh`, each file that `app.sh` starts or installs, each file of code that they import, and each requirements file. Find:
+First, the table of the ways into the App, from this agent's own tool:
+
+- Call `own_route_table` once, yourself (not in a subagent), with `folder`: the folder of the App's Python code, relative to the project folder (the folder of the file that `app.sh` starts; for this App, `case_server`). It parses the code and never runs it. Its description gives its rules.
+- Its result has one row for each way into the App, each MCP tool and each custom route: its `kind`, `method` and `path`, the handler with its `file` and `line`, `reads_identity` and `changes_state` (with their evidence, `identity_at` and `changes_at`). Keep the rows: the doc's route table comes from them (step 4).
+- Read the handler of each row at its file and line, to find who can call it and what it changes. A `changes_state` of `false` means only that the tool's rule found no write: check it in the code.
+- Each item of the tool's `not_read` (a file that is not valid Python, a decorator that the tool does not know) goes under "What this check could not check".
+- When `own_route_table` fails (an exception, or a text that starts with `timeout:`), do not call it again. Read the routes and the tools from the code yourself, as below, and name the failed call and its answer under "What this check could not check". This alone does not make the Verdict `could not check`: the check still does its work.
+
+Then read the App's code and its start script in the project folder: `README.md`, `app.sh`, each file that `app.sh` starts or installs, each file of code that they import, and each requirements file. Find:
 
 - the tech stack: the language, the frameworks, the server and the storage;
 - the design: the entry point, the parts and how they connect, the routes or tools, and where the state is;
@@ -42,7 +50,7 @@ Read the App's code and its start script in the project folder: `README.md`, `ap
 - which identity each write records: the header or the value that the code reads (for example `domino-username`), and what it records when there is none;
 - each dependency, with its version or range, how it is pinned (an exact version, a range, or none), and how and when it is installed: from a requirements file, by the start script from PyPI each time the App starts, or already in the Domino Environment.
 
-Done when: each fact for the doc's sections from "Tech stack" to "Dependencies" has a file (and a line, where it is code) as its evidence.
+Done when: you have the rows of `own_route_table` (or the answer of its failed call), and each fact for the doc's sections from "Tech stack" to "Dependencies" has a file (and a line, where it is code) as its evidence.
 
 ## 3. Sort what you found
 
@@ -67,9 +75,10 @@ Done when: each problem is a real finding or a false hit, each real finding has 
 - `app_and_version`: the App's name, its repository, and the commit that you read (`git rev-parse HEAD` in the project folder).
 - `verdict`, `highest_severity` and `summary`: the values of step 3. The summary is three to five sentences: the verdict's reason, and each real finding by its name and its severity.
 - `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/architecture-and-access-<bundleId>.md`.
-- `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call.
+- `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call, and each item of the tool's `not_read`.
 - `tech_stack`, `architecture`, `access` and `dependencies`: the facts of step 2, with their evidence. `dependencies` is a table.
 - In the doc's Architecture section, add a table of each route: method, path, who can call it, what it changes.
+- The route table has one line for each row of `own_route_table`, with its `method` and `path` exactly as the tool gives them, and who can call it and what it changes from step 2. When the call failed, it has the routes and the tools that you found in the code.
 - `real_findings`: the table of the real findings, with the same names and severities that you file. `false_hits`: the table of the false hits, with their reasons.
 
 Done when: the file has no `{{` and no `<!--` left, it has only the top part and your middle part, and each section has its text.
