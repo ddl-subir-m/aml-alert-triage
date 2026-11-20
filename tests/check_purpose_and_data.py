@@ -28,39 +28,14 @@ import json
 import os
 import re
 import sys
-import time
+from functools import partial
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-failed = []
-
-
-def check(name, ok, detail=""):
-    print(("ok   " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
-    if not ok:
-        failed.append(name)
-
-
-def done(skip=None):
-    if skip:
-        print(f"SKIP: {skip}", flush=True)
-    sys.exit(1 if failed else 0)
-
-
-def text(path):
-    try:
-        return path.read_text()
-    except OSError as e:
-        return f"<{e}>"
-
+import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
+from three_checks import ROOT, check, done, text
 
 # ------------------------------------------------------------------------------------------------- the names (governance/checks.json)
-try:
-    CHECKS = json.loads(text(ROOT / "governance" / "checks.json"))
-except ValueError as e:
-    CHECKS = {}
-    check("governance/checks.json is JSON", False, e)
-mine = next((c for c in CHECKS.get("checks") or [] if c.get("name") == "Purpose and data"), {})
+CHECKS, mine = shared.load_checks("governance/check-purpose-and-data")
 check("governance/checks.json names this check: Purpose and data, its evidence item and its folder",
       mine == {"name": "Purpose and data", "evidenceItem": "Validation: Purpose and data", "folder": "governance/check-purpose-and-data"},
       mine)
@@ -86,14 +61,7 @@ check("SKILL.md, the store skill's text, has YAML on top with the name purpose-a
 # --------------------------------------------------------------------------------------------------- the checklist (the store skill)
 # The rules of governance/README.md, as this check applies them. The doc's file name is #391's (governance/README.md, The three checks).
 DOC = "docs/validation/purpose-and-data-<bundleId>.md"
-lines = [ln.lower() for ln in skill.splitlines()]
-
-
-def rule(name, *words):
-    """One line of the skill says the rule: it holds every one of `words` (case aside)."""
-    check(f"the skill says: {name}", any(all(w.lower() in ln for w in words) for ln in lines), words)
-
-
+rule = shared.rules("the skill says", skill)   # one line of the skill says the rule: it holds every one of the words (case aside)
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
 rule("find its own evidence item by its exact name, and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
@@ -120,6 +88,9 @@ rule("...with every field replaced and every comment deleted", "{{field}}", "<!-
 rule("the doc says what this check could not check", "could_not_check", "default branch")
 rule("the doc's own Doc location names only the file and the task branch (it is written before the push)", "doc_location",
      "before", "push")
+FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 and 2: the task branch and the file, with no commit
+own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
+check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
 rule("push the doc with git_push, and keep its branch, commit and dryRun", "domino_git_push", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
      '"gbp"', "branch", "commit", DOC.lower())
@@ -162,14 +133,7 @@ check("the last step gives the result's four lines, in order, with checks.json's
       got)
 
 # ------------------------------------------------------------------------------------------- the instructions (the system prompt)
-ilines = [ln.lower() for ln in instructions.splitlines()]
-
-
-def irule(name, *words):
-    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
-    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
-
-
+irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
 irule("load the store skill purpose-and-data first, and do its checklist in order", "first", "skill purpose-and-data", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
 irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
@@ -218,14 +182,9 @@ check(f"its model is the LLM Gateway alias {MODEL}, with the grants of the ident
       ref.get("model") == {"source": "gateway", "models": [MODEL], "access": "acting"}, ref.get("model"))
 check("its Environment is the harness's, by name, and its limits are check 2's: 45 minutes, 120 turns, no wait for an answer",
       ref.get("execution") == {"environment": {"name": "Domino Agent Runtime (opencode)"}, **LIMITS}, ref.get("execution"))
-check2 = ROOT / "governance" / "check-architecture-and-access" / "definition.md"
-if check2.is_file():
-    got2 = {k: int(m.group(1)) if (m := re.search(rf"^  {k}: (\d+)", text(check2), re.M)) else None
-            for k in ("minutes", "turns", "wait-minutes")}
-    check("...the same limits as check 2's definition.md", got2 == {"minutes": 45, "turns": 120, "wait-minutes": 0}, got2)
-else:
-    print("SKIP: check 2's definition.md is not on this branch, so the limits were compared with #260's folder validator only",
-          flush=True)
+check2 = text(ROOT / "governance" / "check-architecture-and-access" / "definition.md")
+got2 = {k: int(m.group(1)) if (m := re.search(rf"^  {k}: (\d+)", check2, re.M)) else None for k in ("minutes", "turns", "wait-minutes")}
+check("...the same limits as check 2's definition.md", got2 == {"minutes": 45, "turns": 120, "wait-minutes": 0}, got2)
 check("its system prompt is instructions.md (a placeholder that compare.py fills)", ref.get("systemPrompt") == "__INSTRUCTIONS__",
       ref.get("systemPrompt"))
 check("its skill is the store skill purpose-and-data, as the wizard's picker names it (its ID and version come from the store)",
@@ -329,9 +288,7 @@ if body:
 # subscription" sends it (static/js/pages/agent_detail.js TriggerModal). Its one placeholder is the demo project's ID: the live script
 # fills it (no Domino ID in the public repo).
 PROJECT_ID = "__DEMO_PROJECT_ID__"
-# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
-PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
-           "policy.name", "project.id", "project.name")
+PAYLOAD = shared.PAYLOAD   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
 try:
     sub = json.loads(every.get("subscription.json", ""))
 except ValueError as e:
@@ -486,29 +443,8 @@ check("...in the wizard's six steps, in order: Basics, Model & runtime, Instruct
 tab_rows = steps_case("steps on the Triggers tab", section("The subscription, on the Triggers tab"), sub, TRIGGERS_TAB)
 
 
-def blocks(md):
-    """The paragraphs, list items and table rows of the Markdown text `md`, each on one line (the README wraps its lines)."""
-    out = []
-    for para in re.split(r"\n\s*\n", md):
-        item = []
-        for ln in para.splitlines():
-            if item and re.match(r"\s*(- |\| |\d+\. |#|```)", ln):
-                out.append(" ".join(item))
-                item = []
-            item.append(ln.strip())
-        if item:
-            out.append(" ".join(item))
-    return out
-
-
-rlines = [b.lower() for b in blocks(readme)]
-
-
-def rrule(name, *words):
-    """One paragraph, list item or table row of the folder's README.md says it: it holds every one of `words` (case aside)."""
-    check(f"the README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
-
-
+# One paragraph, list item or table row of the folder's README.md says it (the README wraps its lines)
+rrule = shared.rules("the README says", readme, shared.blocks)
 rrule("the store skill must exist first: the live script adds it with the skills API", "store skill", "first", "post /api/skills")
 rrule("...a second add with the same name is refused: find it by its name, and change its text", "already exists",
       "get /api/skills", "put /api/skills/{id}")
@@ -535,9 +471,7 @@ hub = text(ROOT / "governance" / "README.md")
 check("governance/README.md (the hub of the three checks) names this folder", f"`{FOLDER.relative_to(ROOT)}/`" in hub)
 
 # ----------------------------------------------------------------------------------------------- the public repo: no leak, no dash
-leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
-                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|skl_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+"
-                                     r"|eyJ[\w-]{20,}", body)})
+leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/three_checks.py, LEAK)
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_purpose_and_data.py", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
@@ -592,9 +526,6 @@ seam.start()
 OWNER, PEOPLE_ANALYST, PEOPLE_APPROVER, ACCOUNT = "olivia", "rita", "bob", "purpose-data-sa"   # people of the seam's fake Domino
 token = seam.add_person(ACCOUNT)   # the service account: the fake Domino knows its token
 try:
-    import requests  # noqa: E402  (the service's checks image has it)
-    from agent_service import audit_source, domino  # noqa: E402
-
     # The store skill, as the live script adds it: the skills API, with SKILL.md as its text and its description from its top
     skill_body = {"name": "purpose-and-data", "description": re.search(r"^description: (.+)$", top.group(1), re.M).group(1),
                   "content": skill, "scope": "personal"}
@@ -648,37 +579,11 @@ try:
     found = compare.differences(sbody, compare.pick(sbody, triggers) or {})
     check("the subscription as the App stores it (GET /api/agents/{id}/triggers) has each setting of subscription.json", not found, found)
 
-    # A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
-    # audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published
-    # through the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
-    BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}
-    real_get = domino.get
-
-    def bundle_get(path, params=None, cache=True, token=None, credential=None):
-        """The fake Domino also answers the event bundle's GET (GET /api/governance/v1/bundles/{id}: guardrails.Bundle of the
-        service's reference_materials/domino-api-specs/api-governance.swagger.json), a bundle of the task's project."""
-        if path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
-            return {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": seam.PROJECT["id"], "projectName": seam.PROJECT["name"],
-                    "policyId": "pol-app-deployment", "policyName": "App deployment policy", "stage": "Validation", "state": "Active"}
-        return real_get(path, params, cache=cache, token=token, credential=credential)
-
-    domino.get = bundle_get
-
-    def stage_move(to="Validation", project=None, by=PEOPLE_ANALYST):
-        """The payload of one stage move of BUNDLE, from Intake to `to`, in `project` (the seam's project by default)."""
-        ent = lambda kind, id_, name_: {"entityType": kind, "id": id_, "name": name_, "tags": []}
-        p = project or (seam.PROJECT["id"], seam.PROJECT["name"])
-        row = {"timestamp": 1795000000000, "actor": {"id": f"u-{by}", "name": by},
-               "action": {"eventName": "Change Governance Bundle Stage", "using": [ent("eventSource", "Web", None)], "traceId": "tr-395"},
-               "targets": [{"entity": ent("governanceBundle", BUNDLE["id"], BUNDLE["name"]),
-                            "fieldChanges": [{"fieldType": "scalar", "fieldName": "stage", "before": "Intake", "after": to}]}],
-               "affecting": [ent("governancePolicy", "pol-app-deployment", "App deployment policy")], "in": ent("project", *p)}
-        return audit_source.to_payload("governance.bundle.stage_changed", row)
-
-    def fire(payload, person):
-        """Publish `payload` to the subscription as `person`. -> the event's `fired` list (one entry for each agent it reached)."""
-        r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", person, json={"payload": payload})
-        return r.json().get("fired") if r.status_code == 200 else (r.status_code, r.text[:300])
+    # A stage move reaches it as the audit poller publishes it (tests/three_checks.py: stage_move and fire), with the event bundle's GET
+    BUNDLE = shared.BUNDLE
+    put_back_get = shared.serve_bundle(BUNDLE, seam.PROJECT)
+    stage_move = partial(shared.stage_move, seam, BUNDLE, by=PEOPLE_ANALYST)   # stage_move(to, project, by=): one stage move's payload
+    fire = partial(shared.fire, seam, trigger)   # fire(payload, person): the event's fired list
 
     fired = fire(stage_move(by="alice"), "alice")
     check("a stage move by a person who is not in People starts no task: the analyst who moves the stage must be in People",
@@ -700,23 +605,12 @@ try:
     found = found.get("tasks", found) if isinstance(found, dict) else found
     check("...and the App's task search with the bundle ID finds it, with the check's name as its agent's name",
           [(x.get("id"), x.get("agentName")) for x in found or []] == [(task_id, NAME)], found)
-    for _ in range(100):   # the Job starts in the background
-        if len(seam.JOBS) > n:
-            break
-        time.sleep(0.1)
-    job = seam.JOBS[-1] if len(seam.JOBS) == n + 1 else {}
+    job = shared.new_job(seam, n)
     check("its Domino Job starts at once, in the bundle's project, as the service account (its stored token)",
           job.get("credential") == ("bearer", token) and (job.get("body") or {}).get("projectId") == seam.PROJECT["id"],
           (len(seam.JOBS) - n, job.get("credential")))
 
-    def spec_of(job):
-        """The Job's spec, as its bootstrapper reads it: claim the session with the Job's credential, then the spec route."""
-        tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {token}"},
-                            json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
-        return requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok},
-                            timeout=30).json()
-
-    spec = spec_of(job) if job else {}
+    spec = shared.spec_of(seam, job) if job else {}
     rules = str(spec.get("operatingRules") or "")
     check("the Job's spec has the instructions at the top of the agent's rules, and the access rows of the reference settings",
           rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no "
@@ -767,11 +661,8 @@ try:
     r = seam.api("PUT", f"/api/skills/{store.get('id')}", OWNER, json={"content": newer, "note": "A new rule"})
     n = len(seam.JOBS)
     fired = fire(stage_move(), PEOPLE_ANALYST)
-    for _ in range(100):
-        if len(seam.JOBS) > n:
-            break
-        time.sleep(0.1)
-    spec = spec_of(seam.JOBS[-1]) if r.status_code == 200 and len(seam.JOBS) == n + 1 else {}
+    job = shared.new_job(seam, n)
+    spec = shared.spec_of(seam, job) if r.status_code == 200 and job else {}
     check("a new stage move starts the check again, and its Job gets the store skill's newest text (PUT /api/skills/{id}), though "
           "the agent still names the version that it was made with", [s.get("content") for s in spec.get("skills") or []] == [newer]
           and seam.api("GET", f"/api/agents/{aid}", OWNER).json().get("skills") == body["skills"],
@@ -779,7 +670,7 @@ try:
 
     fired = [fire(stage_move("Approval"), PEOPLE_ANALYST), fire(stage_move(project=("p-other", "another-project")), PEOPLE_ANALYST)]
     check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
-    domino.get = real_get
+    put_back_get()
 finally:
     seam.close()
 done()

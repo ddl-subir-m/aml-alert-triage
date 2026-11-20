@@ -34,32 +34,14 @@ import json
 import os
 import re
 import sys
-import time
+from functools import partial
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
+from three_checks import ROOT, check, done, text
+
 PATH = "governance/check-architecture-and-access"   # the folder, as checks.json names it
 FOLDER = ROOT / PATH
-failed = []
-
-
-def check(name, ok, detail=""):
-    print(("ok   " if ok else "FAIL ") + name + (f"  [{str(detail)[:600]}]" if detail and not ok else ""), flush=True)
-    if not ok:
-        failed.append(name)
-
-
-def done(skip=None):
-    if skip:
-        print(f"SKIP: {skip}", flush=True)
-    sys.exit(1 if failed else 0)
-
-
-def text(path):
-    try:
-        return path.read_text()
-    except OSError as e:
-        return f"<{e}>"
 
 
 def known(rel):
@@ -76,14 +58,9 @@ def known(rel):
 
 # ------------------------------------------------------------------------------------------------- the names, from checks.json
 # governance/checks.json is the one source of the names and labels of the three checks (ticket #392)
-try:
-    CHECKS = json.loads(text(ROOT / "governance" / "checks.json"))
-except ValueError as e:
-    CHECKS = {"error": str(e)}
-CHECKS = CHECKS if isinstance(CHECKS, dict) else {}
-me = next((c for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") == PATH), {})
+CHECKS, me = shared.load_checks(PATH)
 check(f"governance/checks.json has this check, with its folder {PATH}, its name and its evidence item",
-      bool(me.get("name") and me.get("evidenceItem")), CHECKS.get("error") or CHECKS.get("checks"))
+      bool(me.get("name") and me.get("evidenceItem")), CHECKS.get("checks"))
 NAME = me.get("name") or "(no name in checks.json)"   # the agent's title, the findings' prefix, the doc's {{check}}
 EVIDENCE = me.get("evidenceItem") or "(no evidence item in checks.json)"   # its evidence item in the policy
 LABELS = [(CHECKS.get("fields") or {}).get(k) or f"(no {k} label)" for k in ("verdict", "severity", "summary", "doc")]
@@ -142,14 +119,7 @@ check(f"definition.md: the title {NAME} (Validation status finds the task by its
 DOC = f"docs/validation/{SLUG}-<bundleId>.md"   # the doc's file on the task branch (governance/README.md, "The three checks")
 V = (VERDICTS + ["(no verdict)"] * 3)[:3]       # approve, do not approve, could not check (checks.json's order)
 PURPOSE, SCAN_CHECK = (OTHERS + ["(no check)"] * 2)[:2]   # the other two checks, in checks.json's order
-lines = [ln.lower() for ln in skill.splitlines()]
-
-
-def rule(name, *words):
-    """One line of the skill says the rule: it holds every one of `words` (case aside)."""
-    check(f"the skill says: {name}", any(all(w.lower() in ln for w in words) for ln in lines), words)
-
-
+rule = shared.rules("the skill says", skill)   # one line of the skill says the rule: it holds every one of the words (case aside)
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
 rule("find its evidence item by its exact name (checks.json), and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
@@ -216,6 +186,9 @@ check("...and names no field of the other two middle parts only", not said, said
 rule("the doc's check is the check's name", "`check`", f"`{NAME}`")
 rule("the doc's own doc location names only the file and the task branch, with no commit (it is written before the push)",
      "`doc_location`", "no commit")
+FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 and 2: the task branch and the file, with no commit
+own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
+check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
 rule("the doc says what the check could not check, always the default branch", "`could_not_check`", "default branch")
 
 # The push, the attachment, the findings, the evidence and the result
@@ -254,14 +227,7 @@ check("the last step gives the result's four lines, in order, with the labels of
 rule("...as plain text, with no Markdown on those lines", "no markdown")
 
 # ------------------------------------------------------------------------------------------------------------- the instructions
-ilines = [ln.lower() for ln in instructions.splitlines()]
-
-
-def irule(name, *words):
-    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
-    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
-
-
+irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
 irule(f"load the skill {SLUG} first, and do its checklist in order", "first", f"skill {SLUG}", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
 irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
@@ -291,11 +257,9 @@ check("they call no tool by its plain name (a framework agent's name): a harness
 # makes the agent's subscription from it, and changes or removes it at each deploy. The settings on top are the service's
 # domino_agent/triggers.py fields (event, filter, title, notify), and the text below them is the instruction template. The repo is
 # public, so the filter names the demo project by its name, not by its Domino ID: any project with that name matches.
-# This part and subscribe() below are the two places of the subscription.
+# This part and deployed_subscription() below are the two places of the subscription.
 DEMO_PROJECT = "aml-validation-demo"   # the demo project's name (the seam part puts the seam's project name in its place)
-# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
-PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
-           "policy.name", "project.id", "project.name")
+PAYLOAD = shared.PAYLOAD   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
 
 
 def unquoted(value):
@@ -347,8 +311,7 @@ check("each placeholder of the two templates is a field of the stage-change payl
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
 
 # The AML repo is public: no Domino host, no ID of a Domino object, no token in the folder (the live script fills the placeholder)
-leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
-                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}", body)})
+leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/three_checks.py, LEAK)
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
@@ -356,14 +319,7 @@ check("no file of the folder, and not this check, has an em dash", not dashed, d
 # ------------------------------------------------------------------------------------------------------------ the folder's README
 # The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.
 readme = every.get("README.md", "")
-rlines = [ln.lower() for ln in readme.splitlines()]
-
-
-def rrule(name, *words):
-    """One line of the folder's README.md says it: it holds every one of `words` (case aside)."""
-    check(f"the folder's README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
-
-
+rrule = shared.rules("the folder's README says", readme)   # one line of the folder's README.md says it
 rrule("it is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part", "#260",
       "app-validation-two-ways", "narrowed")
 rrule("it links to the shared rules of the three checks", "(../readme.md)")
@@ -492,42 +448,14 @@ check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (th
       and own[0].get("description") and own[0]["description"] in skill, own)
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
-# The deploy made the subscription from its file (subscribe() below reads it back), with the seam's project name in its filter. A
-# stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
-# audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published through
-# the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
-import requests  # noqa: E402  (the service's checks image has it)
-from agent_service import audit_source, domino  # noqa: E402
-
-BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}
-real_get = domino.get
+# The deploy made the subscription from its file (deployed_subscription() reads it back), with the seam's project name in its filter. A
+# stage move reaches it as the audit poller publishes it (tests/three_checks.py: stage_move and fire), with the event bundle's GET.
+BUNDLE = shared.BUNDLE
+put_back_get = shared.serve_bundle(BUNDLE, seam.PROJECT)
+stage_move = partial(shared.stage_move, seam, BUNDLE, by=ANALYST)   # stage_move(to, project, by=): the payload of one stage move
 
 
-def bundle_get(path, params=None, cache=True, token=None, credential=None):
-    """The fake Domino also answers the event bundle's GET (GET /api/governance/v1/bundles/{id}: guardrails.Bundle of the service's
-    reference_materials/domino-api-specs/api-governance.swagger.json), a bundle of the task's project."""
-    if path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
-        return {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": seam.PROJECT["id"], "projectName": seam.PROJECT["name"],
-                "policyId": "pol-app-deployment", "policyName": "App deployment policy", "stage": "Validation", "state": "Active"}
-    return real_get(path, params, cache=cache, token=token, credential=credential)
-
-
-domino.get = bundle_get
-
-
-def stage_move(to="Validation", project=None, by=ANALYST):
-    """The payload of one stage move of BUNDLE, from Intake to `to`, in `project` (the seam's project by default)."""
-    ent = lambda kind, id_, name_: {"entityType": kind, "id": id_, "name": name_, "tags": []}
-    p = project or (seam.PROJECT["id"], seam.PROJECT["name"])
-    row = {"timestamp": 1795000000000, "actor": {"id": f"u-{by}", "name": by},
-           "action": {"eventName": "Change Governance Bundle Stage", "using": [ent("eventSource", "Web", None)], "traceId": "tr-267"},
-           "targets": [{"entity": ent("governanceBundle", BUNDLE["id"], BUNDLE["name"]),
-                        "fieldChanges": [{"fieldType": "scalar", "fieldName": "stage", "before": "Intake", "after": to}]}],
-           "affecting": [ent("governancePolicy", "pol-app-deployment", "App deployment policy")], "in": ent("project", *p)}
-    return audit_source.to_payload("governance.bundle.stage_changed", row)
-
-
-def subscribe():
+def deployed_subscription():
     """The agent's event subscription, as deploy made it from its file: the item of GET /api/agents/{id}/triggers whose `file` is the
     file's path (a trigger with no `file` is a browser trigger; the list also has the direct trigger). -> the stored trigger, or {}."""
     listed = seam.api("GET", f"/api/agents/{aid}/triggers", OWNER).json()
@@ -547,13 +475,8 @@ def subscribe():
     return made
 
 
-trigger = subscribe()
-
-
-def fire(payload, person):
-    """Publish `payload` to the subscription as `person`. -> the event's `fired` list (one entry for each agent it reached)."""
-    r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", person, json={"payload": payload})
-    return r.json().get("fired") if r.status_code == 200 else (r.status_code, r.text[:300])
+trigger = deployed_subscription()
+fire = partial(shared.fire, seam, trigger)   # fire(payload, person): the event's fired list
 
 
 fired = fire(stage_move(by=OWNER), OWNER)
@@ -582,19 +505,11 @@ check("its instruction names the bundle ID and its own evidence item, from the i
       and "{{" not in (task.get("instruction") or ""), task.get("instruction"))
 r = seam.api("GET", f"/api/tasks/{task_id}", APPROVER)
 check("the approver (an editor) can read the task, as the scripted check does", r.status_code == 200, r.status_code)
-for _ in range(100):   # the Job starts in the background
-    if len(seam.JOBS) > n:
-        break
-    time.sleep(0.1)
-job = seam.JOBS[-1] if len(seam.JOBS) == n + 1 else {}
+job = shared.new_job(seam, n)
 check("its Domino Job starts at once, in the bundle's project, as the service account (its stored token)",
       job.get("credential") == ("bearer", token) and (job.get("body") or {}).get("projectId") == seam.PROJECT["id"],
       (len(seam.JOBS) - n, job.get("credential")))
-spec = {}
-if job:   # the Job's claim, as its bootstrapper plays it (the seam's spec_of does the same for a direct task)
-    tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {token}"},
-                        json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
-    spec = requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok}, timeout=30).json()
+spec = shared.spec_of(seam, job) if job else {}   # the Job's claim and its spec, as its bootstrapper reads them
 rules = str(spec.get("operatingRules") or "")
 check("the Job's spec has the instructions at the top of the agent's rules, and the access rows as the folder sets them",
       rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no access. "
@@ -644,7 +559,7 @@ check("each tool that the skill and the instructions name is one that this task'
 
 fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("p-other", "another-project")), ANALYST)]
 check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
-domino.get = real_get
+put_back_get()
 
 # A later deploy of the same commit keeps the subscription: the file name is its identity (ADR 0049, decision 4)
 ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)

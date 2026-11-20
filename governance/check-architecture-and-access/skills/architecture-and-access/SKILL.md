@@ -66,7 +66,7 @@ Done when: each problem is a real finding or a false hit, each real finding has 
 - `app`: the App's name. `check`: `Architecture and access`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
 - `app_and_version`: the App's name, its repository, and the commit that you read (`git rev-parse HEAD` in the project folder).
 - `verdict`, `highest_severity` and `summary`: the values of step 3. The summary is three to five sentences: the verdict's reason, and each real finding by its name and its severity.
-- `doc_location`: only the file and where it goes, `docs/validation/architecture-and-access-<bundleId>.md` on the task branch `agent/<task key>`, with no commit (the doc is written before the push).
+- `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/architecture-and-access-<bundleId>.md`.
 - `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call.
 - `tech_stack`, `architecture`, `access` and `dependencies`: the facts of step 2, with their evidence. `dependencies` is a table.
 - `real_findings`: the table of the real findings, with the same names and severities that you file. `false_hits`: the table of the false hits, with their reasons.

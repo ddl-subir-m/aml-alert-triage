@@ -24,6 +24,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import namedtuple
 
 CHECKS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checks.json")
 WIDTH = 15   # the label column of the lines below a row: "earlier tasks: " is the longest label
@@ -31,6 +32,10 @@ OUTPUT = "validation_status.txt"
 LINES = []   # every line said, for the output file
 FINISHED = ("review", "done")     # the task ended with its result
 ENDED = ("failed", "cancelled")   # the task ended with no result
+# One check's row. cells: [check, verdict, highest severity, task]. below: the lines below it, as (label, value). counted: what the count
+# line counts for it, as (kind, value): ("verdict", <the verdict>), ("no verdict yet", <status>), ("no verdict", <why>) or
+# ("not started", None).
+Row = namedtuple("Row", "cells below counted")
 
 
 def say(line=""):
@@ -114,11 +119,11 @@ def result_lines(summary, labels):
 
 
 def row(app, name, tasks, fields, where):
-    """One check's row: (its cells, the lines below it as (label, value), what the count line counts for it as (kind, value)).
-    `tasks` are its tasks, newest first: the newest is the validation; a new stage move starts a new one."""
+    """One check's Row: its cells, the lines below it, and what the count line counts for it. `tasks` are its tasks, newest first:
+    the newest is the validation; a new stage move starts a new one."""
     if not tasks:
         note = f"no task of this agent {where} that you may read (only its owner and editors see all its tasks)"
-        return [name, "-", "-", "not started"], [("note", note)], ("not started", None)
+        return Row([name, "-", "-", "not started"], [("note", note)], ("not started", None))
     t, status = tasks[0], tasks[0].get("status") or "unknown"
     shown = f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status
     labels = [fields["verdict"], fields["severity"], fields["doc"]]
@@ -138,7 +143,7 @@ def row(app, name, tasks, fields, where):
     below += [("doc location", doc), ("task link", f"{app}/#/tasks/{t.get('id')}")]
     if len(tasks) > 1:
         below.append(("earlier tasks", ", ".join(f"{e.get('key')} ({e.get('status')})" for e in tasks[1:])))
-    return [name, verdict, severity, f"{t.get('key')}, {shown}"], below, kind
+    return Row([name, verdict, severity, f"{t.get('key')}, {shown}"], below, kind)
 
 
 def count(kinds, verdicts):
@@ -162,10 +167,11 @@ def count(kinds, verdicts):
 
 
 def table(rows, fields):
-    """The rows as a table: the cells between | marks, each column as wide as its widest cell, then each row's lines below it."""
+    """The rows (each a Row) as a table: the cells between | marks, each column as wide as its widest cell, then each row's lines below
+    it."""
     head = ["Check", fields["verdict"], fields["severity"], "Task"]
-    widths = [max(len(r[0][i]) for r in rows + [(head,)]) for i in range(3)]
-    for cells, below in [(head, [])] + [(r[0], r[1]) for r in rows]:
+    widths = [max(len(cells[i]) for cells in [head] + [r.cells for r in rows]) for i in range(3)]
+    for cells, below in [(head, [])] + [(r.cells, r.below) for r in rows]:
         say(" | ".join([f"{c:<{w}}" for c, w in zip(cells, widths)] + [cells[3]]))
         for label, value in below:
             say(f"    {label + ':':<{WIDTH}}{value}")
@@ -215,7 +221,7 @@ def main(argv):
     rows = [row(app, name, [t for t in tasks if t.get("agentName") == name], fields, where) for name in names]
     table(rows, fields)
     say()
-    say(count([r[2] for r in rows], verdicts))
+    say(count([r.counted for r in rows], verdicts))
     say("The checks advise. You decide.")
     return 0
 

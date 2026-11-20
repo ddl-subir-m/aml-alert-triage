@@ -42,7 +42,7 @@ def instructions():
     return (HERE / "instructions.md").read_text().strip()
 
 
-def left(value):
+def unfilled(value):
     """The placeholders that are still in `value` (a JSON value), in the order of PLACEHOLDERS."""
     words = json.dumps(value)
     return [p for p in PLACEHOLDERS if p in words]
@@ -52,9 +52,9 @@ def fill(value, values):
     """`value` (a JSON value) with each placeholder in its texts replaced: from `values` ({placeholder: text}), and __INSTRUCTIONS__
     with instructions.md when `values` doesn't give it. Raises KeyError with the placeholders that have no value."""
     values = dict(values)
-    if "__INSTRUCTIONS__" in left(value) and "__INSTRUCTIONS__" not in values:
+    if "__INSTRUCTIONS__" in unfilled(value) and "__INSTRUCTIONS__" not in values:
         values["__INSTRUCTIONS__"] = instructions()
-    missing = [p for p in left(value) if p not in values]
+    missing = [p for p in unfilled(value) if p not in values]
     if missing:
         raise KeyError(missing)
 
