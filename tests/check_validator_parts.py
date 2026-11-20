@@ -316,6 +316,10 @@ check("governance/README.md says that Highest severity is the highest severity o
 check("governance/README.md says when the Verdict is could not check: the check could not do its work, and the Summary says why",
       re.search(r"`could not check` when the check could not do its work", evidence) is not None and "Summary says why" in evidence,
       evidence[:400])
+check(f"governance/README.md gives the doc's own Doc location of {CHECKS[0]} and {CHECKS[1]}: the task branch and the doc's file, "
+      "with no commit (the doc is written before its push)",
+      f"For {CHECKS[0]} and {CHECKS[1]}, that is `<task branch>, docs/validation/<file>`, where the task branch is "
+      "`agent/<task key>`." in evidence, evidence[evidence.find("**Doc location.**"):][:400])
 # One verdict rule for all three checks (the orchestrator's decision for spec #388, 2026-11-19), so that the approver can compare
 # them. False hits never count.
 verdict_rule = evidence[evidence.find("**Verdict.**"):evidence.find("**Highest severity.**")] if "**Verdict.**" in evidence else ""

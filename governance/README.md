@@ -65,7 +65,8 @@ values:
     `Not written: <why>.`
 
   The doc is written before its push or its snapshot, so its own top part names only the file and where it goes, with no commit and
-  no snapshot.
+  no snapshot. For Purpose and data and Architecture and access, that is `<task branch>, docs/validation/<file>`, where the task
+  branch is `agent/<task key>`.
 
 ## The severity scale
 

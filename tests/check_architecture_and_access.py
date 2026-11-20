@@ -216,6 +216,9 @@ check("...and names no field of the other two middle parts only", not said, said
 rule("the doc's check is the check's name", "`check`", f"`{NAME}`")
 rule("the doc's own doc location names only the file and the task branch, with no commit (it is written before the push)",
      "`doc_location`", "no commit")
+FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 and 2: the task branch and the file, with no commit
+own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
+check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
 rule("the doc says what the check could not check, always the default branch", "`could_not_check`", "default branch")
 
 # The push, the attachment, the findings, the evidence and the result

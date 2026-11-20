@@ -120,6 +120,9 @@ rule("...with every field replaced and every comment deleted", "{{field}}", "<!-
 rule("the doc says what this check could not check", "could_not_check", "default branch")
 rule("the doc's own Doc location names only the file and the task branch (it is written before the push)", "doc_location",
      "before", "push")
+FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 and 2: the task branch and the file, with no commit
+own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
+check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
 rule("push the doc with git_push, and keep its branch, commit and dryRun", "domino_git_push", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
      '"gbp"', "branch", "commit", DOC.lower())

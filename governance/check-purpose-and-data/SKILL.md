@@ -82,7 +82,7 @@ Done when: each difference is a real finding with a severity, or a false hit wit
   - The reason names the findings that decide it. The verdict is advice: the approver decides.
 - `highest_severity`: the highest severity of the real findings (`S0` is the highest), or `none` when there is no real finding.
 - `summary`: three to five sentences: the verdict's reason, and each real finding by its name and its severity.
-- `doc_location`: the doc is written before its push, so name only the file and where it goes: `docs/validation/purpose-and-data-<bundleId>.md, on the task branch`.
+- `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/purpose-and-data-<bundleId>.md`.
 - `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and the data in the running App (the check reads the code and the sample data, not the App's state). Also each call that failed or that Domino denied.
 - `purpose`, `users`, `data_class`: from steps 2 to 4. Each one gives the Intake's value ("not filled" for a field with no value), and says where it differs.
 - `real_findings`, `false_hits`: the tables of step 4.
