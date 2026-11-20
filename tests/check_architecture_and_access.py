@@ -88,14 +88,16 @@ SEVERITIES = list(CHECKS.get("severities") or ["(no severities)"])
 OTHERS = [c.get("name") for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") != PATH]
 SLUG = NAME.lower().replace(" ", "-")   # architecture-and-access: the Registration's name, the skill's name, the doc's file name
 SKILL = f"skills/{SLUG}/SKILL.md"
-UPLOADED = ("definition.md", "instructions.md", SKILL)   # what deploy uploads of the folder
+SUB_NAME = "bundle-enters-validation"   # the trigger name of the three checks' form, "Bundle enters Validation", as a file name
+SUB = f"subscriptions/{SUB_NAME}.md"    # the event subscription (ADR 0049): the file name is the trigger's name and its identity
+UPLOADED = ("definition.md", "instructions.md", SKILL, SUB)   # what deploy uploads of the folder
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
 files = {k: v for k, v in every.items() if known(k)}
-check(f"{PATH}/ uploads definition.md, instructions.md and one own skill, {SLUG}, and nothing else",
+check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, and one subscription file, {SUB}, and nothing else",
       sorted(files) == sorted(UPLOADED), sorted(files))
-settings, instructions, skill = (files.get(k, "") for k in UPLOADED)
+settings, instructions, skill, subscription = (files.get(k, "") for k in UPLOADED)
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
 top = re.match(r"---\n(.*?)\n---\n", skill, re.S)
@@ -281,39 +283,64 @@ bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
 # ------------------------------------------------------------------------------------------------- the event subscription's file
-# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), for the live script (#397). Its one
-# placeholder is the demo project's ID. Deploy doesn't upload it (it is not a known path). Spec #388 decision 13: an API
-# subscription in this ticket; domino-agent-service#398 moves it into the folder (subscriptions/<name>.md, filter on project.name).
-# This part and subscribe() below are the two places that it changes.
-SUB_FILE = FOLDER / "subscription.json"
-PROJECT_ID = "__DEMO_PROJECT_ID__"
+# subscriptions/bundle-enters-validation.md (domino-agent-service ADR 0049, ticket #398): `domino-agent deploy` (0.4.0 or later)
+# makes the agent's subscription from it, and changes or removes it at each deploy. The settings on top are the service's
+# domino_agent/triggers.py fields (event, filter, title, notify), and the text below them is the instruction template. The repo is
+# public, so the filter names the demo project by its name, not by its Domino ID: any project with that name matches.
+# This part and subscribe() below are the two places of the subscription.
+DEMO_PROJECT = "aml-validation-demo"   # the demo project's name (the seam part puts the seam's project name in its place)
 # The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
 PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
            "policy.name", "project.id", "project.name")
-try:
-    sub = json.loads(text(SUB_FILE))
-except ValueError as e:
-    sub = {"error": str(e)}
-sub = sub if isinstance(sub, dict) else {}
-event = sub.get("event") or {}
-check(f"{PATH}/subscription.json is an event subscription to governance.bundle.stage_changed, on",
-      sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
-      and sub.get("name"), {k: sub.get(k) for k in ("type", "name", "enabled", "event", "error")})
+
+
+def unquoted(value):
+    """A YAML value as text: one in double quotes without them (JSON reads that form), else as it is."""
+    try:
+        return json.loads(value) if value.startswith('"') else value
+    except ValueError:
+        return value
+
+
+def trigger_file(body):
+    """A trigger file -> ({setting: value}, [condition of `filter` as {"field", "equals" or "contains"}], the instruction). Stdlib only,
+    so a plain reading of the forms that this file uses: `key: value` lines on top (a comment line is skipped), and `filter:` with a
+    `- field: ...` line and an `equals: ...` line below it for each condition. The service's own reading is the deploy on Linux."""
+    m = re.match(r"---\n(.*?)\n---\n(.*)", body, re.S)
+    if not m:
+        return {}, [], ""
+    top, conditions = {}, []
+    for ln in m.group(1).splitlines():
+        item, pair = re.match(r"^(  - |    )([a-z]+):\s*(.*?)\s*$", ln), re.match(r"^([a-z]+):\s*(.*?)\s*$", ln)
+        if item:
+            if item.group(1) == "  - ":
+                conditions.append({})
+            if conditions:
+                conditions[-1][item.group(2)] = unquoted(item.group(3))
+        elif pair:
+            top[pair.group(1)] = unquoted(pair.group(2))
+    return top, conditions, m.group(2).strip()
+
+
+sub, conditions, instruction = trigger_file(subscription)
+check(f"the folder has no subscription.json: its subscription is the file {SUB}, and deploy owns it (ADR 0049)",
+      "subscription.json" not in every, sorted(every))
+check(f"{SUB} is a subscription to governance.bundle.stage_changed, with the settings event, filter and title only (no notify: it "
+      "writes nothing back)", sub.get("event") == "governance.bundle.stage_changed" and sorted(sub) == ["event", "filter", "title"],
+      sub)
 policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
-check("its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the demo project",
-      event.get("filter") == [{"field": "toStage", "op": "equals", "value": "Validation"},
-                              {"field": "project.id", "op": "equals", "value": PROJECT_ID}]
-      and re.search(r"^  - name: Validation$", policy_yaml, re.M), event.get("filter"))
-title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
-check("its title template starts with the check's name and names the bundle ID (Validation status searches the title and the key)",
-      title.startswith(f"{NAME}: ") and "{{bundle.id}}" in title and len(title) <= 90, title)
-check("its instruction template names the bundle ID, the evidence item to fill, and the skill",
+check(f"its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the project "
+      f"named {DEMO_PROJECT} (a name, not a Domino ID)",
+      conditions == [{"field": "toStage", "equals": "Validation"}, {"field": "project.name", "equals": DEMO_PROJECT}]
+      and re.search(r"^  - name: Validation$", policy_yaml, re.M), conditions)
+title = sub.get("title") or ""
+check("its title template is the three checks' form, the check's name and the bundle ID (Validation status searches the title)",
+      title == f"{NAME}: bundle {{{{bundle.id}}}}" and re.search(r'^title: "', subscription, re.M), title)
+check("its instruction template, below the settings, names the bundle ID, the evidence item to fill, and the skill",
       "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and f"skill {SLUG}" in instruction, instruction)
 fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
 check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
-check("it pins no resource and writes nothing back: the event names the bundle and the project",
-      sub.get("defaultResources") == [] and sub.get("writeBack") == [], {k: sub.get(k) for k in ("defaultResources", "writeBack")})
 
 # The AML repo is public: no Domino host, no ID of a Domino object, no token in the folder (the live script fills the placeholder)
 leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
@@ -352,7 +379,7 @@ rrule("the access rows, with attached Read & write for the event's bundle", "oth
       "bundle")
 rrule("share it with the analyst who moves the stage", "share", "analyst", "moves the stage")
 rrule("...and with the approver as an owner or an editor", "approver", "owner or an editor")
-rrule("make the subscription from subscription.json, with the demo project's ID", "subscription.json", PROJECT_ID,
+rrule("make the subscription from subscription.json, with the demo project's ID", "subscription.json", "__DEMO_PROJECT_ID__",
       "post /api/agents/{id}/triggers")
 rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
 rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
