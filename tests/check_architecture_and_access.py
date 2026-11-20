@@ -119,14 +119,7 @@ check(f"definition.md: the title {NAME} (Validation status finds the task by its
 DOC = f"docs/validation/{SLUG}-<bundleId>.md"   # the doc's file on the task branch (governance/README.md, "The three checks")
 V = (VERDICTS + ["(no verdict)"] * 3)[:3]       # approve, do not approve, could not check (checks.json's order)
 PURPOSE, SCAN_CHECK = (OTHERS + ["(no check)"] * 2)[:2]   # the other two checks, in checks.json's order
-lines = [ln.lower() for ln in skill.splitlines()]
-
-
-def rule(name, *words):
-    """One line of the skill says the rule: it holds every one of `words` (case aside)."""
-    check(f"the skill says: {name}", any(all(w.lower() in ln for w in words) for ln in lines), words)
-
-
+rule = shared.rules("the skill says", skill)   # one line of the skill says the rule: it holds every one of the words (case aside)
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
 rule("find its evidence item by its exact name (checks.json), and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
@@ -234,14 +227,7 @@ check("the last step gives the result's four lines, in order, with the labels of
 rule("...as plain text, with no Markdown on those lines", "no markdown")
 
 # ------------------------------------------------------------------------------------------------------------- the instructions
-ilines = [ln.lower() for ln in instructions.splitlines()]
-
-
-def irule(name, *words):
-    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
-    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
-
-
+irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
 irule(f"load the skill {SLUG} first, and do its checklist in order", "first", f"skill {SLUG}", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
 irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
@@ -336,14 +322,7 @@ check("no file of the folder, and not this check, has an em dash", not dashed, d
 # ------------------------------------------------------------------------------------------------------------ the folder's README
 # The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.
 readme = every.get("README.md", "")
-rlines = [ln.lower() for ln in readme.splitlines()]
-
-
-def rrule(name, *words):
-    """One line of the folder's README.md says it: it holds every one of `words` (case aside)."""
-    check(f"the folder's README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
-
-
+rrule = shared.rules("the folder's README says", readme)   # one line of the folder's README.md says it
 rrule("it is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part", "#260",
       "app-validation-two-ways", "narrowed")
 rrule("it links to the shared rules of the three checks", "(../readme.md)")

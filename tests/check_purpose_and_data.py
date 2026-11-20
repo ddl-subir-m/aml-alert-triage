@@ -61,14 +61,7 @@ check("SKILL.md, the store skill's text, has YAML on top with the name purpose-a
 # --------------------------------------------------------------------------------------------------- the checklist (the store skill)
 # The rules of governance/README.md, as this check applies them. The doc's file name is #391's (governance/README.md, The three checks).
 DOC = "docs/validation/purpose-and-data-<bundleId>.md"
-lines = [ln.lower() for ln in skill.splitlines()]
-
-
-def rule(name, *words):
-    """One line of the skill says the rule: it holds every one of `words` (case aside)."""
-    check(f"the skill says: {name}", any(all(w.lower() in ln for w in words) for ln in lines), words)
-
-
+rule = shared.rules("the skill says", skill)   # one line of the skill says the rule: it holds every one of the words (case aside)
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
 rule("find its own evidence item by its exact name, and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
@@ -140,14 +133,7 @@ check("the last step gives the result's four lines, in order, with checks.json's
       got)
 
 # ------------------------------------------------------------------------------------------- the instructions (the system prompt)
-ilines = [ln.lower() for ln in instructions.splitlines()]
-
-
-def irule(name, *words):
-    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
-    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
-
-
+irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
 irule("load the store skill purpose-and-data first, and do its checklist in order", "first", "skill purpose-and-data", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
 irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
@@ -459,29 +445,8 @@ check("...in the wizard's six steps, in order: Basics, Model & runtime, Instruct
 tab_rows = steps_case("steps on the Triggers tab", section("The subscription, on the Triggers tab"), sub, TRIGGERS_TAB)
 
 
-def blocks(md):
-    """The paragraphs, list items and table rows of the Markdown text `md`, each on one line (the README wraps its lines)."""
-    out = []
-    for para in re.split(r"\n\s*\n", md):
-        item = []
-        for ln in para.splitlines():
-            if item and re.match(r"\s*(- |\| |\d+\. |#|```)", ln):
-                out.append(" ".join(item))
-                item = []
-            item.append(ln.strip())
-        if item:
-            out.append(" ".join(item))
-    return out
-
-
-rlines = [b.lower() for b in blocks(readme)]
-
-
-def rrule(name, *words):
-    """One paragraph, list item or table row of the folder's README.md says it: it holds every one of `words` (case aside)."""
-    check(f"the README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
-
-
+# One paragraph, list item or table row of the folder's README.md says it (the README wraps its lines)
+rrule = shared.rules("the README says", readme, shared.blocks)
 rrule("the store skill must exist first: the live script adds it with the skills API", "store skill", "first", "post /api/skills")
 rrule("...a second add with the same name is refused: find it by its name, and change its text", "already exists",
       "get /api/skills", "put /api/skills/{id}")

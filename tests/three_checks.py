@@ -55,3 +55,29 @@ def load_checks(folder):
         check("governance/checks.json is a JSON object", False, source)
         return {}, {}
     return source, next((c for c in source.get("checks") or [] if isinstance(c, dict) and c.get("folder") == folder), {})
+
+
+# -------------------------------------------------------------------------------------------------------------------- the rules
+def blocks(md):
+    """The paragraphs, list items and table rows of the Markdown text `md`, each on one line (a README wraps its lines)."""
+    out = []
+    for para in re.split(r"\n\s*\n", md):
+        item = []
+        for ln in para.splitlines():
+            if item and re.match(r"\s*(- |\| |\d+\. |#|```)", ln):
+                out.append(" ".join(item))
+                item = []
+            item.append(ln.strip())
+        if item:
+            out.append(" ".join(item))
+    return out
+
+
+def rules(says, body, units=str.splitlines):
+    """-> rule(name, *words): one case, "<says>: <name>", that passes when one unit of `body` holds every one of `words`, case
+    aside. A unit is a line, or with units=blocks a paragraph, a list item or a table row."""
+    found = [u.lower() for u in units(body)]
+
+    def rule(name, *words):
+        check(f"{says}: {name}", any(all(w.lower() in u for w in words) for u in found), words)
+    return rule
