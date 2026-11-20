@@ -121,10 +121,8 @@ FRAMEWORK_IMPORT = re.compile(r"^\s*(from|import)\s+(domino_agui|langgraph|langc
 contract_code = sorted(str(p.relative_to(ROOT)) for p in ROOT.rglob("*.py")
                        if not any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(ROOT).parts)
                        and p.parent != ROOT / "agent" and FRAMEWORK_IMPORT.search(text(p)))
-OTHER_AGENT_CODE = ["governance/validator-langgraph/graph.py",   # the LangGraph validator of spec #260: a fixed graph of its own
-                    "tests/check_validator_langgraph.py"]        # its check, which runs that graph
-check("no other Python file imports domino-agui or an agent framework, but the LangGraph validator's graph and its check",
-      contract_code == OTHER_AGENT_CODE, contract_code)
+OTHER_AGENT_CODE = []   # another agent's own code in this repo, with its check: none today
+check("no other Python file imports domino-agui or an agent framework", contract_code == OTHER_AGENT_CODE, contract_code)
 
 
 # ------------------------------------------------------------------------------------------------------------------- the fake App

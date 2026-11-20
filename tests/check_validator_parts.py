@@ -8,6 +8,9 @@ package that isn't on PyPI). The fakes copy the real tools: their `--version` li
 their JSON file at -o, their messages on stderr and their exit codes (pip-audit: 0, 1 with hits, 1 and no JSON when it fails; bandit:
 0, 1 with hits). A fake pip "installs" the fake scanners, as a Job's pip installs the real ones.
 
+It also checks that the two validators of spec #260 left the branch (spec #388, ticket #390): their folders and checks are not on it,
+and no file names one of them, but with the tag app-validation-two-ways that keeps them.
+
 With AGENT_SERVICE_REPO (the path of a domino-agent-service checkout), it also checks the severity scale against the gateway's
 write_governance_finding (agent_runtime/gateway.py, stdlib only, so any OS). Without it, that part prints a SKIP line.
 
@@ -294,6 +297,23 @@ said = sorted(f"{f.relative_to(ROOT)}:{n}: {m.group(0)}" for f in PUBLIC for n, 
               for m in PRIVATE.finditer(ln))
 check("the validators' public files point at no private note (the probe, the trigger test) and say framework agent, not "
       "framework-lane agent", not said, said)
+
+# ------------------------------------------------------------------------- the two validators of spec #260: on the tag, not on the branch
+# Spec #388 (ticket #390) took them off the branch. The tag app-validation-two-ways keeps their folders and their checks. No file of
+# the branch names one of them, but on a line that also names the tag (to say where it is). This file is left out: it names them.
+TAG = "app-validation-two-ways"
+OLD = ["governance/validator-folder", "governance/validator-langgraph", "tests/check_validator_folder.py",
+       "tests/check_validator_langgraph.py"]
+still = [p for p in OLD if (ROOT / p).exists()]
+check(f"the two #260 validators' folders and their checks are not on the branch (the tag {TAG} keeps them)", not still, still)
+OLD_NAME = re.compile(r"validator-folder|validator-langgraph|check_validator_folder|check_validator_langgraph")
+TEXT = (".md", ".py", ".yaml", ".yml", ".json", ".sh", ".txt", ".toml")
+branch_files = [f for f in sorted(ROOT.rglob("*")) if f.is_file() and f.suffix in TEXT and f.resolve() != Path(__file__).resolve()
+                and not any(part.startswith(".") or part == "__pycache__" for part in f.relative_to(ROOT).parts)]
+named = sorted(f"{f.relative_to(ROOT)}:{n}: {m.group(0)}" for f in branch_files
+               for n, ln in enumerate(f.read_text(errors="replace").splitlines(), 1) if TAG not in ln for m in OLD_NAME.finditer(ln))
+check(f"no README, doc or check links to or names a file of the two #260 validators, but on a line that names the tag {TAG}",
+      not named, named)
 
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
