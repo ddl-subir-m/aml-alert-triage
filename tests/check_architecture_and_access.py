@@ -257,7 +257,7 @@ check("they call no tool by its plain name (a framework agent's name): a harness
 # makes the agent's subscription from it, and changes or removes it at each deploy. The settings on top are the service's
 # domino_agent/triggers.py fields (event, filter, title, notify), and the text below them is the instruction template. The repo is
 # public, so the filter names the demo project by its name, not by its Domino ID: any project with that name matches.
-# This part and subscribe() below are the two places of the subscription.
+# This part and deployed_subscription() below are the two places of the subscription.
 DEMO_PROJECT = "aml-validation-demo"   # the demo project's name (the seam part puts the seam's project name in its place)
 PAYLOAD = shared.PAYLOAD   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
 
@@ -448,14 +448,14 @@ check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (th
       and own[0].get("description") and own[0]["description"] in skill, own)
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
-# The deploy made the subscription from its file (subscribe() below reads it back), with the seam's project name in its filter. A
+# The deploy made the subscription from its file (deployed_subscription() reads it back), with the seam's project name in its filter. A
 # stage move reaches it as the audit poller publishes it (tests/three_checks.py: stage_move and fire), with the event bundle's GET.
 BUNDLE = shared.BUNDLE
 put_back_get = shared.serve_bundle(BUNDLE, seam.PROJECT)
 stage_move = partial(shared.stage_move, seam, BUNDLE, by=ANALYST)   # stage_move(to, project, by=): the payload of one stage move
 
 
-def subscribe():
+def deployed_subscription():
     """The agent's event subscription, as deploy made it from its file: the item of GET /api/agents/{id}/triggers whose `file` is the
     file's path (a trigger with no `file` is a browser trigger; the list also has the direct trigger). -> the stored trigger, or {}."""
     listed = seam.api("GET", f"/api/agents/{aid}/triggers", OWNER).json()
@@ -475,7 +475,7 @@ def subscribe():
     return made
 
 
-trigger = subscribe()
+trigger = deployed_subscription()
 fire = partial(shared.fire, seam, trigger)   # fire(payload, person): the event's fired list
 
 
