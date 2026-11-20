@@ -18,28 +18,32 @@ WRITE_CALLS = ("write_text", "write_bytes", "mkdir", "makedirs", "touch", "renam
 FILE_MODE = re.compile(r"^[rwaxbt+]+$")   # the mode of open()
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 UNREAD = "unread"   # a way into the App that the tool can't read: it gets no row
-GIVE = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
+OTHER = "other"     # a .tool or .custom_route decorator of a name that the file does not bind to FastMCP(...): it gets no row
+FOLDER_HINT = "Give the folder of the App's Python code, relative to the project folder, for example case_server"
 
 
 @tool
 def route_table(folder: str) -> dict:
     """The table of the ways into a Python App: each MCP tool (`@<server>.tool`) and each custom route (`@<server>.custom_route`)
-    of its code. Give the folder of the App's Python code, relative to the project folder, for example `case_server`. The tool
-    parses the code with `ast`, and never imports or runs it.
+    of its code. `<server>` is a name that the same file binds to `FastMCP(...)`. Give the folder of the App's Python code,
+    relative to the project folder, such as `case_server`. The tool parses the code with `ast`, and never imports or runs it.
 
     The result has `folder`, `files` (the files that it read), `rows` and `not_read`. Each row has `kind` (`MCP tool` or
     `route`), `method`, `path` (for an MCP tool: the MCP endpoint and the tool's name, such as `/mcp (tool: get_alert)`),
     `handler`, `file` and `line` (of the handler's `def`), `reads_identity`, `identity_at`, `changes_state` and `changes_at`
-    (`identity_at` and `changes_at` are the file and line of the evidence, or null).
+    (`identity_at` and `changes_at`: the file and line of the evidence, or null).
 
     reads_identity: the handler, or a function of the same file that it calls (at any depth), has the text `domino-username`
     (the header with the caller's identity) in its code.
 
-    changes_state: the handler, or a function of the App's code that it calls (found by its name, at any depth, in each file),
-    has a write: a SQL text that starts with INSERT INTO, REPLACE INTO, UPDATE ... SET, DELETE FROM, or CREATE, DROP or ALTER of
-    a table, index, view or trigger; `open` with a mode with w, a, x or +; a call of write_text, write_bytes, mkdir, makedirs,
-    touch, rename, remove, unlink, rmdir or rmtree; or a `global` or `nonlocal` statement. A docstring is not code, and a
-    function of a package is not followed. So false means that the rule found no write, not that there is none.
+    changes_state: the handler, or a function of the App's code that it calls, has a write. The tool finds a called function by
+    its name, at any depth, in each file. A write is one of these:
+    - a SQL text that starts with INSERT INTO, REPLACE INTO, UPDATE ... SET, DELETE FROM, or CREATE, DROP or ALTER of a table,
+      index, view or trigger;
+    - `open` with a mode with w, a, x or +;
+    - a call of write_text, write_bytes, mkdir, makedirs, touch, rename, remove, unlink, rmdir or rmtree;
+    - a `global` or `nonlocal` statement.
+    A docstring is not code. The tool does not follow a function of a package. So false means only that the rule found no write.
 
     not_read: each file that is not valid Python, each decorator that the tool does not know on a handler, each decorator with
     a path (it can be a route of another framework), and each route whose path or methods are not plain values. A tool or a
@@ -59,12 +63,17 @@ def route_table(folder: str) -> dict:
     rows = []
     for rel, fns in functions.items():
         same_file = _by_name((rel, fn) for fn in fns)
+        servers = _servers(modules[rel])
         for fn in fns:
-            ways = [_way(dec, fn) for dec in fn.decorator_list]
+            ways = [_way(dec, fn, servers) for dec in fn.decorator_list]
             for dec, way in zip(fn.decorator_list, ways):
                 if way == UNREAD:
                     not_read.append({"file": rel, "line": dec.lineno, "what": "a route whose path or methods are not plain "
                                      f"values, on the handler {fn.name}: @{_shown(dec)}. It has no row"})
+                elif way == OTHER:
+                    not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator that the tool does not know, on the "
+                                     f"handler {fn.name}: @{_shown(dec)}. This file does not bind its name to FastMCP(...). It "
+                                     "has no row"})
                 elif way:
                     identity_at = _find(rel, fn, _reads_identity, same_file, set())
                     changes_at = _find(rel, fn, _writes, everywhere, set())
@@ -88,9 +97,9 @@ def _python_files(project, folder):
     __pycache__ are not read. ValueError for a folder that is not in the project folder, or that does not exist."""
     base = (project / folder).resolve()
     if base != project and project not in base.parents:
-        raise ValueError(f"the folder {folder!r} is not in the project folder. {GIVE}")
+        raise ValueError(f"the folder {folder!r} is not in the project folder. {FOLDER_HINT}")
     if not base.is_dir():
-        raise ValueError(f"no folder {folder!r} in the project folder. {GIVE}")
+        raise ValueError(f"no folder {folder!r} in the project folder. {FOLDER_HINT}")
     found = []
     for dirpath, dirnames, filenames in os.walk(base):   # a link to a folder is not walked into
         dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
@@ -98,14 +107,26 @@ def _python_files(project, folder):
     return sorted(found)
 
 
-def _way(dec, fn):
+def _servers(tree):
+    """The names that the module `tree` binds to `FastMCP(...)` (`mcp = FastMCP(...)`, also in a function): the App's servers."""
+    names = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and isinstance(n.value, ast.Call) and _name(n.value) == "FastMCP":
+            names |= {t.id for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)}
+    return names
+
+
+def _way(dec, fn, servers):
     """The start of a row ({"kind", "method", "path"}) for the decorator `dec` on the function `fn`: `@<server>.tool`, with or
     without its arguments (the tool's name is its `name`, else the function's name), or `@<server>.custom_route(path, methods)`.
-    UNREAD for a custom route whose path or methods are not plain values. None for another decorator."""
+    `<server>` is a name of `servers`. OTHER for `.tool` or `.custom_route` of another name. UNREAD for a custom route whose path
+    or methods are not plain values. None for another decorator."""
     call = dec if isinstance(dec, ast.Call) else None
     func = call.func if call else dec
     if not isinstance(func, ast.Attribute) or func.attr not in ("tool", "custom_route"):
         return None
+    if not isinstance(func.value, ast.Name) or func.value.id not in servers:
+        return OTHER
     if func.attr == "tool":
         name = _value(_argument(call, 0, "name")) if call else None
         name = name if isinstance(name, str) else fn.name
@@ -138,10 +159,10 @@ def _has_path(dec):
             and isinstance(dec.args[0].value, str) and dec.args[0].value.startswith("/"))
 
 
-def _shown(node, limit=80):
-    """The code of `node`, cut to `limit` characters."""
+def _shown(node):
+    """The code of `node`, cut to 80 characters."""
     text = ast.unparse(node)
-    return text if len(text) <= limit else text[:limit - 3] + "..."
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 def _by_name(pairs):
@@ -171,8 +192,8 @@ def _find(rel, fn, hit, index, seen):
 
 def _body(fn):
     """Each node of the body of the function `fn`, with no docstring and no other string statement (a text that runs nothing)."""
-    said = {id(s.value) for s in ast.walk(fn) if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)}
-    return [n for stmt in fn.body for n in ast.walk(stmt) if id(n) not in said]
+    text_statements = {id(s.value) for s in ast.walk(fn) if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant)}
+    return [n for stmt in fn.body for n in ast.walk(stmt) if id(n) not in text_statements]
 
 
 def _texts(fn):

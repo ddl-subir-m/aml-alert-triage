@@ -233,8 +233,8 @@ rule("each item of the tool's not_read goes under what the check could not check
 rule("the doc's route table has one line for each row of the tool, with its method and path exactly as the tool gives them",
      "route table", "each row", f"`{OWN}`", "`method`", "`path`", "exactly")
 
-# The custom subagent (spec #459, decisions 5 and 6): the main agent hands it the table, once, and decides; it files the findings
-rule(f"hand the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
+# The custom subagent (spec #459, decisions 5 and 6): the main agent gives it the table, once, and decides; it files the findings
+rule(f"give the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
      f"`{SUBAGENT_NAME}`", "once", "`task`", "`subagent_type`")
 prompt_block = next((b for b in re.findall(r"```\n(.*?)\n```", skill, re.S) if "Route table:" in b), "")
 heads_of_prompt = [ln.split(":")[0] for ln in prompt_block.splitlines() if re.match(r"^[A-Z][a-z ]+:", ln)]
@@ -277,11 +277,12 @@ rule("a failed or denied call: go on with the other steps, and name it under wha
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", OWN, SUBAGENT_NAME, "domino_git_push", "domino_write_bundle_attachment",
+TASK_CALL = f"`subagent_type` `{SUBAGENT_NAME}`"   # the task call of step 3 (step 2 names route-reviewer before it)
+order = ["domino_get_bundle", "domino_get_policy", OWN, TASK_CALL, "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the custom subagent {SUBAGENT_NAME} (both "
-      "before the writes), push, attachment, findings, evidence, result",
+check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the task call of the custom subagent "
+      f"{SUBAGENT_NAME} (both before the writes), push, attachment, findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
@@ -312,7 +313,7 @@ irule("end with report_result, once, last, with the skill's four lines on top", 
 irule(f"call the own tool {OWN} yourself, once, as the checklist says: the doc's route table comes from its rows", OWN,
       "yourself", "once", "route table", "rows")
 irule("...when it fails, read the routes from the code, and the check goes on", OWN, "fails", "from the code", "goes on")
-irule(f"hand the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
+irule(f"give the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
       "once", "task tool", "route table")
 irule("...it only reviews: the main agent decides each finding and makes each write", "only reviews", "you decide", "each write")
 irule("...when it gives no usable answer, judge the routes yourself: the check goes on", "no usable answer", "yourself", "goes on")
@@ -535,7 +536,7 @@ brule(f"the custom subagent {SUBAGENT_NAME} has the agent's model, the tool read
       f"`{MODEL}`", "`tools: [read]`", "`project: read`")
 brule("...so it can't call Domino, run a command, call the own tool or write a file", "can't call domino", "run a command",
       "own tool", "write a file")
-brule("...the main agent hands it the route table, the Intake's Users and Data class and the access rules, in one task call",
+brule("...the main agent gives it the route table, the Intake's Users and Data class and the access rules, in one task call",
       "one `task` call", "route table", "users", "data class", "access rules")
 brule("...its answer is one JSON object with a verdict for each route", "json", "each route", "who can call it", "what it changes",
       "severity")
@@ -558,11 +559,12 @@ brule("...and on Linux, deploy registers the custom subagent, and the Job's spec
 # --------------------------------------------------------------------------------------------- the own tool's unit test
 # test_route_table.py, as the README says to run it (python -m unittest, in the folder). It needs domino_agent: the domino-agent
 # package of this Python, or the package of the AGENT_SERVICE_REPO checkout. -B: no __pycache__ (the folder can be read only).
-SERVICE_REPO = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+SERVICE_REPO = os.environ.get("AGENT_SERVICE_REPO", "").strip()   # the one read of it: the unit test, and the service parts below
+service = Path(SERVICE_REPO).expanduser().resolve() if SERVICE_REPO else None   # the domino-agent-service checkout, or None
 env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 package = importlib.util.find_spec("domino_agent") is not None
-if not package and SERVICE_REPO and (Path(SERVICE_REPO).expanduser() / "domino_agent" / "__init__.py").is_file():
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(Path(SERVICE_REPO).expanduser().resolve()), env.get("PYTHONPATH")) if p)
+if not package and service and (service / "domino_agent" / "__init__.py").is_file():
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(service), env.get("PYTHONPATH")) if p)
     package = True
 if not package:
     print("SKIP: this Python has no domino_agent (no domino-agent package and no AGENT_SERVICE_REPO), so the own tool's unit test, "
@@ -571,18 +573,16 @@ elif UNIT_TEST in every:
     ran = subprocess.run([sys.executable, "-B", "-m", "unittest", "-v"], cwd=FOLDER, env=env, capture_output=True, text=True,
                          timeout=120)
     count = re.search(r"^Ran (\d+) tests? in", ran.stderr, re.M)
-    told = [ln for ln in ran.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:", "Ran ", "OK", "FAILED"))]
+    result_lines = [ln for ln in ran.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:", "Ran ", "OK", "FAILED"))]
     check(f"the own tool's unit test passes ({UNIT_TEST}, python -m unittest in the folder): on the App's code, the demo branch's "
           "POST /upload and small sample files", ran.returncode == 0 and count and int(count.group(1)) > 0
-          and ran.stderr.rstrip().endswith("OK"), told or ran.stderr[-600:])
+          and ran.stderr.rstrip().endswith("OK"), result_lines or ran.stderr[-600:])
 check(f"governance/README.md (the shared rules, the hub of the three checks) names this folder, {PATH}/",
       f"`{PATH}/`" in text(ROOT / "governance" / "README.md"))
 
-service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
          f"it to a domino-agent-service checkout ({PATH}/README.md, \"The check\")")
-service = Path(service).expanduser().resolve()
 if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "agent_runtime" / "proxies.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and proxies.py)", False)
     done()
@@ -761,23 +761,35 @@ check(f"the Job's spec has the own tool: the text of {TOOL} and the tool {TOOL_N
       and own_spec.get("timeoutSeconds") and own_spec.get("maxResultBytes"),
       {k: (sorted(v) if k == "files" else v) for k, v in own_spec.items() if k != "tools"})
 oc = spec.get("opencodeConfig") or {}
+oc_agents = oc.get("agent") or {}   # opencode's agent block: build (the main agent), the custom subagent, general and explore
+
+
+def permission_of(name):
+    """The permission map of the entry `name` of opencode's agent block, or {}."""
+    return (oc_agents.get(name) or {}).get("permission") or {}
+
+
 check(f"...and opencode gets the own tools' server, own, and the main agent may call {OWN} (own_*: allow)",
-      "own" in (oc.get("mcp") or {}) and (((oc.get("agent") or {}).get("build") or {}).get("permission") or {}).get("own_*")
-      == "allow", {"mcp": sorted(oc.get("mcp") or {}), "build": (oc.get("agent") or {}).get("build")})
+      "own" in (oc.get("mcp") or {}) and permission_of("build").get("own_*") == "allow",
+      {"mcp": sorted(oc.get("mcp") or {}), "build": oc_agents.get("build")})
 provider = next(iter(oc.get("provider") or {}), "(no provider)")
-compiled = (oc.get("agent") or {}).get(SUBAGENT_NAME) or {}
+compiled = oc_agents.get(SUBAGENT_NAME) or {}
 check(f"the Job's spec has the custom subagent {SUBAGENT_NAME}: a subagent of opencode with its description, the agent's model and "
       "its instructions", {k: compiled.get(k) for k in ("description", "mode", "model", "prompt")}
       == {"description": SUB_DESCRIPTION, "mode": "subagent", "model": f"{provider}/{MODEL}", "prompt": sub_text},
       {k: compiled.get(k) for k in ("description", "mode", "model")})
-sub_perm, main_perm = compiled.get("permission") or {}, oc.get("permission") or {}
-DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "task", "own_*")
+sub_perm, main_perm = permission_of(SUBAGENT_NAME), oc.get("permission") or {}
+# domino_write_project_*: the service denies the project's write tools for `access.project: read` (agent_service/custom_subagents.py,
+# WRITES): the proof of Project files read
+DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "domino_write_project_*", "task",
+          "own_*")
 check("...it may read the project's files as the main agent does, and nothing more: no edit, no shell, no web, no Domino tool, no "
-      "Job, no push, no subagent and no own tool", sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
+      "Job, no push, no write to the project (Project files read), no subagent and no own tool",
+      sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
       and {k: sub_perm.get(k) for k in DENIED} == dict.fromkeys(DENIED, "deny"), {k: sub_perm.get(k) for k in ("read", *DENIED)})
 check("...the main agent may start it (task: allow), and the built-in subagent stays off (opencode's general and explore disabled)",
-      main_perm.get("task") == "allow" and {k: (oc.get("agent") or {}).get(k) for k in ("general", "explore")}
-      == {"general": {"disable": True}, "explore": {"disable": True}}, (main_perm.get("task"), sorted(oc.get("agent") or {})))
+      main_perm.get("task") == "allow" and {k: oc_agents.get(k) for k in ("general", "explore")}
+      == {"general": {"disable": True}, "explore": {"disable": True}}, (main_perm.get("task"), sorted(oc_agents)))
 check(f"...and the agent's rules name {SUBAGENT_NAME} with its description, and say that the built-in subagent is off",
       f"`{SUBAGENT_NAME}`: {SUB_DESCRIPTION}" in rules and "The built-in subagent is off" in rules, rules[-600:])
 skills = [(s.get("name"), s.get("own"), s.get("content")) for s in spec.get("skills") or []]

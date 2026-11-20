@@ -54,7 +54,7 @@ Done when: you have the rows of `own_route_table` (or the answer of its failed c
 
 ## 3. Review the routes with route-reviewer
 
-Hand the route table to the custom subagent `route-reviewer`, once: one call of the `task` tool, with `subagent_type` `route-reviewer`, `description` `Review the routes`, and this `prompt`, with each `<...>` filled:
+Give the route table to the custom subagent `route-reviewer`, once. Use one call of the `task` tool, with `subagent_type` `route-reviewer`, `description` `Review the routes`, and this `prompt`, with each `<...>` filled:
 
 ```
 Users: <the Intake's Users, or: not filled>
@@ -77,8 +77,8 @@ The access rules:
 Its answer is one JSON object in a json block: in `routes`, for each route its `method` and `path`, `who_can_call`, `what_it_changes`, `problem`, `severity`, `severity_reason` and `evidence` (each a file and line); and in `not_reviewed`, what it could not review. Keep its verdicts for steps 4 and 5. It only reads, and it files nothing: you make each write of the checklist.
 
 - A usable answer has a verdict for each row of the table (by its `method` and `path`). For a row with no verdict, and for each item of `not_reviewed`, judge the route yourself, with the access rules, and name it under "What this check could not check".
-- When the `task` call fails, or `route-reviewer` gives no usable answer (no json block, or no verdict for any row), do not call it again: judge the routes yourself, with the access rules and the facts of step 2, and name the failed step and its answer under "What this check could not check". This alone does not make the Verdict `could not check`: the check still does its work.
-- When `own_route_table` failed (step 2), there is no table to hand: skip the `task` call, judge the routes and the tools that you found in the code yourself, with the access rules, and say under "What this check could not check" that the review did not run.
+- When the `task` call fails, or `route-reviewer` gives no usable answer, do not call it again. No usable answer means no json block, or no verdict for any row. Judge the routes yourself, with the access rules and the facts of step 2. Name the failed step and its answer under "What this check could not check". This alone does not make the Verdict `could not check`: the check still does its work.
+- When `own_route_table` failed (step 2), there is no table to give. Skip the `task` call. Judge the routes and the tools that you found in the code yourself, with the access rules. Say under "What this check could not check" that the review did not run.
 
 Done when: you have a verdict for each route and each tool, from the review or from your own judgment, and you know which step failed, if one did.
 
