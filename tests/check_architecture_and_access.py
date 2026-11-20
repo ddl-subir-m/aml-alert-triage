@@ -2,24 +2,28 @@
 an agent folder that `domino-agent deploy` registers (domino-agent-service spec #388, Implementation Decision 9, ticket #394). It is
 the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, Run a Job off. Seen from
 outside: its files as `domino-agent deploy` uploads them, its checklist skill as the agent reads it, the templates of its event
-subscription, and the agent that a local agent service registers from it.
+subscription (its file in the folder, ADR 0049 of domino-agent-service, ticket #398), and the agent that a local agent service
+registers from it.
 
 The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
 and the rules from governance/README.md and governance/validation-doc.md (the shared rules of the three checks).
 
 With no service, it checks the folder's files: the ones that deploy uploads, the settings of definition.md, the checklist's rules and
 the order of its tools, the instructions' rules, the tool names (as a harness agent sees them: domino_<name>), the subscription's file
-(its filter and its two templates, which name the bundle ID), no Domino host or ID (the repo is public), and the folder's README.
+(subscriptions/bundle-enters-validation.md: its filter on the demo project's name and its two templates, which name the bundle ID), no
+Domino host or ID (the repo is public), and the folder's README.
 
 With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), it checks each tool name against the service's
 gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with
 a fake Domino (the service's seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
-  - `domino-agent deploy --dry-run` passes the service's folder rules; `deploy` registers the agent, which can't run yet.
-  - The owner makes the subscription from subscription.json. A stage move (the audit poller's payload) starts no task before the
-    service account's token, nor for an analyst who may not use the agent; then one task, as the service account, and its Job.
+  - `domino-agent deploy --dry-run` passes the service's folder rules; `deploy` registers the agent, which can't run yet, and adds
+    the subscription from its file (with the seam's project name in place of the demo project's name in the temporary clone).
+  - A stage move (the audit poller's payload) starts no task before the service account's token, nor for an analyst who may not use
+    the agent; then one task, as the service account, and its Job.
   - The Job's spec (the skill, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
     for that task on the event's bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
     attached to the task", and run_job is denied.
+  - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
 #397.
 
@@ -88,14 +92,16 @@ SEVERITIES = list(CHECKS.get("severities") or ["(no severities)"])
 OTHERS = [c.get("name") for c in CHECKS.get("checks") or [] if isinstance(c, dict) and c.get("folder") != PATH]
 SLUG = NAME.lower().replace(" ", "-")   # architecture-and-access: the Registration's name, the skill's name, the doc's file name
 SKILL = f"skills/{SLUG}/SKILL.md"
-UPLOADED = ("definition.md", "instructions.md", SKILL)   # what deploy uploads of the folder
+SUB_NAME = "bundle-enters-validation"   # the trigger name of the three checks' form, "Bundle enters Validation", as a file name
+SUB = f"subscriptions/{SUB_NAME}.md"    # the event subscription (ADR 0049): the file name is the trigger's name and its identity
+UPLOADED = ("definition.md", "instructions.md", SKILL, SUB)   # what deploy uploads of the folder
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
 files = {k: v for k, v in every.items() if known(k)}
-check(f"{PATH}/ uploads definition.md, instructions.md and one own skill, {SLUG}, and nothing else",
+check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, and one subscription file, {SUB}, and nothing else",
       sorted(files) == sorted(UPLOADED), sorted(files))
-settings, instructions, skill = (files.get(k, "") for k in UPLOADED)
+settings, instructions, skill, subscription = (files.get(k, "") for k in UPLOADED)
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
 top = re.match(r"---\n(.*?)\n---\n", skill, re.S)
@@ -281,39 +287,64 @@ bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
 # ------------------------------------------------------------------------------------------------- the event subscription's file
-# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), for the live script (#397). Its one
-# placeholder is the demo project's ID. Deploy doesn't upload it (it is not a known path). Spec #388 decision 13: an API
-# subscription in this ticket; domino-agent-service#398 moves it into the folder (subscriptions/<name>.md, filter on project.name).
-# This part and subscribe() below are the two places that it changes.
-SUB_FILE = FOLDER / "subscription.json"
-PROJECT_ID = "__DEMO_PROJECT_ID__"
+# subscriptions/bundle-enters-validation.md (domino-agent-service ADR 0049, ticket #398): `domino-agent deploy` (0.4.0 or later)
+# makes the agent's subscription from it, and changes or removes it at each deploy. The settings on top are the service's
+# domino_agent/triggers.py fields (event, filter, title, notify), and the text below them is the instruction template. The repo is
+# public, so the filter names the demo project by its name, not by its Domino ID: any project with that name matches.
+# This part and subscribe() below are the two places of the subscription.
+DEMO_PROJECT = "aml-validation-demo"   # the demo project's name (the seam part puts the seam's project name in its place)
 # The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
 PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
            "policy.name", "project.id", "project.name")
-try:
-    sub = json.loads(text(SUB_FILE))
-except ValueError as e:
-    sub = {"error": str(e)}
-sub = sub if isinstance(sub, dict) else {}
-event = sub.get("event") or {}
-check(f"{PATH}/subscription.json is an event subscription to governance.bundle.stage_changed, on",
-      sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
-      and sub.get("name"), {k: sub.get(k) for k in ("type", "name", "enabled", "event", "error")})
+
+
+def unquoted(value):
+    """A YAML value as text: one in double quotes without them (JSON reads that form), else as it is."""
+    try:
+        return json.loads(value) if value.startswith('"') else value
+    except ValueError:
+        return value
+
+
+def trigger_file(body):
+    """A trigger file -> ({setting: value}, [condition of `filter` as {"field", "equals" or "contains"}], the instruction). Stdlib only,
+    so a plain reading of the forms that this file uses: `key: value` lines on top (a comment line is skipped), and `filter:` with a
+    `- field: ...` line and an `equals: ...` line below it for each condition. The service's own reading is the deploy on Linux."""
+    m = re.match(r"---\n(.*?)\n---\n(.*)", body, re.S)
+    if not m:
+        return {}, [], ""
+    top, conditions = {}, []
+    for ln in m.group(1).splitlines():
+        item, pair = re.match(r"^(  - |    )([a-z]+):\s*(.*?)\s*$", ln), re.match(r"^([a-z]+):\s*(.*?)\s*$", ln)
+        if item:
+            if item.group(1) == "  - ":
+                conditions.append({})
+            if conditions:
+                conditions[-1][item.group(2)] = unquoted(item.group(3))
+        elif pair:
+            top[pair.group(1)] = unquoted(pair.group(2))
+    return top, conditions, m.group(2).strip()
+
+
+sub, conditions, instruction = trigger_file(subscription)
+check(f"the folder has no subscription.json: its subscription is the file {SUB}, and deploy owns it (ADR 0049)",
+      "subscription.json" not in every, sorted(every))
+check(f"{SUB} is a subscription to governance.bundle.stage_changed, with the settings event, filter and title only (no notify: it "
+      "writes nothing back)", sub.get("event") == "governance.bundle.stage_changed" and sorted(sub) == ["event", "filter", "title"],
+      sub)
 policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
-check("its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the demo project",
-      event.get("filter") == [{"field": "toStage", "op": "equals", "value": "Validation"},
-                              {"field": "project.id", "op": "equals", "value": PROJECT_ID}]
-      and re.search(r"^  - name: Validation$", policy_yaml, re.M), event.get("filter"))
-title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
-check("its title template starts with the check's name and names the bundle ID (Validation status searches the title and the key)",
-      title.startswith(f"{NAME}: ") and "{{bundle.id}}" in title and len(title) <= 90, title)
-check("its instruction template names the bundle ID, the evidence item to fill, and the skill",
+check(f"its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the project "
+      f"named {DEMO_PROJECT} (a name, not a Domino ID)",
+      conditions == [{"field": "toStage", "equals": "Validation"}, {"field": "project.name", "equals": DEMO_PROJECT}]
+      and re.search(r"^  - name: Validation$", policy_yaml, re.M), conditions)
+title = sub.get("title") or ""
+check("its title template is the three checks' form, the check's name and the bundle ID (Validation status searches the title)",
+      title == f"{NAME}: bundle {{{{bundle.id}}}}" and re.search(r'^title: "', subscription, re.M), title)
+check("its instruction template, below the settings, names the bundle ID, the evidence item to fill, and the skill",
       "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and f"skill {SLUG}" in instruction, instruction)
 fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
 check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
-check("it pins no resource and writes nothing back: the event names the bundle and the project",
-      sub.get("defaultResources") == [] and sub.get("writeBack") == [], {k: sub.get(k) for k in ("defaultResources", "writeBack")})
 
 # The AML repo is public: no Domino host, no ID of a Domino object, no token in the folder (the live script fills the placeholder)
 leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
@@ -352,8 +383,18 @@ rrule("the access rows, with attached Read & write for the event's bundle", "oth
       "bundle")
 rrule("share it with the analyst who moves the stage", "share", "analyst", "moves the stage")
 rrule("...and with the approver as an owner or an editor", "approver", "owner or an editor")
-rrule("make the subscription from subscription.json, with the demo project's ID", "subscription.json", PROJECT_ID,
-      "post /api/agents/{id}/triggers")
+rrule(f"its file table names the subscription's file, {SUB}, and deploy uploads it", f"| `{SUB}` |", "| yes |")
+rrule("domino-agent deploy, 0.4.0 or later, makes the subscription from its file (ADR 0049)", "domino-agent deploy", "0.4.0",
+      "subscription", "adr 0049")
+rrule("...an older command sends no trigger file: the agent gets no subscription", "before 0.4.0", "no subscription")
+rrule(f"the filter names the demo project by its name, {DEMO_PROJECT}, so any project with that name matches", f"`{DEMO_PROJECT}`",
+      "any project", "that name")
+rrule("the first deploy prints the subscription's Trigger line", f"trigger: added subscription {SUB_NAME} ({SUB})")
+rrule("a subscription of this agent made with the API before: delete it after the deploy, else each stage move starts two tasks",
+      "api", "delete", "two tasks")
+gone = [w for w in ("subscription.json", "__DEMO_PROJECT_ID__", "/api/agents/{id}/triggers") if w in readme]
+check("the folder's README names no subscription.json, no project ID placeholder and no create through the API (deploy owns it)",
+      not gone, gone)
 rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
 rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
 rrule("the demo project's default branch has the shared rules", "default branch", "governance/readme.md",
@@ -394,7 +435,10 @@ seam.start()
 OWNER, ANALYST, APPROVER, SA = "olivia", "rita", "bob", "check-sa"   # people the seam's fake Domino knows, and the service account
 TITLE = NAME   # the agent's title is the check's name (spec #388 decision 5)
 REMOTE = "https://github.com/ddl-subir-m/aml-alert-triage.git"
-repo = seam.Repo(every, path=PATH, remote=REMOTE)   # the whole folder, as git has it: deploy uploads only the known paths
+LOCAL = seam.PROJECT["name"]   # the seam's one project: a task resolves its project by ID, and refuses a payload with another name
+# The whole folder, as git has it (deploy uploads only the known paths), with the seam's project name in place of the demo project's
+# name in the subscription's filter: the files part above checks the literal value of the file in git
+repo = seam.Repo({k: v.replace(DEMO_PROJECT, LOCAL) if k == SUB else v for k, v in every.items()}, path=PATH, remote=REMOTE)
 
 
 def registered():
@@ -403,13 +447,22 @@ def registered():
     return next((a for a in agents if (a.get("registration") or {}).get("name") == SLUG), None)
 
 
+def trigger_lines(out):
+    """The lines of deploy's output that name a trigger (the service's domino_agent/triggers.line)."""
+    return [x for x in out.splitlines() if x.startswith("  Trigger: ")]
+
+
 ran = seam.command("deploy", "--dry-run", PATH, cwd=repo.root, person=OWNER)
 check("deploy --dry-run passes the service's folder rules: it would create the agent, and registers nothing",
       ran.code == 0 and f"Dry run: would create {TITLE}" in ran.out and "Dry run: nothing was registered." in ran.out
       and registered() is None, ran)
+check(f"...and it says that it would add the subscription from its file, {SUB}",
+      trigger_lines(ran.out) == [f"  Trigger: would add subscription {SUB_NAME} ({SUB})"], trigger_lines(ran.out) or ran.out)
 ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)
 check("deploy registers it, and says that it can't run yet: it acts as a service account, and none is chosen",
       ran.code == 0 and ran.out.startswith(f"Created {TITLE} (agt_") and "Can't run yet" in ran.out and "service account" in ran.out, ran)
+check(f"...and it adds the subscription from its file, {SUB} (the line that the live script looks for)",
+      trigger_lines(ran.out) == [f"  Trigger: added subscription {SUB_NAME} ({SUB})"], trigger_lines(ran.out) or ran.out)
 a = registered() or {}
 aid = a.get("id")
 check(f"the agent is a harness agent named {TITLE} (the check's name), owned by the person who deployed it",
@@ -439,10 +492,10 @@ check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (th
       and own[0].get("description") and own[0]["description"] in skill, own)
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
-# The owner makes the subscription from subscription.json, as the live script does, with the demo project's ID: here the seam's
-# Git-based project (subscribe() below: domino-agent-service#398 makes it come from the deploy instead). A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's
-# tests/check_phase3.py audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload,
-# then published through the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
+# The deploy made the subscription from its file (subscribe() below reads it back), with the seam's project name in its filter. A
+# stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
+# audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published through
+# the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
 import requests  # noqa: E402  (the service's checks image has it)
 from agent_service import audit_source, domino  # noqa: E402
 
@@ -475,12 +528,22 @@ def stage_move(to="Validation", project=None, by=ANALYST):
 
 
 def subscribe():
-    """The agent's event subscription, as its owner makes it: subscription.json with the seam's project ID in its one placeholder,
-    sent with POST /api/agents/{id}/triggers (the service's agent_write.create_trigger). -> the stored trigger, or {}."""
-    r = seam.api("POST", f"/api/agents/{aid}/triggers", OWNER, json=json.loads(text(SUB_FILE).replace(PROJECT_ID, seam.PROJECT["id"])))
-    made = r.json() if r.status_code == 200 else {}
-    check("the owner makes the subscription from subscription.json, with the demo project's ID in its one placeholder",
-          r.status_code == 200 and made.get("type") == "event" and made.get("enabled") is True, (r.status_code, r.text[:300]))
+    """The agent's event subscription, as deploy made it from its file: the item of GET /api/agents/{id}/triggers whose `file` is the
+    file's path (a trigger with no `file` is a browser trigger; the list also has the direct trigger). -> the stored trigger, or {}."""
+    listed = seam.api("GET", f"/api/agents/{aid}/triggers", OWNER).json()
+    listed = listed if isinstance(listed, list) else []
+    made = next((t for t in listed if t.get("file") == SUB), {})
+    check(f"the agent has one subscription, from its file {SUB}, on, with the file name {SUB_NAME} as its name",
+          [t.get("file") for t in listed if t.get("type") != "direct"] == [SUB] and made.get("type") == "event"
+          and made.get("name") == SUB_NAME and made.get("enabled") is True, listed)
+    check(f"...with the file's event type and filter, in the project named {LOCAL} (the seam's, in place of {DEMO_PROJECT})",
+          made.get("event") == {"eventType": "governance.bundle.stage_changed",
+                                "filter": [{"field": "toStage", "op": "equals", "value": "Validation"},
+                                           {"field": "project.name", "op": "equals", "value": LOCAL}]}, made.get("event"))
+    check("...with the file's two templates, no pinned resource and no write-back",
+          made.get("titleTemplate") == title and made.get("instructionTemplate") == instruction
+          and made.get("defaultResources") == [] and made.get("writeBack") == [],
+          {k: made.get(k) for k in ("titleTemplate", "instructionTemplate", "defaultResources", "writeBack")})
     return made
 
 
@@ -582,6 +645,13 @@ check("each tool that the skill and the instructions name is one that this task'
 fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("p-other", "another-project")), ANALYST)]
 check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
 domino.get = real_get
+
+# A later deploy of the same commit keeps the subscription: the file name is its identity (ADR 0049, decision 4)
+ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)
+kept = [t for t in seam.api("GET", f"/api/agents/{aid}/triggers", OWNER).json() if t.get("file")]
+check("a second deploy of the same commit changes nothing: no Trigger line, and the subscription keeps its ID and stays on",
+      ran.code == 0 and "No change for" in ran.out and not trigger_lines(ran.out)
+      and [(t.get("id"), t.get("enabled")) for t in kept] == [(trigger.get("id"), True)], (ran, kept))
 
 seam.close()
 done()
