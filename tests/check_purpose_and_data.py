@@ -340,7 +340,7 @@ sub = sub if isinstance(sub, dict) else {}
 event = sub.get("event") or {}
 check("subscription.json is an event subscription to governance.bundle.stage_changed, on, with the keys of the Triggers tab's form",
       sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
-      and sub.get("name") and list(sub) == ["type", "name", "enabled", "event", "titleTemplate", "instructionTemplate",
+      and sub.get("name") == "Bundle enters Validation" and list(sub) == ["type", "name", "enabled", "event", "titleTemplate", "instructionTemplate",
                                             "defaultResources", "writeBack"], {k: sub.get(k) for k in ("type", "name", "enabled", "error")})
 policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
 check("its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the demo project",
@@ -350,8 +350,9 @@ check("its filter: the bundle moved to the policy's stage named Validation (exac
 title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
 check("its title template is the check's name and the bundle ID (Validation status's task search matches the title and the key only)",
       title == f"{NAME}: bundle {{{{bundle.id}}}}", title)
-check("its instruction template names the bundle ID, the evidence item to fill, and the store skill",
-      "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and "purpose-and-data" in instruction, instruction)
+check("its instruction template names the bundle ID and name, the store skill, and says to fill only its own evidence item (the "
+      "one form of the three checks' subscriptions)", "{{bundle.id}}" in instruction and "{{bundle.name}}" in instruction
+      and f'fill only the evidence item "{EVIDENCE}"' in instruction and "purpose-and-data" in instruction, instruction)
 fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
 check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
@@ -374,5 +375,171 @@ if sbody:   # GET /api/agents/{id}/triggers: the direct trigger and the subscrip
     listed[1]["event"] = {**listed[1]["event"], "filter": listed[1]["event"]["filter"][:1]}
     code, out = diff("subscription.json", listed)
     check("...and names a filter that misses the demo project", code == 1 and "event.filter: wants 2 items, has 1" in out, (code, out[:300]))
+
+# ------------------------------------------------------------------------------------------------------- the README's wizard steps
+# The person makes the agent once, from the README's tables: one row for each setting, with the wizard's own label (in quotes), the
+# value to set, and the setting's key in agent.json (in backticks). The words are the wizard's (the service's static/js: pages/wizard.js,
+# pages/wizard_framework.js, pages/agent_detail.js, core.js, components.js). For each key: its label, and the words of its value.
+WIZARD = {
+    "lane": ("What runs the agent?", ("Domino Agent Harness (opencode)",)),
+    "name": ("Name", ("Purpose and data",)),
+    "description": ("Description", ("`description`", "agent.json")),
+    "tags": ("Tags", ("none",)),
+    "scope": ("Where can it work?", ("Any project",)),
+    "inputs": ("Project required as trigger input", ("checked",)),
+    "guardrails.access.inputs": ("Inputs", ("only the project",)),
+    "model.access": ("Model access", ("Whoever triggers it", "Agent identity")),
+    "model.source": ("Custom endpoint", ("off",)),
+    "model.models": ("LLM Gateway models", (MODEL, "only")),
+    "execution.environment": ("Environment", ("Domino Agent Runtime (opencode)",)),
+    "execution.maxRuntimeMin": ("Max minutes per round", ("45",)),
+    "execution.maxTurns": ("Max turns per round", ("120",)),
+    "execution.idleWaitMin": ("Wait for answers (min)", ("0",)),
+    "systemPrompt": ("System prompt", ("instructions.md",)),
+    "directTrigger.starterPrompts": ("Suggested prompts (optional)", ("none",)),
+    "skills": ("Skills", ("purpose-and-data",)),
+    "guardrails.planFirst": ("Planning", ("Start right away",)),
+    "completion": ("Task completion", ("A person closes the task",)),
+    "onError": ("Error recovery", ("Fail and report",)),
+    "guardrails.checkInOften": ("Check-ins", ("Only when needed",)),
+    "directTrigger.writeBack": ("Notifications", ("none",)),
+    "identity.mode": ("Acts as", ("A service account",)),
+    "identity.serviceAccount.userName": ("Service account", ("service account",)),
+    "access.mode": ("Who can use it", ("Specific people",)),
+    "access.users": ("People", ("analyst",)),
+    "access.editors": ("Editors", ("approver",)),
+    "guardrails.access.project": ("Project files", ("Read & write",)),
+    "guardrails.access.data": ("Project datasets", ("No access",)),
+    "guardrails.access.named": ("Other resources attached to the task", ("Read & write",)),
+    "guardrails.access.other": ("Resources not attached to the task", ("No access",)),
+    "guardrails.tools.bash": ("Shell", ("on",)),
+    "guardrails.tools.web": ("Web fetch", ("off",)),
+    "guardrails.tools.subagents": ("Subagents", ("off",)),
+    "guardrails.tools.jobs": ("Start Domino jobs", ("off",)),
+    "guardrails.tools.push": ("Git push", ("on",)),
+    "guardrails.network": ("Outbound traffic", ("Domino services only",)),
+}
+TRIGGERS_TAB = {   # the same for subscription.json, on the Triggers tab's form "New event subscription"
+    "type": ("Event subscriptions", ("Add subscription",)),
+    "name": ("Name", ("Bundle enters Validation",)),
+    "enabled": ("Create trigger", ("on",)),
+    "event.eventType": ("Event", ("Governance: Bundle stage changed",)),
+    "event.filter": ("Only when (optional)", ("Add condition", "toStage", "Validation", "project.id", "demo project")),
+    "titleTemplate": ("Task title (optional)", ("`titleTemplate`",)),
+    "instructionTemplate": ("Instruction to the agent (optional)", ("`instructionTemplate`",)),
+    "defaultResources": ("Pin resources to every task", ("none",)),
+    "writeBack": ("Notifications", ("none",)),
+}
+readme = every.get("README.md", "")
+
+
+def section(title):
+    """The text of the README's `## <title>` part, up to the next `## `."""
+    m = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", readme, re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def rows(part):
+    """The table rows of `part` with three cells: [(label, value, [keys])]. The label is the text in quotes, the keys are the texts in
+    backticks of the third cell."""
+    out = []
+    for ln in part.splitlines():
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")] if ln.startswith("|") else []
+        if len(cells) == 3 and not set(cells[0]) <= set("-: ") and cells[0] != "Setting":
+            out.append((cells[0].strip('"'), cells[1], re.findall(r"`([^`]+)`", cells[2])))
+    return out
+
+
+def keys(v, path="", leaf=True):
+    """The keys of a JSON object, dotted: its leaves (leaf=True), or every key (leaf=False)."""
+    if isinstance(v, dict) and v:
+        return ([] if leaf or not path else [path]) + [p for k, x in v.items() for p in keys(x, f"{path}.{k}" if path else k, leaf)]
+    return [path] if path else []
+
+
+def has(cell, word):
+    return re.search(rf"(?<![\w-]){re.escape(word)}(?![\w-])", cell, re.I) is not None
+
+
+def steps_case(what, part, reference, words):
+    got = rows(part)
+    by_key = {k: (label, value) for label, value, ks in got for k in ks}
+    every_key = set(keys(reference, leaf=False))
+    covered = {leaf: [k for k in by_key if leaf == k or leaf.startswith(k + ".")] for leaf in keys(reference)}
+    check(f"the README's {what} have one row for each setting of {'agent.json' if reference is ref else 'subscription.json'}, "
+          "with its key", got and all(len(v) == 1 for v in covered.values()) and set(by_key) <= every_key and set(by_key) == set(words),
+          {"not one row": sorted(k for k, v in covered.items() if len(v) != 1), "not a key": sorted(set(by_key) - every_key),
+           "not in this check": sorted(set(by_key) ^ set(words))})
+    wrong = sorted(k for k, (label, value) in by_key.items() if k in words and (
+        label != words[k][0] or not all(has(value, w) for w in words[k][1])
+        or (words[k][1] in (("on",), ("off",)) and not value.lower().startswith(words[k][1][0]))))
+    check(f"...and each row has the wizard's label of its setting, and its value", got and not wrong,
+          [(k, by_key[k], words[k]) for k in wrong])
+    return got
+
+
+wizard_rows = steps_case("wizard steps", section("Make it in the wizard"), ref, WIZARD)
+steps = re.findall(r"^### (\d)\. (.+)$", section("Make it in the wizard"), re.M)
+check("...in the wizard's six steps, in order: Basics, Model & runtime, Instructions & behaviors, Identity & sharing, Tools & "
+      "permissions, Review", steps == [("1", "Basics"), ("2", "Model & runtime"), ("3", "Instructions & behaviors"),
+                                      ("4", "Identity & sharing"), ("5", "Tools & permissions"), ("6", "Review")], steps)
+tab_rows = steps_case("steps on the Triggers tab", section("The subscription, on the Triggers tab"), sub, TRIGGERS_TAB)
+
+
+def blocks(md):
+    """The paragraphs, list items and table rows of the Markdown text `md`, each on one line (the README wraps its lines)."""
+    out = []
+    for para in re.split(r"\n\s*\n", md):
+        item = []
+        for ln in para.splitlines():
+            if item and re.match(r"\s*(- |\| |\d+\. |#|```)", ln):
+                out.append(" ".join(item))
+                item = []
+            item.append(ln.strip())
+        if item:
+            out.append(" ".join(item))
+    return out
+
+
+rlines = [b.lower() for b in blocks(readme)]
+
+
+def rrule(name, *words):
+    """One paragraph, list item or table row of the folder's README.md says it: it holds every one of `words` (case aside)."""
+    check(f"the README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
+
+
+rrule("the store skill must exist first: the live script adds it with the skills API", "store skill", "first", "post /api/skills")
+rrule("...a second add with the same name is refused: find it by its name, and change its text", "already exists",
+      "get /api/skills", "put /api/skills/{id}")
+rrule("...or by hand, on the Skills library page", "skills library", '"new skill"', '"save new version"')
+rrule("the token: the checkbox Create one for me, which uses your own permission", '"create one for me"', "your own permission")
+rrule("...or, as the fallback, a pasted token of the service account", "fallback", '"paste access token"')
+rrule("...which lasts 24 hours: rotate it before a later run", "24 hours", '"rotate: create a new token for me"')
+rrule("the model: the wizard lists only the models that you can call", "lists only the models", "you can call")
+rrule("do not apply a preset: it changes the access rows", '"apply preset"', "project datasets")
+rrule("the Hardware tier and the token are not compared", '"hardware tier"', "not compared")
+rrule("the service account's rights: Contributor on the demo project, the model, the bundle", "service account", "contributor",
+      "llm gateway", "bundle")
+rrule("the service account's Git credential, with write access to the repo (the push)", "git credential", "write access", "push")
+rrule("share it with the analyst who moves the stage, else a stage move starts no task", "analyst", "is not allowed to use agent")
+rrule("...and with the approver as an editor, else Validation status shows not started", "approver", "editor", "not started")
+rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
+rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
+rrule("the demo project's default branch has the shared parts", "default branch", "governance/validation-doc.md", "governance/readme.md")
+rrule("the live script compares the agent with compare.py diff", "compare.py diff agent.json", "get /api/agents/{id}")
+rrule("...and the subscription too", "compare.py diff subscription.json", "get /api/agents/{id}/triggers")
+rrule("...and checks the stored token's status, which no reference file holds", "identitycredential.status", "active")
+rrule("how to run this check", "python tests/check_purpose_and_data.py")
+hub = text(ROOT / "governance" / "README.md")
+check("governance/README.md (the hub of the three checks) names this folder", f"`{FOLDER.relative_to(ROOT)}/`" in hub)
+
+# ----------------------------------------------------------------------------------------------- the public repo: no leak, no dash
+leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
+                for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|skl_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+"
+                                     r"|eyJ[\w-]{20,}", body)})
+check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
+dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_purpose_and_data.py", text(Path(__file__)))] if chr(0x2014) in body)
+check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
 
 done()
