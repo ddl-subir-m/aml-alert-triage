@@ -124,15 +124,27 @@ check("...and Data class has the options Public, Internal, Confidential, Restric
       data_class == [["Public", "Internal", "Confidential", "Restricted"]], data_class)
 
 validation = items("Validation")
-VALIDATORS = {"Validation (agent folder)": "Local.validation-agent-folder", "Validation (LangGraph)": "Local.validation-langgraph"}
-FOUR = [("Verdict", "radio", ["approve", "approve after fixes", "do not approve"]), ("Critical vulns", "radio", ["yes", "no"]),
-        ("Summary", "textarea", []), ("Doc location", "textinput", [])]
-for name, want_id in VALIDATORS.items():
+CHECKS = [c for c in source.get("checks") or [] if isinstance(c, dict)]
+LABEL = source.get("fields") or {}
+order = [e.get("name") for e in (stage.get("Validation") or {}).get("evidenceSet") or [] if isinstance(e, dict)]
+check("Validation has the evidence items of governance/checks.json, in its order, then Validation status, and no other",
+      CHECKS and order == [c.get("evidenceItem") for c in CHECKS] + ["Validation status"], order)
+IDS = {"Validation: Purpose and data": "Local.validation-purpose-and-data",
+       "Validation: Architecture and access": "Local.validation-architecture-and-access",
+       "Validation: Vulnerability scan": "Local.validation-vulnerability-scan"}
+FOUR = [(LABEL.get("verdict"), "radio", source.get("verdicts")), (LABEL.get("severity"), "radio", source.get("severities")),
+        (LABEL.get("summary"), "textarea", []), (LABEL.get("doc"), "textinput", [])]
+for c in CHECKS:
+    name = c.get("evidenceItem")
     item = validation.get(name) or {}
-    check(f"Validation has the evidence item \"{name}\" ({want_id})", item.get("id") == want_id, {n: e.get("id") for n, e in validation.items()})
+    check(f"\"{name}\" has the ID {IDS.get(name)}", item.get("id") == IDS.get(name), {n: e.get("id") for n, e in validation.items()})
     got = fields(item)
-    check(f"...with four fields: Verdict, Critical vulns (yes or no), Summary, Doc location, and only those", got == FOUR, got)
-    check(f"...and it has no other artifact (a validator fills every one)", len(item.get("definition") or []) == 4, item.get("definition"))
+    check("...with the four fields of checks.json, in its order: Verdict (its verdicts), Highest severity (its severities), Summary "
+          "(textarea), Doc location (textinput), and only those", got == FOUR, got)
+    check("...and it has no other artifact (the check fills every one)", len(item.get("definition") or []) == 4, item.get("definition"))
+OLD = ("Validation (agent folder)", "Validation (LangGraph)", "Critical vulns", "approve after fixes", "App validator")
+check("the policy names none of the #260 validators' evidence items, fields, values or agents", not [o for o in OLD if o in raw],
+      [o for o in OLD if o in raw])
 values = [v for s in stages for e in s.get("evidenceSet") or [] if isinstance(e, dict) for _, _, opts in fields(e) for v in opts]
 check("every option value is text (quoted: an unquoted yes or no is a boolean to a YAML 1.1 reader)",
       values and all(isinstance(v, str) for v in values), [v for v in values if not isinstance(v, str)])
