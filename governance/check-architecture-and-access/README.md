@@ -1,7 +1,7 @@
 # Check 2: Architecture and access
 
 One of the three checks of the App validation demo (domino-agent-service spec #388, Implementation Decision 9). It is a registered
-agent of the harness lane (opencode), "Architecture and access", and this folder is its definition: `domino-agent deploy` registers it
+agent (opencode), "Architecture and access", and this folder is its definition: `domino-agent deploy` registers it
 from git (domino-agent-service ADR 0037). When an analyst moves an App's governance bundle to the Validation stage of the App
 deployment policy, its event subscription starts a task. The task checks the App's architecture and access.
 It fills only its own evidence item, "Validation: Architecture and access". All the data is fake.
@@ -18,6 +18,7 @@ doc template) are on [governance/README.md](../README.md).
 | `skills/architecture-and-access/SKILL.md` | The checklist, an own skill: the steps from the bundle to the filled evidence item, with the tool of each step. | Yes |
 | `subscriptions/bundle-enters-validation.md` | The event subscription: its event and filter on top, its instruction below them. The file name is its name. | Yes |
 | `tools/route_table.py` | The own tool `route_table`: the table of the ways into the App, from the App's code. The agent sees it as `own_route_table`. | Yes |
+| `subagents/route-reviewer.md` | The custom subagent `route-reviewer`: its settings on top, its instructions below them. It reviews the access of each route, and only reads. | Yes |
 | `test_route_table.py` | The own tool's unit test. It is next to `definition.md`, not in `tools/`, so deploy does not upload it. | No |
 | `README.md` | This page. | No |
 
@@ -35,17 +36,19 @@ The checklist's steps, in order:
 2. It calls its own tool `own_route_table` once, for the table of the App's routes and MCP tools (below, "Its own tool"). Then it
    reads the App's code, its start script and its requirements. It finds who can call each route and what it changes, which
    identity each write records, the tech stack, the design, and each dependency with how it is pinned and installed.
-3. It sorts each problem into a real finding (with a severity, S0 to S3) or a false hit (with the reason). Then it picks the Verdict
-   and the Highest severity by the shared rules.
-4. It writes the doc from `governance/validation-doc.md`: the shared top part and its own middle part, "Architecture and access".
+3. It hands the route table to its custom subagent `route-reviewer`, in one `task` call (below, "Its custom subagent"). The
+   subagent gives a verdict for each route, and changes nothing.
+4. It sorts each problem into a real finding (with a severity, S0 to S3) or a false hit (with the reason), with the review's
+   verdicts as input. Then it picks the Verdict and the Highest severity by the shared rules.
+5. It writes the doc from `governance/validation-doc.md`: the shared top part and its own middle part, "Architecture and access".
    The doc's file on the task branch is `docs/validation/architecture-and-access-<bundleId>.md`. The route table of its
-   Architecture section comes from the rows of `own_route_table`.
-5. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
-6. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
+   Architecture section comes from the rows of `own_route_table`, and who can call each route and what it changes from the review.
+6. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
+7. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
    (`domino_write_bundle_attachment`).
-7. It files each real finding of its part, named `[Architecture and access] <what> in <where>` (`domino_write_governance_finding`).
-8. It fills its own evidence item (`domino_write_policy_result`).
-9. Its result (`domino_report_result`) starts with four lines: `Verdict: ...`, `Highest severity: ...`, `Summary: ...` and
+8. It files each real finding of its part, named `[Architecture and access] <what> in <where>` (`domino_write_governance_finding`).
+9. It fills its own evidence item (`domino_write_policy_result`).
+10. Its result (`domino_report_result`) starts with four lines: `Verdict: ...`, `Highest severity: ...`, `Summary: ...` and
    `Doc location: ...`. The scripted check of the policy (`governance/validation_status.py`) shows them to the approver.
 
 It files findings only in its own part. A known vulnerability (a CVE, PYSEC or GHSA ID) is the part of the check "Vulnerability
@@ -101,12 +104,41 @@ cd governance/check-architecture-and-access
 python -m unittest
 ```
 
-It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line), a sample of the
-demo branch's `POST /upload` (no identity, changes nothing), and small sample files: a handler that reads the identity through a
-helper, a decorator that the tool does not know, a file that is not valid Python, and the writes of the rule.
+It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line; on the demo
+branch, also exactly the planted `POST /upload`, and no other row), a sample of the demo branch's `POST /upload` (no identity,
+changes nothing), and small sample files: a handler that reads the identity through a helper, a decorator that the tool does not
+know, a file that is not valid Python, and the writes of the rule.
 
 The run writes `__pycache__/`, and the repo's `.gitignore` ignores it. Else deploy refuses the folder, because it has changes that
 are not committed.
+
+## Its custom subagent
+
+`subagents/route-reviewer.md` is the agent's custom subagent `route-reviewer` (domino-agent-service's `docs/custom-subagents.md`). The
+main agent starts it for one part of its work: the review of the access of each route. It has the agent's only model,
+`google/gemini-3.8-flash`, the tool read only (`tools: [read]`: it reads, finds and searches files), and less access than the agent
+(`project: read`). It has no `domino`, `shell`, `own`, `edit` or `push`. So it can't call Domino, run a command, call the own tool or
+write a file.
+
+In step 3 of the checklist, the main agent hands it the route table of `own_route_table`, the Intake's Users and Data class, and the
+access rules of the checklist, in one `task` call. It reads the handler of each row at its file and line. Its answer is one JSON
+object, with a verdict for each route: who can call it, what it changes, a problem or none, a severity (S0 to S3, or none) with the
+reason, and the evidence (a file and line). It judges only access: a known vulnerability and the data class are the parts of the
+other two checks.
+
+The main agent decides. It sorts each route problem of the review into a real finding or a false hit, and the doc's route table
+takes who can call it and what it changes from the review. Then the main agent files the findings and makes each other write:
+`route-reviewer` files nothing.
+
+The main agent calls the own tool itself, and does not give it to the subagent: a custom subagent's own-tool calls are not in the
+transcript and get no Activity log row. The task page shows the `task` call of `route-reviewer` with its input and its answer.
+
+When the `task` call fails, or the subagent gives no usable answer (no verdict for any row), the main agent judges the routes
+itself, and names the failed step under "What this check could not check". That alone does not make the Verdict `could not check`.
+
+The built-in subagent is off (`subagents: false` in `definition.md`), and the custom subagent works with it off. The operating rules
+reach each subagent too, with the check's instructions on top. So the instructions say that they and the checklist are the main
+agent's, and the subagent's own instructions say that it loads no skill.
 
 ## Its subscription
 
@@ -154,7 +186,8 @@ The access rows are in `definition.md`. An edit in the wizard is a commit to the
 | Resources not attached to the task | No access | The check works only on the task's project and the event's bundle. |
 
 The tools: Run a Job off (no scan, so the agent has no `domino_run_job`), Git push on (the doc leaves the Job only through the push),
-no subagents. Its own tool, `own_route_table`, comes from the folder `tools/`, not from a setting. `on-error: fail`: nobody answers an event task, so a denied call ends the task with a report, and never waits for a
+the built-in subagent off. Its own tool, `own_route_table`, comes from the folder `tools/`, and its custom subagent, `route-reviewer`,
+from the folder `subagents/`, not from a setting. `on-error: fail`: nobody answers an event task, so a denied call ends the task with a report, and never waits for a
 person.
 
 ## Deploy it
@@ -184,22 +217,28 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_architecture
 
 One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only. It reads the names from
 `governance/checks.json` (the check's name, its evidence item, the field labels, the verdicts and the severities) and the doc's
-fields from `governance/validation-doc.md`. It checks the files that deploy uploads (the tool file, and not its unit test or this
-page), the settings of `definition.md`, the checklist's rules (no scan step, one call of `own_route_table`) and the order of its
-tools, the instructions' rules, the own tool's file (the standard library only), the subscription's file (its filter on the demo
-project's name), no Domino host or ID in the folder, and this page.
+fields from `governance/validation-doc.md`. It checks the files that deploy uploads (the tool file and the subagent file, and not
+the unit test or this page), the settings of `definition.md`, the checklist's rules (no scan step, one call of `own_route_table`, one
+`task` call of `route-reviewer`, the fallback) and the order of its tools, the instructions' rules, the own tool's file (the standard
+library only), the custom subagent's file, `subagents/route-reviewer.md` (its settings, its instructions and its answer form), the
+subscription's file (its filter on the demo project's name), no Domino host or ID in the folder, no em dash, the glossary's words
+in the folder's text, and this page.
 
 With the `domino-agent` package or `AGENT_SERVICE_REPO`, it runs the own tool's unit test (else a `SKIP:` line). With
 `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name against the service's gateway and relay,
 and the service's own tool reader reads the tool file. The rest needs Linux: it starts the agent service with a fake Domino (the
 service's seam helper, `tests/agent_folder_seam.py`), commits the folder in a temporary clone, and then:
 
-- `domino-agent deploy --dry-run` passes the service's folder rules, and its `Changed:` line names `tools/route_table.py`.
-  `deploy` registers the agent: its settings, its skill, its own tool and "can't run yet". It adds the subscription from its file,
+- `domino-agent deploy --dry-run` passes the service's folder rules, and its `Changed:` line names `tools/route_table.py` and
+  `subagents` (the service names the folder of the custom subagents, not the file). `deploy` registers the agent: its settings, its
+  skill, its own tool, its custom subagent and "can't run yet". It adds the subscription from its file,
   in the temporary clone with the seam's project name (`local-proj`) in place of `aml-validation-demo`: the fake Domino has only that
   project.
 - A stage move starts no task before the token, nor for an analyst who may not use the agent. After both, it starts one task as
   the service account, with the bundle ID in its title, and its Job.
+- `deploy` registers the custom subagent, and the Job's spec has it, `route-reviewer`, read only: the agent's model, `read`
+  allowed as for the main agent, and no edit, shell, web, Domino tool, push, subagent or own tool. The main agent may start it, and
+  the built-in subagent is off.
 - The Job's spec has the skill, the own tool (its file, and `own_*` allowed for the main agent), the access rows, Run a Job off,
   Git push on, the permissions and the limits. The gateway's decisions
   for this task allow the attachment, the findings and the evidence on the event's bundle and `git_push`, and deny `run_job` and

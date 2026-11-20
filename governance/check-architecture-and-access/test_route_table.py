@@ -39,7 +39,8 @@ def def_line(path, name):
 
 
 class TheAppOfMain(unittest.TestCase):
-    """The App's real code (case_server/ of this branch: on main, 5 MCP tools and 2 custom routes)."""
+    """The App's real code (case_server/ of this branch: on main, 5 MCP tools and 2 custom routes; on the demo branch
+    demo/app-validation, also the planted POST /upload)."""
 
     def setUp(self):
         self.result = table(PROJECT, "case_server")
@@ -50,8 +51,16 @@ class TheAppOfMain(unittest.TestCase):
                 for n in ("get_alert", "get_customer_profile", "get_transactions", "close_alert", "escalate_to_sar")]
         want += [("route", "POST", "/reset", "reset", "case_server/server.py", def_line(server, "reset")),
                  ("route", "GET", "/", "case_board", "case_server/server.py", def_line(server, "case_board"))]
+        if '@mcp.custom_route("/upload", methods=["POST"])' in server.read_text():   # the demo branch: exactly this one row more
+            want.append(("route", "POST", "/upload", "upload", "case_server/server.py", def_line(server, "upload")))
+        want.sort(key=lambda r: (r[4], r[5]))   # the tool's order: by file, then line
         got = [(r["kind"], r["method"], r["path"], r["handler"], r["file"], r["line"]) for r in self.result["rows"]]
         self.assertEqual(got, want)
+
+    def test_the_demo_branchs_post_upload_when_it_is_there_reads_no_identity_and_changes_nothing(self):
+        rows = {r["handler"]: r for r in self.result["rows"]}
+        if "upload" in rows:
+            self.assertEqual((rows["upload"]["reads_identity"], rows["upload"]["changes_state"]), (False, False))
 
     def test_close_alert_and_escalate_to_sar_read_the_identity_and_change_state(self):
         rows = {r["handler"]: r for r in self.result["rows"]}

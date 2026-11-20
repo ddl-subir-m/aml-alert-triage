@@ -1,4 +1,4 @@
-"""Check 2, Architecture and access (governance/check-architecture-and-access/): a registered agent of the harness lane (opencode),
+"""Check 2, Architecture and access (governance/check-architecture-and-access/): a registered agent (opencode),
 an agent folder that `domino-agent deploy` registers (domino-agent-service spec #388, Implementation Decision 9, ticket #394). It is
 the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, Run a Job off. Seen from
 outside: its files as `domino-agent deploy` uploads them, its checklist skill as the agent reads it, the templates of its event
@@ -8,12 +8,15 @@ registers from it.
 The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
 and the rules from governance/README.md and governance/validation-doc.md (the shared rules of the three checks).
 
-With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and not
-its unit test or the README), the settings of definition.md, the checklist's rules and the order of its tools (the own tool
-own_route_table before the writes), the instructions' rules, the tool names (as a harness agent sees them: domino_<name> and
-own_route_table), the own tool's file (the standard library only, and no code that it imports or runs), the subscription's file
+With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and the
+custom subagent's file, subagents/route-reviewer.md, and not the unit test or the README), the settings of definition.md, the
+checklist's rules and the order of its tools (the own tool own_route_table, then one task call of the custom subagent route-reviewer,
+both before the writes), the instructions' rules, the tool names (as opencode names them: domino_<name> and own_route_table), the own
+tool's file (the standard library only, and no code that it imports or runs), the custom subagent's file (its settings: the agent's
+model, read only, Project files read; its instructions and its answer form), the subscription's file
 (subscriptions/bundle-enters-validation.md: its filter on the demo project's name and its two templates, which name the bundle ID), no
-Domino host or ID (the repo is public), and the folder's README.
+Domino host or ID (the repo is public), no em dash, the glossary's words (spec #459: the folder is demo text), and the folder's
+README.
 
 With domino_agent (the domino-agent package of this Python, or the package of the AGENT_SERVICE_REPO checkout), it runs the own tool's
 unit test, test_route_table.py (python -m unittest in the folder, spec #459 seam 1). With neither, that part prints a SKIP line.
@@ -22,13 +25,14 @@ With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkou
 gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS), and the service's own tool reader reads the tool file
 (domino_agent/own_tools.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with a fake Domino (the service's
 seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
-  - `domino-agent deploy --dry-run` passes the service's folder rules, and its Changed line names the tool file; `deploy` registers
-    the agent, which can't run yet, with its own tool, and adds the subscription from its file (with the seam's project name in place
-    of the demo project's name in the temporary clone).
+  - `domino-agent deploy --dry-run` passes the service's folder rules, and its Changed line names the tool file and subagents;
+    `deploy` registers the agent, which can't run yet, with its own tool and its custom subagent, and adds the subscription from its
+    file (with the seam's project name in place of the demo project's name in the temporary clone).
   - A stage move (the audit poller's payload) starts no task before the service account's token, nor for an analyst who may not use
     the agent; then one task, as the service account, and its Job.
-  - The Job's spec (the skill, the own tool, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
-    for that task on the event's bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
+  - The Job's spec (the skill, the own tool, the custom subagent as opencode gets it, read only, with the built-in subagent off, the
+    access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions for that task on the event's
+    bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
     attached to the task", and run_job is denied.
   - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
@@ -85,18 +89,20 @@ TOOL_NAME = "route_table"               # the own tool (spec #459, decision 4): 
 TOOL = f"tools/{TOOL_NAME}.py"
 OWN = f"own_{TOOL_NAME}"
 UNIT_TEST = f"test_{TOOL_NAME}.py"      # its unit test, next to definition.md: deploy does not upload it
-UPLOADED = ("definition.md", "instructions.md", SKILL, SUB, TOOL)   # what deploy uploads of the folder
+SUBAGENT_NAME = "route-reviewer"        # the custom subagent (spec #459, decision 5): the main agent starts it with the task tool
+SUBAGENT = f"subagents/{SUBAGENT_NAME}.md"
+UPLOADED = ("definition.md", "instructions.md", SKILL, SUB, TOOL, SUBAGENT)   # what deploy uploads of the folder
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
 files = {k: v for k, v in every.items() if known(k)}
-check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, one subscription file, {SUB}, and one own tool "
-      f"file, {TOOL}, and nothing else", sorted(files) == sorted(UPLOADED), sorted(files))
+check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, one subscription file, {SUB}, one own tool "
+      f"file, {TOOL}, and one custom subagent's file, {SUBAGENT}, and nothing else", sorted(files) == sorted(UPLOADED), sorted(files))
 check(f"...the own tool's unit test, {UNIT_TEST}, and README.md are in the folder, next to definition.md, and deploy does not upload "
       "them", all(f in every and not known(f) for f in (UNIT_TEST, "README.md")), sorted(every))
 check("the repo's .gitignore has __pycache__/: a run of the unit test writes it, and deploy refuses a folder with changes that are "
       "not committed", "__pycache__/" in text(ROOT / ".gitignore").splitlines())
-settings, instructions, skill, subscription, tool_file = (files.get(k, "") for k in UPLOADED)
+settings, instructions, skill, subscription, tool_file, subagent = (files.get(k, "") for k in UPLOADED)
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
 top = re.match(r"---\n(.*?)\n---\n", skill, re.S)
@@ -227,6 +233,32 @@ rule("each item of the tool's not_read goes under what the check could not check
 rule("the doc's route table has one line for each row of the tool, with its method and path exactly as the tool gives them",
      "route table", "each row", f"`{OWN}`", "`method`", "`path`", "exactly")
 
+# The custom subagent (spec #459, decisions 5 and 6): the main agent hands it the table, once, and decides; it files the findings
+rule(f"hand the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
+     f"`{SUBAGENT_NAME}`", "once", "`task`", "`subagent_type`")
+prompt_block = next((b for b in re.findall(r"```\n(.*?)\n```", skill, re.S) if "Route table:" in b), "")
+heads_of_prompt = [ln.split(":")[0] for ln in prompt_block.splitlines() if re.match(r"^[A-Z][a-z ]+:", ln)]
+check(f"...its prompt has the Intake's Users and Data class, the access rules and the table of {OWN}, as the tool gave it",
+      heads_of_prompt == ["Users", "Data class", "Access rules", "Route table"] and OWN in prompt_block
+      and "exactly as the tool gave it" in prompt_block, prompt_block or heads_of_prompt)
+rule("...the access rules: with no access check in the code, anyone who can open the App can call it", "anyone who can open the app",
+     "no access check")
+rule("...a write that records no identity is a problem", "each write", "`domino-username`", "records no identity")
+rule("...the severity: the scale of governance/README.md, with the Intake's Users and Data class", "severity", "governance/readme.md",
+     "users", "data class")
+rule("...judge only access: the other two checks' parts get no verdict", "only access", f'"{SCAN_CHECK}"', f'"{PURPOSE}"')
+rule(f"...a row with no verdict of {SUBAGENT_NAME}: judge it yourself, and name it under what the check could not check",
+     "no verdict", "yourself", '"what this check could not check"')
+rule(f"when {SUBAGENT_NAME} gives no usable answer: do not call it again, judge the routes yourself, and name the failed step, and "
+     f"this alone does not make the Verdict `{V[2]}`", f"`{SUBAGENT_NAME}`", "no usable answer", "do not call it again", "yourself",
+     "failed step", '"what this check could not check"', "alone does not make", f"`{V[2]}`")
+rule("sort each route problem of the review into a real finding or a false hit: the review is an input, the main agent decides",
+     "route problem", "review", "you decide")
+rule(f"the doc's route table takes who can call it and what it changes from the review of {SUBAGENT_NAME}", "route table",
+     "who can call it", "what it changes", f"`{SUBAGENT_NAME}`")
+rule(f"the main agent files the findings itself: {SUBAGENT_NAME} files nothing", "you file", f"`{SUBAGENT_NAME}`", "files nothing")
+rule("...and a review with no usable answer goes under could_not_check", "`could_not_check`", "no usable answer")
+
 # The push, the attachment, the findings, the evidence and the result
 rule("push the doc with git_push, and keep its ok, branch, commit and dryRun", "domino_git_push", "`ok`", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
@@ -245,11 +277,11 @@ rule("a failed or denied call: go on with the other steps, and name it under wha
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", OWN, "domino_git_push", "domino_write_bundle_attachment",
+order = ["domino_get_bundle", "domino_get_policy", OWN, SUBAGENT_NAME, "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN} (before the writes), push, attachment, "
-      "findings, evidence, result",
+check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the custom subagent {SUBAGENT_NAME} (both "
+      "before the writes), push, attachment, findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
@@ -280,6 +312,12 @@ irule("end with report_result, once, last, with the skill's four lines on top", 
 irule(f"call the own tool {OWN} yourself, once, as the checklist says: the doc's route table comes from its rows", OWN,
       "yourself", "once", "route table", "rows")
 irule("...when it fails, read the routes from the code, and the check goes on", OWN, "fails", "from the code", "goes on")
+irule(f"hand the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
+      "once", "task tool", "route table")
+irule("...it only reviews: the main agent decides each finding and makes each write", "only reviews", "you decide", "each write")
+irule("...when it gives no usable answer, judge the routes yourself: the check goes on", "no usable answer", "yourself", "goes on")
+irule(f"the rules and the checklist are the main agent's: {SUBAGENT_NAME} follows only its own instructions and loads no skill (the "
+      "operating rules reach each subagent too)", SUBAGENT_NAME, "main agent", "own instructions", "no skill")
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
@@ -318,6 +356,48 @@ runs_code = sorted({ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n,
                    & {"exec", "eval", "compile", "__import__", "os.system", "os.popen"})
 check("...and it calls no exec, eval, compile, __import__, os.system or os.popen: it parses the App's code with ast.parse",
       not runs_code and "ast.parse" in tool_file, runs_code)
+
+# ------------------------------------------------------------------------------------------------------- the custom subagent
+# subagents/route-reviewer.md (spec #459, decision 5): the fields of domino-agent-service's docs/custom-subagents.md on top, its
+# instructions below them. It reads only (tools [read], project read): no Domino tools, no shell, no own tool, no edit, no push. The
+# service's own reading (domino_agent/subagents.py) is the deploy on Linux below, which also refuses a field that asks for more than
+# the agent has.
+sub_settings = fields_of(subagent)   # the same plain reading as definition.md's: `access.project` is a field of the group access
+below = re.match(r"---\n.*?\n---\n(.*)", subagent, re.S)
+sub_text = below.group(1).strip() if below else ""   # its instructions
+SUB_WANT = {"name": SUBAGENT_NAME, "model": MODEL, "tools": "[read]", "access": "", "access.project": "read"}
+check(f"{SUBAGENT}: the custom subagent {SUBAGENT_NAME}, with the agent's only model, {MODEL}, the tool read only, and Project "
+      "files read (no domino, shell, own, edit or push: it can't call Domino, run a command, call the own tool or write a file)",
+      {k: sub_settings.get(k) for k in SUB_WANT} == SUB_WANT, {k: (sub_settings.get(k), v) for k, v in SUB_WANT.items()
+                                                              if sub_settings.get(k) != v})
+check("...with a description (the main agent reads it to decide when to start it), the fields of a custom subagent only, and its "
+      "instructions below them", re.search(r"^description: \S.{40,}$", subagent, re.M)
+      and set(sub_settings) == {*SUB_WANT, "description"} and len(sub_text) > 200, sorted(sub_settings))
+srule = shared.rules("the custom subagent's instructions say", sub_text)
+srule("it reads the handler of each row at its file and line", "read", "handler of each row", "file and line")
+srule("...one verdict for each row, with its method and path exactly as the table has them", "one verdict", "each row",
+      "`method`", "`path`", "exactly")
+srule("...the severity is on the shared scale of governance/README.md, with its examples for this check", "governance/readme.md",
+      "s0", "s3", "examples", f'"{NAME}"')
+srule("...it judges only access: a known vulnerability and the data class are the other two checks' parts", "only access",
+      "known vulnerability", f'"{SCAN_CHECK}"', "data class", f'"{PURPOSE}"')
+srule("...it only reads: it files no finding, writes no file and changes nothing", "only read", "file no finding", "write no file")
+srule("...the agent's rules and the checklist are the main agent's: it loads no skill", "main agent", "no skill")
+answer = re.search(r"```json\n(.*?)\n```", sub_text, re.S)
+try:
+    form = json.loads(answer.group(1)) if answer else {}
+except ValueError as e:
+    form = {"not JSON": str(e)}
+route_form = ((form.get("routes") or [{}])[0] if isinstance(form.get("routes"), list) else {}) if isinstance(form, dict) else {}
+ROUTE_KEYS = ["method", "path", "who_can_call", "what_it_changes", "problem", "severity", "severity_reason", "evidence"]
+check("...its answer is one JSON object, in a json block: for each route its method and path, who can call it, what it changes, a "
+      "problem or none, a severity and its reason, and the evidence (each a file and line), and what it could not review",
+      isinstance(form, dict) and sorted(form) == ["not_reviewed", "routes"] and list(route_form) == ROUTE_KEYS
+      and isinstance(route_form.get("evidence"), list), form)
+check("...a severity is one of S0, S1, S2, S3 or none", all(s in str(route_form.get("severity")) for s in [*SEVERITIES]),
+      route_form.get("severity"))
+sub_names = sorted(set(re.findall(r"\b(?:domino|own)_[a-z_]+", subagent)))
+check("...it names no Domino tool and no own tool: it has none", not sub_names, sub_names)
 
 # ------------------------------------------------------------------------------------------------- the event subscription's file
 # subscriptions/bundle-enters-validation.md (domino-agent-service ADR 0049, ticket #398): `domino-agent deploy` (0.4.0 or later)
@@ -382,6 +462,10 @@ leaks = shared.leaks(every)   # the one leak pattern of the three checks (tests/
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
 dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
+# The folder and its pull request are demo text (spec #459, scene 3b): the words of the two glossaries, never "lane"
+laned = sorted(rel for rel, body in [*every.items(), ("this check's docstring", __doc__ or "")] if re.search(r"\blanes?\b", body, re.I))
+check('no file of the folder, and not the docstring of this check, has the word "lane" (it is "a registered agent (opencode)")',
+      not laned, laned)
 
 # ------------------------------------------------------------------------------------------------------------ the folder's README
 # The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.
@@ -445,6 +529,31 @@ brule("...it needs the domino-agent package or a domino-agent-service checkout o
       "`domino-agent`", "`pythonpath`", "no network")
 brule("...its run writes __pycache__/, which the repo's .gitignore ignores, else deploy refuses the folder", "`__pycache__/`",
       "`.gitignore`", "refuses")
+brule(f"its file table names the custom subagent's file, {SUBAGENT}, and deploy uploads it", f"| `{SUBAGENT}` |", "| yes |")
+check('the folder\'s README has the section "Its custom subagent"', "\n## Its custom subagent\n" in readme)
+brule(f"the custom subagent {SUBAGENT_NAME} has the agent's model, the tool read only and Project files read", f"`{SUBAGENT_NAME}`",
+      f"`{MODEL}`", "`tools: [read]`", "`project: read`")
+brule("...so it can't call Domino, run a command, call the own tool or write a file", "can't call domino", "run a command",
+      "own tool", "write a file")
+brule("...the main agent hands it the route table, the Intake's Users and Data class and the access rules, in one task call",
+      "one `task` call", "route table", "users", "data class", "access rules")
+brule("...its answer is one JSON object with a verdict for each route", "json", "each route", "who can call it", "what it changes",
+      "severity")
+brule("...the main agent calls the own tool itself: a custom subagent's own-tool calls are not in the transcript and get no Activity "
+      "log row", "itself", "own tool", "not in the transcript", "activity log")
+brule(f"...the main agent decides and files the findings: {SUBAGENT_NAME} files nothing", "main agent", "decides", "files nothing")
+brule(f"...with no usable answer, the main agent judges the routes itself, and that alone does not make the Verdict could not check",
+      "no usable answer", "itself", '"what this check could not check"', "alone", "`could not check`")
+brule("...the built-in subagent is off (subagents: false), and the custom subagent works with it off", "built-in subagent",
+      "`subagents: false`", "works with it off")
+brule("...the rules and the checklist reach the subagent too, so its instructions say that they are the main agent's",
+      "operating rules", "main agent", "no skill")
+check('the folder\'s README says "no subagents" nowhere: the built-in subagent is off, and it has a custom subagent',
+      "no subagents" not in readme.lower())
+brule("the check reads the custom subagent's file: its settings, its instructions and its answer form", f"`{SUBAGENT}`",
+      "settings", "answer form")
+brule("...and on Linux, deploy registers the custom subagent, and the Job's spec has it, read only", "deploy", "registers",
+      "custom subagent", "job's spec", "read only")
 
 # --------------------------------------------------------------------------------------------- the own tool's unit test
 # test_route_table.py, as the README says to run it (python -m unittest, in the folder). It needs domino_agent: the domino-agent
@@ -531,9 +640,10 @@ check("deploy --dry-run passes the service's folder rules: it would create the a
       ran.code == 0 and f"Dry run: would create {TITLE}" in ran.out and "Dry run: nothing was registered." in ran.out
       and registered() is None, ran)
 changed = re.search(r"^  Changed: (.*)$", ran.out, re.M)
-check(f"...its Changed line names the own tool's file, {TOOL} (and not the unit test or the README)",
-      changed and TOOL in changed.group(1).split(", ") and not {UNIT_TEST, "README.md"} & set(changed.group(1).split(", ")),
-      changed.group(0) if changed else ran.out)
+check(f"...its Changed line names the own tool's file, {TOOL}, and the custom subagents, subagents (the service names the folder, "
+      "not the file), and not the unit test or the README",
+      changed and {TOOL, "subagents"} <= set(changed.group(1).split(", "))
+      and not {UNIT_TEST, "README.md"} & set(changed.group(1).split(", ")), changed.group(0) if changed else ran.out)
 check(f"...and it says that it would add the subscription from its file, {SUB}",
       trigger_lines(ran.out) == [f"  Trigger: would add subscription {SUB_NAME} ({SUB})"], trigger_lines(ran.out) or ran.out)
 ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)
@@ -552,7 +662,7 @@ check("its Registration names the AML repo, the folder's path, the commit and a 
 check("its identity is a service account (the owner chooses which one, and adds its token)",
       (a.get("identity") or {}).get("mode") == "service_account", a.get("identity"))
 g = a.get("guardrails") or {}
-check("it runs no Job and pushes its task branch, with no subagent (Run a Job: off, Git push: on)",
+check("it runs no Job and pushes its task branch, with the built-in subagent off (Run a Job: off, Git push: on, Subagents: off)",
       {k: (g.get("tools") or {}).get(k) for k in ("jobs", "push", "subagents")} == {"jobs": False, "push": True, "subagents": False},
       g.get("tools"))
 check("its Resource access: Project files Read & write, Project datasets No access, attached Read & write, not attached No access",
@@ -572,6 +682,11 @@ tools_of = a.get("ownTools") or {}
 check(f"deploy registers the own tool {TOOL_NAME} from {TOOL}, with its argument folder, and only that file of tools/ (the API "
       "shows no text)", tools_of.get("files") == [TOOL]
       and [{k: x.get(k) for k in TOOL_ENTRY} for x in tools_of.get("tools") or []] == [TOOL_ENTRY], tools_of)
+SUB_DESCRIPTION = sub_settings.get("description")   # one line of plain YAML, as the file part above checks
+check(f"deploy registers the custom subagent {SUBAGENT_NAME} from {SUBAGENT}: the agent's model, read only, Project files read, and "
+      "its instructions", a.get("customSubagents") == [
+          {"name": SUBAGENT_NAME, "file": SUBAGENT, "description": SUB_DESCRIPTION, "model": MODEL, "tools": ["read"],
+           "access": {"project": "read"}, "instructions": sub_text}], a.get("customSubagents"))
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
 # The deploy made the subscription from its file (deployed_subscription() reads it back), with the seam's project name in its filter. A
@@ -649,6 +764,22 @@ oc = spec.get("opencodeConfig") or {}
 check(f"...and opencode gets the own tools' server, own, and the main agent may call {OWN} (own_*: allow)",
       "own" in (oc.get("mcp") or {}) and (((oc.get("agent") or {}).get("build") or {}).get("permission") or {}).get("own_*")
       == "allow", {"mcp": sorted(oc.get("mcp") or {}), "build": (oc.get("agent") or {}).get("build")})
+provider = next(iter(oc.get("provider") or {}), "(no provider)")
+compiled = (oc.get("agent") or {}).get(SUBAGENT_NAME) or {}
+check(f"the Job's spec has the custom subagent {SUBAGENT_NAME}: a subagent of opencode with its description, the agent's model and "
+      "its instructions", {k: compiled.get(k) for k in ("description", "mode", "model", "prompt")}
+      == {"description": SUB_DESCRIPTION, "mode": "subagent", "model": f"{provider}/{MODEL}", "prompt": sub_text},
+      {k: compiled.get(k) for k in ("description", "mode", "model")})
+sub_perm, main_perm = compiled.get("permission") or {}, oc.get("permission") or {}
+DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "task", "own_*")
+check("...it may read the project's files as the main agent does, and nothing more: no edit, no shell, no web, no Domino tool, no "
+      "Job, no push, no subagent and no own tool", sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
+      and {k: sub_perm.get(k) for k in DENIED} == dict.fromkeys(DENIED, "deny"), {k: sub_perm.get(k) for k in ("read", *DENIED)})
+check("...the main agent may start it (task: allow), and the built-in subagent stays off (opencode's general and explore disabled)",
+      main_perm.get("task") == "allow" and {k: (oc.get("agent") or {}).get(k) for k in ("general", "explore")}
+      == {"general": {"disable": True}, "explore": {"disable": True}}, (main_perm.get("task"), sorted(oc.get("agent") or {})))
+check(f"...and the agent's rules name {SUBAGENT_NAME} with its description, and say that the built-in subagent is off",
+      f"`{SUBAGENT_NAME}`: {SUB_DESCRIPTION}" in rules and "The built-in subagent is off" in rules, rules[-600:])
 skills = [(s.get("name"), s.get("own"), s.get("content")) for s in spec.get("skills") or []]
 check(f"the Job gets the own skill {SLUG} with the checklist's text, at the commit that was deployed",
       skills == [(SLUG, True, skill)] and (spec.get("skills") or [{}])[0].get("commit") == repo.head, [s[:2] for s in skills])
