@@ -25,22 +25,25 @@ GIVE = "Give the folder of the App's Python code, relative to the project folder
 @tool
 def route_table(folder: str) -> dict:
     """The table of the ways into a Python App: each MCP tool (`@<server>.tool`) and each custom route (`@<server>.custom_route`)
-    of its code. `<server>` is a name that the same file binds to `FastMCP(...)`. Give the folder of the App's Python code, relative to the project folder, for example `case_server`. The tool
-    parses the code with `ast`, and never imports or runs it.
+    of its code. `<server>` is a name that the same file binds to `FastMCP(...)`. Give the folder of the App's Python code,
+    relative to the project folder, such as `case_server`. The tool parses the code with `ast`, and never imports or runs it.
 
     The result has `folder`, `files` (the files that it read), `rows` and `not_read`. Each row has `kind` (`MCP tool` or
     `route`), `method`, `path` (for an MCP tool: the MCP endpoint and the tool's name, such as `/mcp (tool: get_alert)`),
     `handler`, `file` and `line` (of the handler's `def`), `reads_identity`, `identity_at`, `changes_state` and `changes_at`
-    (`identity_at` and `changes_at` are the file and line of the evidence, or null).
+    (`identity_at` and `changes_at`: the file and line of the evidence, or null).
 
     reads_identity: the handler, or a function of the same file that it calls (at any depth), has the text `domino-username`
     (the header with the caller's identity) in its code.
 
-    changes_state: the handler, or a function of the App's code that it calls (found by its name, at any depth, in each file),
-    has a write: a SQL text that starts with INSERT INTO, REPLACE INTO, UPDATE ... SET, DELETE FROM, or CREATE, DROP or ALTER of
-    a table, index, view or trigger; `open` with a mode with w, a, x or +; a call of write_text, write_bytes, mkdir, makedirs,
-    touch, rename, remove, unlink, rmdir or rmtree; or a `global` or `nonlocal` statement. A docstring is not code, and a
-    function of a package is not followed. So false means that the rule found no write, not that there is none.
+    changes_state: the handler, or a function of the App's code that it calls, has a write. The tool finds a called function by
+    its name, at any depth, in each file. A write is one of these:
+    - a SQL text that starts with INSERT INTO, REPLACE INTO, UPDATE ... SET, DELETE FROM, or CREATE, DROP or ALTER of a table,
+      index, view or trigger;
+    - `open` with a mode with w, a, x or +;
+    - a call of write_text, write_bytes, mkdir, makedirs, touch, rename, remove, unlink, rmdir or rmtree;
+    - a `global` or `nonlocal` statement.
+    A docstring is not code. The tool does not follow a function of a package. So false means only that the rule found no write.
 
     not_read: each file that is not valid Python, each decorator that the tool does not know on a handler, each decorator with
     a path (it can be a route of another framework), and each route whose path or methods are not plain values. A tool or a

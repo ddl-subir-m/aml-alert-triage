@@ -233,8 +233,8 @@ rule("each item of the tool's not_read goes under what the check could not check
 rule("the doc's route table has one line for each row of the tool, with its method and path exactly as the tool gives them",
      "route table", "each row", f"`{OWN}`", "`method`", "`path`", "exactly")
 
-# The custom subagent (spec #459, decisions 5 and 6): the main agent hands it the table, once, and decides; it files the findings
-rule(f"hand the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
+# The custom subagent (spec #459, decisions 5 and 6): the main agent gives it the table, once, and decides; it files the findings
+rule(f"give the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
      f"`{SUBAGENT_NAME}`", "once", "`task`", "`subagent_type`")
 prompt_block = next((b for b in re.findall(r"```\n(.*?)\n```", skill, re.S) if "Route table:" in b), "")
 heads_of_prompt = [ln.split(":")[0] for ln in prompt_block.splitlines() if re.match(r"^[A-Z][a-z ]+:", ln)]
@@ -313,7 +313,7 @@ irule("end with report_result, once, last, with the skill's four lines on top", 
 irule(f"call the own tool {OWN} yourself, once, as the checklist says: the doc's route table comes from its rows", OWN,
       "yourself", "once", "route table", "rows")
 irule("...when it fails, read the routes from the code, and the check goes on", OWN, "fails", "from the code", "goes on")
-irule(f"hand the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
+irule(f"give the route table to the custom subagent {SUBAGENT_NAME}, once, with the task tool, as the checklist says", SUBAGENT_NAME,
       "once", "task tool", "route table")
 irule("...it only reviews: the main agent decides each finding and makes each write", "only reviews", "you decide", "each write")
 irule("...when it gives no usable answer, judge the routes yourself: the check goes on", "no usable answer", "yourself", "goes on")
@@ -536,7 +536,7 @@ brule(f"the custom subagent {SUBAGENT_NAME} has the agent's model, the tool read
       f"`{MODEL}`", "`tools: [read]`", "`project: read`")
 brule("...so it can't call Domino, run a command, call the own tool or write a file", "can't call domino", "run a command",
       "own tool", "write a file")
-brule("...the main agent hands it the route table, the Intake's Users and Data class and the access rules, in one task call",
+brule("...the main agent gives it the route table, the Intake's Users and Data class and the access rules, in one task call",
       "one `task` call", "route table", "users", "data class", "access rules")
 brule("...its answer is one JSON object with a verdict for each route", "json", "each route", "who can call it", "what it changes",
       "severity")

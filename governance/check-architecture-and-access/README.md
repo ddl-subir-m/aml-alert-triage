@@ -36,7 +36,7 @@ The checklist's steps, in order:
 2. It calls its own tool `own_route_table` once, for the table of the App's routes and MCP tools (below, "Its own tool"). Then it
    reads the App's code, its start script and its requirements. It finds who can call each route and what it changes, which
    identity each write records, the tech stack, the design, and each dependency with how it is pinned and installed.
-3. It hands the route table to its custom subagent `route-reviewer`, in one `task` call (below, "Its custom subagent"). The
+3. It gives the route table to its custom subagent `route-reviewer`, in one `task` call (below, "Its custom subagent"). The
    subagent gives a verdict for each route, and changes nothing.
 4. It sorts each problem into a real finding (with a severity, S0 to S3) or a false hit (with the reason), with the review's
    verdicts as input. Then it picks the Verdict and the Highest severity by the shared rules.
@@ -106,10 +106,17 @@ cd governance/check-architecture-and-access
 python -m unittest
 ```
 
-It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line; on the demo
-branch, also exactly the planted `POST /upload`, and no other row), a sample of the demo branch's `POST /upload` (no identity,
-changes nothing), and small sample files: a handler that reads the identity through a helper, a decorator that the tool does not
-know, a file that is not valid Python, and the writes of the rule.
+It reads these:
+
+- The App's code. On `main`, it finds the 5 MCP tools and the 2 custom routes, each with its handler, file and line. On the demo
+  branch, it also finds exactly the planted `POST /upload`, and no other row.
+- A sample of the demo branch's `POST /upload`. It reads no identity and changes nothing.
+- Small sample files, with:
+  - a handler that reads the identity through a helper;
+  - a decorator that the tool does not know;
+  - a `.tool` or `.custom_route` decorator of a name that is not the App's server;
+  - a file that is not valid Python;
+  - the writes of the rule.
 
 The run writes `__pycache__/`, and the repo's `.gitignore` ignores it. Else deploy refuses the folder, because it has changes that
 are not committed.
@@ -122,7 +129,7 @@ main agent starts it for one part of its work: the review of the access of each 
 (`project: read`). It has no `domino`, `shell`, `own`, `edit` or `push`. So it can't call Domino, run a command, call the own tool or
 write a file.
 
-In step 3 of the checklist, the main agent hands it the route table of `own_route_table`, the Intake's Users and Data class, and the
+In step 3 of the checklist, the main agent gives it the route table of `own_route_table`, the Intake's Users and Data class, and the
 access rules of the checklist, in one `task` call. It reads the handler of each row at its file and line. Its answer is one JSON
 object, with a verdict for each route: who can call it, what it changes, a problem or none, a severity (S0 to S3, or none) with the
 reason, and the evidence (a file and line). It judges only access: a known vulnerability and the data class are the parts of the
