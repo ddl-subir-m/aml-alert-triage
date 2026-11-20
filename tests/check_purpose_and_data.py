@@ -218,14 +218,9 @@ check(f"its model is the LLM Gateway alias {MODEL}, with the grants of the ident
       ref.get("model") == {"source": "gateway", "models": [MODEL], "access": "acting"}, ref.get("model"))
 check("its Environment is the harness's, by name, and its limits are check 2's: 45 minutes, 120 turns, no wait for an answer",
       ref.get("execution") == {"environment": {"name": "Domino Agent Runtime (opencode)"}, **LIMITS}, ref.get("execution"))
-check2 = ROOT / "governance" / "check-architecture-and-access" / "definition.md"
-if check2.is_file():
-    got2 = {k: int(m.group(1)) if (m := re.search(rf"^  {k}: (\d+)", text(check2), re.M)) else None
-            for k in ("minutes", "turns", "wait-minutes")}
-    check("...the same limits as check 2's definition.md", got2 == {"minutes": 45, "turns": 120, "wait-minutes": 0}, got2)
-else:
-    print("SKIP: check 2's definition.md is not on this branch, so the limits were compared with #260's folder validator only",
-          flush=True)
+check2 = text(ROOT / "governance" / "check-architecture-and-access" / "definition.md")
+got2 = {k: int(m.group(1)) if (m := re.search(rf"^  {k}: (\d+)", check2, re.M)) else None for k in ("minutes", "turns", "wait-minutes")}
+check("...the same limits as check 2's definition.md", got2 == {"minutes": 45, "turns": 120, "wait-minutes": 0}, got2)
 check("its system prompt is instructions.md (a placeholder that compare.py fills)", ref.get("systemPrompt") == "__INSTRUCTIONS__",
       ref.get("systemPrompt"))
 check("its skill is the store skill purpose-and-data, as the wizard's picker names it (its ID and version come from the store)",
