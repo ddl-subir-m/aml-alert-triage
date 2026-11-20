@@ -45,9 +45,14 @@ values:
 | Summary | A short text: the verdict's reason, and the real findings by name and severity |
 | Doc location | One line that says where the doc is |
 
-- **Verdict.** The check's advice: the approver decides. The reason names the findings that decide it. It is `could not check` when
-  the check could not do its work (for example a failed scan, a model that refused the call or gave no usable answer, or a call that
-  Domino denied), and the Summary says why.
+- **Verdict.** One rule for all three checks, so that the approver can compare them. False hits never count.
+  - `do not approve` when at least one real finding of the check is S0 or S1.
+  - `approve` when the highest severity of its real findings is S2, S3 or `none`.
+  - `could not check` when the check could not do its work (for example a failed scan, a model that refused the call or gave no
+    usable answer, or a call that Domino denied). This comes before the other two, also with an S0 or S1 finding. Then Highest
+    severity names only what it did check, and the Summary says why.
+
+  The reason names the findings that decide it. The verdict is advice: the approver decides.
 - **Highest severity.** It is the highest severity of the check's real findings, on the scale below: `S0` when at least one real
   finding is S0. It is `none` when the check has no real finding. With `could not check`, it counts the real findings that the check
   did file, and it is `none` when it filed none.

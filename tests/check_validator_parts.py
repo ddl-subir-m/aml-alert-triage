@@ -316,6 +316,17 @@ check("governance/README.md says that Highest severity is the highest severity o
 check("governance/README.md says when the Verdict is could not check: the check could not do its work, and the Summary says why",
       re.search(r"`could not check` when the check could not do its work", evidence) is not None and "Summary says why" in evidence,
       evidence[:400])
+# One verdict rule for all three checks (the orchestrator's decision for spec #388, 2026-11-19), so that the approver can compare
+# them. False hits never count.
+verdict_rule = evidence[evidence.find("**Verdict.**"):evidence.find("**Highest severity.**")] if "**Verdict.**" in evidence else ""
+check("the Verdict rule: do not approve when at least one real finding of the check is S0 or S1",
+      "`do not approve` when at least one real finding of the check is S0 or S1" in verdict_rule, verdict_rule[:400])
+check("the Verdict rule: approve when the highest severity of its real findings is S2, S3 or none",
+      "`approve` when the highest severity of its real findings is S2, S3 or `none`" in verdict_rule, verdict_rule[:400])
+check("the Verdict rule: could not check when the check could not do its work, and then Highest severity names only what it did "
+      "check", "`could not check` when the check could not do its work" in verdict_rule
+      and "Highest severity names only what it did check" in verdict_rule, verdict_rule[:400])
+check("the Verdict rule: false hits never count", "False hits never count" in verdict_rule, verdict_rule[:400])
 OLD_RULES = re.compile(r"critical vulns|not analyzed|approve after fixes", re.I)
 check("governance/README.md has no rule of spec #260 left: no Critical vulns, no 'not analyzed', no 'approve after fixes'",
       not OLD_RULES.search(rules), sorted(set(m.group(0) for m in OLD_RULES.finditer(rules))))
