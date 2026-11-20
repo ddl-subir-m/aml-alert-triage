@@ -511,8 +511,8 @@ python tests/check_registration.py
 ```
 
 A stdlib script, one line per case, with a non-zero exit code on any failure. It checks every field of the definition and every AML
-rule in its system prompt, each entry point's one line (and that the repo has no other agent code), the print mode for each
-`--framework` (with a placeholder Environment, and no call), and the script's calls to a small
+rule in its system prompt, each entry point's one line (and that the repo has no other agent code but the Vulnerability scan's graph
+and its check), the print mode for each `--framework` (with a placeholder Environment, and no call), and the script's calls to a small
 fake App on 127.0.0.1: create and update with your token only (extended identity) and with `--view-as`, each variant with the
 Environment that the App lists last for its framework, `--environment` (no list asked), no certified Environment, an App without the
 list, an update found by the variant's name, a 401 in each way, the App that sees another person, the view-as switch off (both

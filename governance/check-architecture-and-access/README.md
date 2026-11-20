@@ -16,7 +16,7 @@ doc template) are on [governance/README.md](../README.md).
 | `definition.md` | The settings, as YAML between two `---` lines. Each field is on domino-agent-service's reference page, `docs/definition-file.md`. | Yes |
 | `instructions.md` | The instructions: the check's rules. They become the agent's system prompt. | Yes |
 | `skills/architecture-and-access/SKILL.md` | The checklist, an own skill: the steps from the bundle to the filled evidence item, with the tool of each step. | Yes |
-| `subscription.json` | The event subscription: the body of `POST /api/agents/{id}/triggers`, with its title and instruction templates. | No: the owner makes it |
+| `subscriptions/bundle-enters-validation.md` | The event subscription: its event and filter on top, its instruction below them. The file name is its name. | Yes |
 | `README.md` | This page. | No |
 
 The agent's title, "Architecture and access", is the check's name in `governance/checks.json`. The scripted check "Validation
@@ -56,10 +56,30 @@ Where it can't do the whole job, it says so under "What this check could not che
   review.
 - **What only the running App shows.** The Apps proxy, the identity headers, and who can open the App (its Domino access setting).
 
+## Its subscription
+
+`subscriptions/bundle-enters-validation.md` is the event subscription "Bundle enters Validation" of the three checks' form. Its name
+in the agent service is the file name, `bundle-enters-validation`. The fields are on domino-agent-service's reference page,
+`docs/trigger-files.md`.
+`domino-agent deploy`, 0.4.0 or later, makes the subscription from its file (ADR 0049), and changes or removes it at each deploy.
+An older command (before 0.4.0) sends no trigger file: the agent gets no subscription, and a first deploy gives no notice of it.
+
+- Its event is `governance.bundle.stage_changed`, and its filter is `toStage` equals `Validation` and `project.name` equals
+  `aml-validation-demo`.
+- The repo is public, so the filter names the demo project by its name, not by its Domino ID.
+  Any project with that name, `aml-validation-demo`, matches on the deployment, also one in another person's account (the event
+  names no project owner).
+- Its title template is `Architecture and access: bundle {{bundle.id}}`. Its instruction template, below the settings, names the
+  bundle ID, the skill and only its own evidence item.
+- The file name is its identity. A changed file keeps the subscription's ID, its on or off state and its history. In the App, a person
+  can turn it off or on and send a test event, but can't change or delete it: change the file, commit, and deploy.
+- A subscription of this agent made with the API before (the first form of spec #388): delete it after the deploy
+  (`DELETE /api/triggers/{id}`, as an editor), else each stage move starts two tasks.
+
 ## Before it can run
 
-The folder holds the agent's behaviour, and no user names: no service account, no sharing and no trigger. The owner adds these once,
-after the first deploy. A later deploy keeps them.
+The folder holds the agent's behaviour and its subscription, and no user names: no service account and no sharing. The owner adds
+these once, after the first deploy. A later deploy keeps them.
 
 | What the owner adds | How | Without it |
 |---|---|---|
@@ -68,7 +88,6 @@ after the first deploy. A later deploy keeps them.
 | The service account's Git credential | A Git credential for github.com in the service account's Domino account, whose token has write access to this repo (a fine-grained GitHub token: Contents, Read and write, on this repo). Test it with a `git push --dry-run`: the repo API's `permissions.push` is the account's role, not the token's grant. Then the service account maps it to the project's repository, with its own token: `PUT /v4/projects/{projectId}/repository/{repoId}/credentialMapping` `{"credentialId": ...}`. Domino keeps that link for each user on its own. | With no mapping, Domino gives the Job no Git credential, and the push fails ("could not read Username"). With a token that may not write, GitHub refuses the push (403). With a private repo, Domino can't clone it either. |
 | The analyst | Share the agent, as a user, with each analyst who moves the stage. | The stage move starts no task: "<analyst> is not allowed to use agent ...". |
 | The approver | Share the agent with the approver as an owner or an editor. | The scripted check shows "not started": a user of the agent can't read its tasks. |
-| The subscription | Copy `subscription.json`, replace `__DEMO_PROJECT_ID__` with the demo project's ID, and send it with `POST /api/agents/{id}/triggers`, as the owner or an editor. | No stage move starts a task. |
 | The poller | The platform App (the smoke App) has the project setting `SMOKE_AUDIT_POLL_SECONDS` (10 in the demo). | No stage move reaches the agent. |
 | Real pushes | The platform App has the project setting `SMOKE_PUSH_DRY_RUN=0`. | Each push is a dry run: the doc is not in the repo, and the check doesn't attach it. |
 | The shared rules | The demo project's default branch has `governance/README.md` and `governance/validation-doc.md` (the demo branch is rebased on main). | The checklist has no shared rules, and the doc has no template. |
@@ -97,8 +116,12 @@ domino-agent deploy --dry-run governance/check-architecture-and-access
 domino-agent deploy governance/check-architecture-and-access
 ```
 
-The first deploy prints `Created Architecture and access (agt_...)` and a notice: it can't run yet, because it acts as a service
-account and none is chosen. Then add what the table above lists.
+The first deploy prints `Created Architecture and access (agt_...)`, a line for the subscription, and a notice: it can't run yet,
+because it acts as a service account and none is chosen. Then add what the table above lists. The subscription's line:
+
+```
+  Trigger: added subscription bundle-enters-validation (subscriptions/bundle-enters-validation.md)
+```
 
 ## The check
 
@@ -110,19 +133,20 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_architecture
 One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only. It reads the names from
 `governance/checks.json` (the check's name, its evidence item, the field labels, the verdicts and the severities) and the doc's
 fields from `governance/validation-doc.md`. It checks the files that deploy uploads, the settings of `definition.md`, the
-checklist's rules (no scan step) and the order of its tools, the instructions' rules, the subscription's file, no Domino host or ID
-in the folder, and this page. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name
+checklist's rules (no scan step) and the order of its tools, the instructions' rules, the subscription's file (its filter on the
+demo project's name), no Domino host or ID in the folder, and this page. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name
 against the service's gateway and relay. The rest needs Linux: it starts the agent service with a fake Domino (the service's seam
 helper, `tests/agent_folder_seam.py`), commits the folder in a temporary clone, and then:
 
 - `domino-agent deploy --dry-run` passes the service's folder rules, and `deploy` registers the agent: its settings, its skill and
-  "can't run yet".
-- The owner makes the subscription from `subscription.json`. A stage move starts no task before the token, nor for an analyst who
-  may not use the agent. After both, it starts one task as the service account, with the bundle ID in its title, and its Job.
+  "can't run yet". It adds the subscription from its file, in the temporary clone with the seam's project name (`local-proj`) in
+  place of `aml-validation-demo`: the fake Domino has only that project.
+- A stage move starts no task before the token, nor for an analyst who may not use the agent. After both, it starts one task as
+  the service account, with the bundle ID in its title, and its Job.
 - The Job's spec has the skill, the access rows, Run a Job off, Git push on, the permissions and the limits. The gateway's decisions
   for this task allow the attachment, the findings and the evidence on the event's bundle and `git_push`, and deny `run_job` and
   a project dataset.
-- A stage move to another stage, or in another project, starts nothing.
+- A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 
 On a Mac, run it with Docker, in the image of the service's checks (in domino-agent-service, `./tests/linux_checks.sh` builds it
 once; `docker images domino-agent-service-checks` lists it), from the root of this repo:
