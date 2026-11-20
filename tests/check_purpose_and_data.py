@@ -324,4 +324,55 @@ if body:
     check("...also a setting that is missing, and a list of another length",
           code == 1 and "guardrails.tools.push: missing" in out and "skills: wants 1 item, has 0" in out, (code, out[:400]))
 
+# ------------------------------------------------------------------------------------------------- the event subscription's file
+# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), as the Triggers tab's "New event
+# subscription" sends it (static/js/pages/agent_detail.js TriggerModal). Its one placeholder is the demo project's ID: the live script
+# fills it (no Domino ID in the public repo).
+PROJECT_ID = "__DEMO_PROJECT_ID__"
+# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
+PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
+           "policy.name", "project.id", "project.name")
+try:
+    sub = json.loads(every.get("subscription.json", ""))
+except ValueError as e:
+    sub = {"error": str(e)}
+sub = sub if isinstance(sub, dict) else {}
+event = sub.get("event") or {}
+check("subscription.json is an event subscription to governance.bundle.stage_changed, on, with the keys of the Triggers tab's form",
+      sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
+      and sub.get("name") and list(sub) == ["type", "name", "enabled", "event", "titleTemplate", "instructionTemplate",
+                                            "defaultResources", "writeBack"], {k: sub.get(k) for k in ("type", "name", "enabled", "error")})
+policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
+check("its filter: the bundle moved to the policy's stage named Validation (exact: the filter compares strings), in the demo project",
+      event.get("filter") == [{"field": "toStage", "op": "equals", "value": "Validation"},
+                              {"field": "project.id", "op": "equals", "value": PROJECT_ID}]
+      and re.search(r"^  - name: Validation$", policy_yaml, re.M), event.get("filter"))
+title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
+check("its title template is the check's name and the bundle ID (Validation status's task search matches the title and the key only)",
+      title == f"{NAME}: bundle {{{{bundle.id}}}}", title)
+check("its instruction template names the bundle ID, the evidence item to fill, and the store skill",
+      "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and "purpose-and-data" in instruction, instruction)
+fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
+check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
+      fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
+check("it pins no resource and writes nothing back: the event names the bundle and the project",
+      sub.get("defaultResources") == [] and sub.get("writeBack") == [], {k: sub.get(k) for k in ("defaultResources", "writeBack")})
+code, out = helper("fill", "subscription.json", *SETS)
+try:
+    sbody = json.loads(out) if code == 0 else {}
+except ValueError:
+    sbody = {}
+check("compare.py fill subscription.json puts the demo project's ID in its one placeholder",
+      code == 0 and ((sbody.get("event") or {}).get("filter") or [{}, {}])[1:] == [{"field": "project.id", "op": "equals",
+                                                                                    "value": "proj-one"}], (code, out[:300]))
+if sbody:   # GET /api/agents/{id}/triggers: the direct trigger and the subscription, as the service stores them
+    listed = [{"id": "trg_dir_agt_x", "type": "direct", "name": "Direct runs", "enabled": True},
+              {**sbody, "id": "trg_1", "agentId": "agt_x", "createdBy": "someone", "fireCount": 0, "lastFiredAt": None, "description": None}]
+    code, out = diff("subscription.json", listed)
+    check("compare.py diff subscription.json <triggers> compares the subscription with its name, and finds no difference",
+          code == 0 and out.strip().endswith("Same as subscription.json."), (code, out[:300]))
+    listed[1]["event"] = {**listed[1]["event"], "filter": listed[1]["event"]["filter"][:1]}
+    code, out = diff("subscription.json", listed)
+    check("...and names a filter that misses the demo project", code == 1 and "event.filter: wants 2 items, has 1" in out, (code, out[:300]))
+
 done()
