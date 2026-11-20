@@ -34,7 +34,7 @@ import json
 import os
 import re
 import sys
-import time
+from functools import partial
 from pathlib import Path
 
 import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
@@ -259,9 +259,7 @@ check("they call no tool by its plain name (a framework agent's name): a harness
 # public, so the filter names the demo project by its name, not by its Domino ID: any project with that name matches.
 # This part and subscribe() below are the two places of the subscription.
 DEMO_PROJECT = "aml-validation-demo"   # the demo project's name (the seam part puts the seam's project name in its place)
-# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
-PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
-           "policy.name", "project.id", "project.name")
+PAYLOAD = shared.PAYLOAD   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
 
 
 def unquoted(value):
@@ -451,38 +449,10 @@ check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (th
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
 # The deploy made the subscription from its file (subscribe() below reads it back), with the seam's project name in its filter. A
-# stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
-# audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published through
-# the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
-import requests  # noqa: E402  (the service's checks image has it)
-from agent_service import audit_source, domino  # noqa: E402
-
-BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}   # made up (Domino gives a bundle a UUID)
-real_get = domino.get
-
-
-def bundle_get(path, params=None, cache=True, token=None, credential=None):
-    """The fake Domino also answers the event bundle's GET (GET /api/governance/v1/bundles/{id}: guardrails.Bundle of the service's
-    reference_materials/domino-api-specs/api-governance.swagger.json), a bundle of the task's project."""
-    if path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
-        return {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": seam.PROJECT["id"], "projectName": seam.PROJECT["name"],
-                "policyId": "pol-app-deployment", "policyName": "App deployment policy", "stage": "Validation", "state": "Active"}
-    return real_get(path, params, cache=cache, token=token, credential=credential)
-
-
-domino.get = bundle_get
-
-
-def stage_move(to="Validation", project=None, by=ANALYST):
-    """The payload of one stage move of BUNDLE, from Intake to `to`, in `project` (the seam's project by default)."""
-    ent = lambda kind, id_, name_: {"entityType": kind, "id": id_, "name": name_, "tags": []}
-    p = project or (seam.PROJECT["id"], seam.PROJECT["name"])
-    row = {"timestamp": 1795000000000, "actor": {"id": f"u-{by}", "name": by},
-           "action": {"eventName": "Change Governance Bundle Stage", "using": [ent("eventSource", "Web", None)], "traceId": "tr-267"},
-           "targets": [{"entity": ent("governanceBundle", BUNDLE["id"], BUNDLE["name"]),
-                        "fieldChanges": [{"fieldType": "scalar", "fieldName": "stage", "before": "Intake", "after": to}]}],
-           "affecting": [ent("governancePolicy", "pol-app-deployment", "App deployment policy")], "in": ent("project", *p)}
-    return audit_source.to_payload("governance.bundle.stage_changed", row)
+# stage move reaches it as the audit poller publishes it (tests/three_checks.py: stage_move and fire), with the event bundle's GET.
+BUNDLE = shared.BUNDLE
+put_back_get = shared.serve_bundle(BUNDLE, seam.PROJECT)
+stage_move = partial(shared.stage_move, seam, BUNDLE, by=ANALYST)   # stage_move(to, project, by=): the payload of one stage move
 
 
 def subscribe():
@@ -506,12 +476,7 @@ def subscribe():
 
 
 trigger = subscribe()
-
-
-def fire(payload, person):
-    """Publish `payload` to the subscription as `person`. -> the event's `fired` list (one entry for each agent it reached)."""
-    r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", person, json={"payload": payload})
-    return r.json().get("fired") if r.status_code == 200 else (r.status_code, r.text[:300])
+fire = partial(shared.fire, seam, trigger)   # fire(payload, person): the event's fired list
 
 
 fired = fire(stage_move(by=OWNER), OWNER)
@@ -540,19 +505,11 @@ check("its instruction names the bundle ID and its own evidence item, from the i
       and "{{" not in (task.get("instruction") or ""), task.get("instruction"))
 r = seam.api("GET", f"/api/tasks/{task_id}", APPROVER)
 check("the approver (an editor) can read the task, as the scripted check does", r.status_code == 200, r.status_code)
-for _ in range(100):   # the Job starts in the background
-    if len(seam.JOBS) > n:
-        break
-    time.sleep(0.1)
-job = seam.JOBS[-1] if len(seam.JOBS) == n + 1 else {}
+job = shared.new_job(seam, n)
 check("its Domino Job starts at once, in the bundle's project, as the service account (its stored token)",
       job.get("credential") == ("bearer", token) and (job.get("body") or {}).get("projectId") == seam.PROJECT["id"],
       (len(seam.JOBS) - n, job.get("credential")))
-spec = {}
-if job:   # the Job's claim, as its bootstrapper plays it (the seam's spec_of does the same for a direct task)
-    tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {token}"},
-                        json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
-    spec = requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok}, timeout=30).json()
+spec = shared.spec_of(seam, job) if job else {}   # the Job's claim and its spec, as its bootstrapper reads them
 rules = str(spec.get("operatingRules") or "")
 check("the Job's spec has the instructions at the top of the agent's rules, and the access rows as the folder sets them",
       rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no access. "
@@ -602,7 +559,7 @@ check("each tool that the skill and the instructions name is one that this task'
 
 fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("p-other", "another-project")), ANALYST)]
 check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
-domino.get = real_get
+put_back_get()
 
 # A later deploy of the same commit keeps the subscription: the file name is its identity (ADR 0049, decision 4)
 ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)

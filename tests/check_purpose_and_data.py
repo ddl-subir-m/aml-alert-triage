@@ -28,7 +28,7 @@ import json
 import os
 import re
 import sys
-import time
+from functools import partial
 from pathlib import Path
 
 import three_checks as shared   # the shared parts of the three checks' checks, next to this file (stdlib only)
@@ -288,9 +288,7 @@ if body:
 # subscription" sends it (static/js/pages/agent_detail.js TriggerModal). Its one placeholder is the demo project's ID: the live script
 # fills it (no Domino ID in the public repo).
 PROJECT_ID = "__DEMO_PROJECT_ID__"
-# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
-PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
-           "policy.name", "project.id", "project.name")
+PAYLOAD = shared.PAYLOAD   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
 try:
     sub = json.loads(every.get("subscription.json", ""))
 except ValueError as e:
@@ -528,9 +526,6 @@ seam.start()
 OWNER, PEOPLE_ANALYST, PEOPLE_APPROVER, ACCOUNT = "olivia", "rita", "bob", "purpose-data-sa"   # people of the seam's fake Domino
 token = seam.add_person(ACCOUNT)   # the service account: the fake Domino knows its token
 try:
-    import requests  # noqa: E402  (the service's checks image has it)
-    from agent_service import audit_source, domino  # noqa: E402
-
     # The store skill, as the live script adds it: the skills API, with SKILL.md as its text and its description from its top
     skill_body = {"name": "purpose-and-data", "description": re.search(r"^description: (.+)$", top.group(1), re.M).group(1),
                   "content": skill, "scope": "personal"}
@@ -584,37 +579,11 @@ try:
     found = compare.differences(sbody, compare.pick(sbody, triggers) or {})
     check("the subscription as the App stores it (GET /api/agents/{id}/triggers) has each setting of subscription.json", not found, found)
 
-    # A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
-    # audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published
-    # through the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
-    BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}   # made up (Domino gives a bundle a UUID)
-    real_get = domino.get
-
-    def bundle_get(path, params=None, cache=True, token=None, credential=None):
-        """The fake Domino also answers the event bundle's GET (GET /api/governance/v1/bundles/{id}: guardrails.Bundle of the
-        service's reference_materials/domino-api-specs/api-governance.swagger.json), a bundle of the task's project."""
-        if path == f"/api/governance/v1/bundles/{BUNDLE['id']}":
-            return {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": seam.PROJECT["id"], "projectName": seam.PROJECT["name"],
-                    "policyId": "pol-app-deployment", "policyName": "App deployment policy", "stage": "Validation", "state": "Active"}
-        return real_get(path, params, cache=cache, token=token, credential=credential)
-
-    domino.get = bundle_get
-
-    def stage_move(to="Validation", project=None, by=PEOPLE_ANALYST):
-        """The payload of one stage move of BUNDLE, from Intake to `to`, in `project` (the seam's project by default)."""
-        ent = lambda kind, id_, name_: {"entityType": kind, "id": id_, "name": name_, "tags": []}
-        p = project or (seam.PROJECT["id"], seam.PROJECT["name"])
-        row = {"timestamp": 1795000000000, "actor": {"id": f"u-{by}", "name": by},
-               "action": {"eventName": "Change Governance Bundle Stage", "using": [ent("eventSource", "Web", None)], "traceId": "tr-395"},
-               "targets": [{"entity": ent("governanceBundle", BUNDLE["id"], BUNDLE["name"]),
-                            "fieldChanges": [{"fieldType": "scalar", "fieldName": "stage", "before": "Intake", "after": to}]}],
-               "affecting": [ent("governancePolicy", "pol-app-deployment", "App deployment policy")], "in": ent("project", *p)}
-        return audit_source.to_payload("governance.bundle.stage_changed", row)
-
-    def fire(payload, person):
-        """Publish `payload` to the subscription as `person`. -> the event's `fired` list (one entry for each agent it reached)."""
-        r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", person, json={"payload": payload})
-        return r.json().get("fired") if r.status_code == 200 else (r.status_code, r.text[:300])
+    # A stage move reaches it as the audit poller publishes it (tests/three_checks.py: stage_move and fire), with the event bundle's GET
+    BUNDLE = shared.BUNDLE
+    put_back_get = shared.serve_bundle(BUNDLE, seam.PROJECT)
+    stage_move = partial(shared.stage_move, seam, BUNDLE, by=PEOPLE_ANALYST)   # stage_move(to, project, by=): one stage move's payload
+    fire = partial(shared.fire, seam, trigger)   # fire(payload, person): the event's fired list
 
     fired = fire(stage_move(by="alice"), "alice")
     check("a stage move by a person who is not in People starts no task: the analyst who moves the stage must be in People",
@@ -636,23 +605,12 @@ try:
     found = found.get("tasks", found) if isinstance(found, dict) else found
     check("...and the App's task search with the bundle ID finds it, with the check's name as its agent's name",
           [(x.get("id"), x.get("agentName")) for x in found or []] == [(task_id, NAME)], found)
-    for _ in range(100):   # the Job starts in the background
-        if len(seam.JOBS) > n:
-            break
-        time.sleep(0.1)
-    job = seam.JOBS[-1] if len(seam.JOBS) == n + 1 else {}
+    job = shared.new_job(seam, n)
     check("its Domino Job starts at once, in the bundle's project, as the service account (its stored token)",
           job.get("credential") == ("bearer", token) and (job.get("body") or {}).get("projectId") == seam.PROJECT["id"],
           (len(seam.JOBS) - n, job.get("credential")))
 
-    def spec_of(job):
-        """The Job's spec, as its bootstrapper reads it: claim the session with the Job's credential, then the spec route."""
-        tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {token}"},
-                            json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
-        return requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok},
-                            timeout=30).json()
-
-    spec = spec_of(job) if job else {}
+    spec = shared.spec_of(seam, job) if job else {}
     rules = str(spec.get("operatingRules") or "")
     check("the Job's spec has the instructions at the top of the agent's rules, and the access rows of the reference settings",
           rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no "
@@ -703,11 +661,8 @@ try:
     r = seam.api("PUT", f"/api/skills/{store.get('id')}", OWNER, json={"content": newer, "note": "A new rule"})
     n = len(seam.JOBS)
     fired = fire(stage_move(), PEOPLE_ANALYST)
-    for _ in range(100):
-        if len(seam.JOBS) > n:
-            break
-        time.sleep(0.1)
-    spec = spec_of(seam.JOBS[-1]) if r.status_code == 200 and len(seam.JOBS) == n + 1 else {}
+    job = shared.new_job(seam, n)
+    spec = shared.spec_of(seam, job) if r.status_code == 200 and job else {}
     check("a new stage move starts the check again, and its Job gets the store skill's newest text (PUT /api/skills/{id}), though "
           "the agent still names the version that it was made with", [s.get("content") for s in spec.get("skills") or []] == [newer]
           and seam.api("GET", f"/api/agents/{aid}", OWNER).json().get("skills") == body["skills"],
@@ -715,7 +670,7 @@ try:
 
     fired = [fire(stage_move("Approval"), PEOPLE_ANALYST), fire(stage_move(project=("p-other", "another-project")), PEOPLE_ANALYST)]
     check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
-    domino.get = real_get
+    put_back_get()
 finally:
     seam.close()
 done()

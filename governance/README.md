@@ -176,3 +176,7 @@ this page's rules (the three checks, the evidence fields and their values, the s
 and a failed scan), and the doc template (its shared top part, and each check's middle part with its findings). With
 `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it checks the severity scale against the gateway's
 `write_governance_finding`. Without it, that part prints a SKIP line.
+
+The checks of the three checks (`tests/check_purpose_and_data.py`, `tests/check_architecture_and_access.py` and
+`tests/check_vulnerability_scan.py`) share `tests/three_checks.py`, with the stdlib only: the case lines, the reading of
+`governance/checks.json`, the rule lines, the leak pattern of the public repo, and the fakes of a stage move.

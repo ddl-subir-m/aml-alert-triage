@@ -92,3 +92,68 @@ LEAK = re.compile(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|skl_[0-9a-z]{6,}|[\w.-]+\.domi
 def leaks(files):
     """Each match of LEAK in `files` ({path: text}), as "<path>: <match>", sorted."""
     return sorted({f"{rel}: {m.group(0)}" for rel, body in files.items() for m in LEAK.finditer(body)})
+
+
+# --------------------------------------------------------------------------------------------- the seam part: a local agent service
+# The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
+PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
+           "policy.name", "project.id", "project.name")
+BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}   # made up (Domino gives a bundle a UUID)
+POLICY = {"id": "pol-app-deployment", "name": "App deployment policy"}
+
+
+def serve_bundle(bundle, project, policy=POLICY):
+    """Make the seam's fake Domino also answer the event bundle's GET (GET /api/governance/v1/bundles/{id}: guardrails.Bundle of the
+    service's reference_materials/domino-api-specs/api-governance.swagger.json): `bundle` ({"id", "name"}), in its Validation stage,
+    a bundle of `project` ({"id", "name"}). -> a function that puts the fake's own GET back."""
+    from agent_service import domino   # the service's module, from AGENT_SERVICE_REPO
+    real = domino.get
+
+    def get(path, params=None, cache=True, token=None, credential=None):
+        if path == f"/api/governance/v1/bundles/{bundle['id']}":
+            return {"id": bundle["id"], "name": bundle["name"], "projectId": project["id"], "projectName": project["name"],
+                    "policyId": policy["id"], "policyName": policy["name"], "stage": "Validation", "state": "Active"}
+        return real(path, params, cache=cache, token=token, credential=credential)
+    domino.get = get
+    return lambda: setattr(domino, "get", real)
+
+
+def stage_move(seam, bundle, to="Validation", project=None, *, by):
+    """The payload of one stage move of `bundle`, from Intake to `to`, in `project` ((ID, name); the seam's project by default), by
+    the person `by`, as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
+    audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload."""
+    from agent_service import audit_source   # the service's module, from AGENT_SERVICE_REPO
+    ent = lambda kind, id_, name_: {"entityType": kind, "id": id_, "name": name_, "tags": []}
+    p = project or (seam.PROJECT["id"], seam.PROJECT["name"])
+    row = {"timestamp": 1795000000000, "actor": {"id": f"u-{by}", "name": by},
+           "action": {"eventName": "Change Governance Bundle Stage", "using": [ent("eventSource", "Web", None)], "traceId": "tr-388"},
+           "targets": [{"entity": ent("governanceBundle", bundle["id"], bundle["name"]),
+                        "fieldChanges": [{"fieldType": "scalar", "fieldName": "stage", "before": "Intake", "after": to}]}],
+           "affecting": [ent("governancePolicy", POLICY["id"], POLICY["name"])], "in": ent("project", *p)}
+    return audit_source.to_payload("governance.bundle.stage_changed", row)
+
+
+def fire(seam, trigger, payload, person):
+    """Publish `payload` to the subscription `trigger` (the stored trigger) as `person`, through its test route, which runs the same
+    fan-out (service.emit_event) as the audit poller. -> the event's `fired` list (one entry for each agent that it reached), or
+    (the HTTP status, the text) when the route refused it."""
+    r = seam.api("POST", f"/api/triggers/{trigger.get('id')}/test", person, json={"payload": payload})
+    return r.json().get("fired") if r.status_code == 200 else (r.status_code, r.text[:300])
+
+
+def new_job(seam, before):
+    """The one Domino Job that the seam's fake Domino saw start after its first `before` Jobs, or {} for none or more than one. A
+    task starts its Job in the background, so it waits up to 10 seconds."""
+    for _ in range(100):
+        if len(seam.JOBS) > before:
+            break
+        time.sleep(0.1)
+    return seam.JOBS[-1] if len(seam.JOBS) == before + 1 else {}
+
+
+def spec_of(seam, job):
+    """The Job's spec, as its bootstrapper reads it: claim the session with the Job's own credential, then the spec route."""
+    import requests   # the service's checks image has it
+    tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {job['credential'][1]}"},
+                        json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
+    return requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok}, timeout=30).json()
