@@ -367,12 +367,15 @@ check("governance/README.md names no validator of spec #260: no [folder], no [La
       "[folder]" not in rules and "[LangGraph]" not in rules,
       [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
 
-# The result: spec #388, Implementation Decision 7. Each check ends with report_result, whose first lines are the four evidence
-# values, so that "Validation status" and the task page show the same result. Each line is "<field label>: <value>".
+# The result: spec #388, Implementation Decision 7. Checks 1 and 2 end with report_result; check 3, a framework agent, has no
+# report_result and ends with its run's last streamed text. In both, the first lines are the four evidence values, so that
+# "Validation status" and the task page show the same result. Each line is "<field label>: <value>".
 result_rule = section(rules, "The result")
-check("governance/README.md has the rule for the result: each check ends with report_result, once, last",
-      re.search(r"`report_result`, once, last", one_line(result_rule)) is not None,
-      one_line(result_rule)[:300] or "no '## The result'")
+check("governance/README.md has the rule for the result: Purpose and data and Architecture and access end with report_result, once, "
+      "last, and Vulnerability scan (a framework agent, with no report_result) with its run's last streamed text",
+      "Purpose and data and Architecture and access end with `report_result`, once, last." in one_line(result_rule)
+      and "Vulnerability scan is a framework agent, which has no `report_result`: it ends with its run's last streamed text"
+      in one_line(result_rule) and "In both, " in one_line(result_rule), one_line(result_rule)[:300] or "no '## The result'")
 block = re.search(r"```\n(.*?)```", result_rule, re.S)
 first = block.group(1).splitlines()[:4] if block else []
 check("the result's first four lines are the four evidence fields, in order, each as '<label>: <value>'",

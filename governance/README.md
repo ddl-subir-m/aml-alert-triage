@@ -107,8 +107,9 @@ A check files only its real findings. A false hit goes in its doc only, under "F
 
 ## The result
 
-Each check ends with `report_result`, once, last. Its summary starts with four lines, one for each evidence field, in the fields'
-order, with the same values as the evidence item:
+Purpose and data and Architecture and access end with `report_result`, once, last. Vulnerability scan is a framework agent, which has
+no `report_result`: it ends with its run's last streamed text, which is the task's result. In both, the result starts with four
+lines, one for each evidence field, in the fields' order, with the same values as the evidence item:
 
 ```
 Verdict: approve | do not approve | could not check
