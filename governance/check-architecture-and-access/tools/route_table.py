@@ -12,48 +12,92 @@ IDENTITY_HEADER = "domino-username"   # the header in which the Apps proxy gives
 SQL_WRITE = re.compile(r"\s*(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+\S+\s+SET|DELETE\s+FROM"
                        r"|(CREATE|DROP|ALTER)\s+(TABLE|INDEX|VIEW|TRIGGER))\b", re.I)
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+UNREAD = "unread"   # a way into the App that the tool can't read: it gets no row
 
 
 @tool
 def route_table(folder: str) -> dict:
     """The table of the ways into a Python App."""
     project = Path.cwd()
-    modules = {}   # {file: its tree}
+    modules, not_read = {}, []   # {file: its tree}, [what the tool could not read]
     for path in sorted((project / folder).rglob("*.py")):
         rel = path.relative_to(project).as_posix()
-        modules[rel] = ast.parse(path.read_text(), filename=rel)
+        try:
+            modules[rel] = ast.parse(path.read_bytes(), filename=rel)
+        except (SyntaxError, ValueError) as e:   # ValueError: a null byte (before Python 3.12)
+            not_read.append({"file": rel, "line": getattr(e, "lineno", None), "what": f"not valid Python: {e}"})
+        except OSError as e:
+            not_read.append({"file": rel, "line": None, "what": f"the file can't be read: {e.strerror}"})
     functions = {rel: [fn for fn in ast.walk(tree) if isinstance(fn, FUNCTIONS)] for rel, tree in modules.items()}
     everywhere = _by_name((rel, fn) for rel, fns in functions.items() for fn in fns)
     rows = []
     for rel, fns in functions.items():
         same_file = _by_name((rel, fn) for fn in fns)
         for fn in fns:
-            for dec in fn.decorator_list:
-                row = _row(dec, fn, rel)
-                if row:
+            ways = [_way(dec, fn) for dec in fn.decorator_list]
+            for dec, way in zip(fn.decorator_list, ways):
+                if way == UNREAD:
+                    not_read.append({"file": rel, "line": dec.lineno, "what": "a route whose path or methods are not plain "
+                                     f"values, on the handler {fn.name}: @{_shown(dec)}. It has no row"})
+                elif way:
                     identity_at = _find(rel, fn, _reads_identity, same_file, set())
                     changes_at = _find(rel, fn, _writes, everywhere, set())
-                    rows.append({**row, "reads_identity": bool(identity_at), "identity_at": identity_at,
+                    rows.append({**way, "handler": fn.name, "file": rel, "line": fn.lineno,
+                                 "reads_identity": bool(identity_at), "identity_at": identity_at,
                                  "changes_state": bool(changes_at), "changes_at": changes_at})
+                elif any(ways):
+                    not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator that the tool does not know, on the "
+                                     f"handler {fn.name}: @{_shown(dec)}. It can change who can call the handler, or what it does"})
+                elif _has_path(dec):
+                    not_read.append({"file": rel, "line": dec.lineno, "what": "a decorator with a path that the tool does not "
+                                     f"know, on the function {fn.name}: @{_shown(dec)}. It can be a route of another framework"})
     rows.sort(key=lambda r: (r["file"], r["line"]))
-    return {"folder": folder, "rows": rows}
+    not_read.sort(key=lambda n: (n["file"], n["line"] or 0))
+    return {"folder": folder, "files": sorted(set(modules) | {n["file"] for n in not_read}), "rows": rows, "not_read": not_read}
 
 
-def _row(dec, fn, rel):
-    """The row of the decorator `dec` on the function `fn`, or None when it is not a way into the App."""
+def _way(dec, fn):
+    """The start of a row ({"kind", "method", "path"}) for the decorator `dec` on the function `fn`: `@<server>.tool`, with or
+    without its arguments (the tool's name is its `name`, else the function's name), or `@<server>.custom_route(path, methods)`.
+    UNREAD for a custom route whose path or methods are not plain values. None for another decorator."""
     call = dec if isinstance(dec, ast.Call) else None
     func = call.func if call else dec
-    if not isinstance(func, ast.Attribute):
+    if not isinstance(func, ast.Attribute) or func.attr not in ("tool", "custom_route"):
         return None
     if func.attr == "tool":
-        return {"kind": "MCP tool", "method": "POST", "path": f"{MCP_ENDPOINT} (tool: {fn.name})", "handler": fn.name,
-                "file": rel, "line": fn.lineno}
-    if func.attr == "custom_route" and call:
-        path = ast.literal_eval(call.args[0])
-        methods = ast.literal_eval(next(k.value for k in call.keywords if k.arg == "methods"))
-        return {"kind": "route", "method": ", ".join(methods), "path": path, "handler": fn.name, "file": rel,
-                "line": fn.lineno}
-    return None
+        name = _value(_argument(call, 0, "name")) if call else None
+        return {"kind": "MCP tool", "method": "POST", "path": f"{MCP_ENDPOINT} (tool: {name if isinstance(name, str) else fn.name})"}
+    path, methods = (_value(_argument(call, i, key)) for i, key in ((0, "path"), (1, "methods"))) if call else (None, None)
+    if not isinstance(path, str) or not isinstance(methods, (list, tuple)) or not all(isinstance(m, str) for m in methods):
+        return UNREAD
+    return {"kind": "route", "method": ", ".join(m.upper() for m in methods), "path": path}
+
+
+def _argument(call, position, keyword):
+    """The argument of `call` at `position`, or the one named `keyword`, or None."""
+    if len(call.args) > position:
+        return call.args[position]
+    return next((k.value for k in call.keywords if k.arg == keyword), None)
+
+
+def _value(node):
+    """The value of `node` when it is a plain value (a string, a list of strings, ...), else None."""
+    try:
+        return ast.literal_eval(node) if node is not None else None
+    except (ValueError, TypeError, SyntaxError):
+        return None
+
+
+def _has_path(dec):
+    """Is the decorator `dec` a call whose first argument is a path (a string that starts with /), as a route of a framework is?"""
+    return (isinstance(dec, ast.Call) and bool(dec.args) and isinstance(dec.args[0], ast.Constant)
+            and isinstance(dec.args[0].value, str) and dec.args[0].value.startswith("/"))
+
+
+def _shown(node, limit=80):
+    """The code of `node`, cut to `limit` characters."""
+    text = ast.unparse(node)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
 def _by_name(pairs):
