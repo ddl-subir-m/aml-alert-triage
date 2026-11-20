@@ -1,16 +1,37 @@
-# The shared parts of the App validators
+# The shared rules of the three checks
 
-The App validation demo (domino-agent-service spec #260) has two validators that do the same job in two lanes: the agent folder
-validator (harness lane, short name `folder`) and the LangGraph validator (framework lane, short name `LangGraph`). Both use the parts
-on this page, so that the demo compares two lanes, not two jobs. All the data is fake.
+The App validation demo (domino-agent-service spec #388) has three checks at the Validation stage of the policy "App deployment
+policy". Each check is an agent that one team owns, and each team builds its agent in its own way. All three checks use the rules on
+this page, so that the approver can compare three results. All the data is fake.
+
+The tag `app-validation-two-ways` keeps the demo of spec #260: two validators that do the same job, two ways.
 
 | Part | What it is |
 |---|---|
-| [scan.py](scan.py) | The scan: pip-audit and bandit on the case server, in a Domino Job |
-| [validation-doc.md](validation-doc.md) | The template of the validation doc |
-| This page | The severity scale, the finding names, the rule for "critical vulns" and the rule for a failed scan |
+| This page | The three checks, the evidence fields, the severity scale, the finding names, the rule for a failed scan and the rule for the result |
+| [validation-doc.md](validation-doc.md) | The template of each check's doc: one shared top part, and one middle part for each check |
+| [scan.py](scan.py) | The scan: pip-audit and bandit on the case server, in a Domino Job. Only the Vulnerability scan runs it |
 
-There is no list of the expected findings. Each validator reads the code and the scan, and sorts the hits itself.
+There is no list of the expected findings. Each check reads the App and sorts what it finds itself.
+
+## The three checks
+
+| Check | Built as | Its folder | Its evidence item | What it owns | Its doc |
+|---|---|---|---|---|---|
+| Purpose and data | A wizard agent (made in the UI) | `governance/check-purpose-and-data/` | Validation: Purpose and data | What the App is for and what data it holds, compared with the Intake answers (Purpose, Users, Data class). Not code security | Pushed to its task branch as `docs/validation/purpose-and-data-<bundle ID>.md`, and attached to the bundle as a Report |
+| Architecture and access | A registered agent (an agent folder in Git, deployed with `domino-agent deploy`) | `governance/check-architecture-and-access/` | Validation: Architecture and access | All access (who can call what, and which identity each write records), the tech stack, the design, and the dependencies with how they are pinned and installed | Pushed to its task branch as `docs/validation/architecture-and-access-<bundle ID>.md`, and attached to the bundle as a Report |
+| Vulnerability scan | A framework agent (a LangGraph graph, code in Git) | `governance/check-vulnerability-scan/` | Validation: Vulnerability scan | Known vulnerabilities in the code and the dependencies (the scan) | Written to a dataset snapshot of the doc dataset as `vulnerability-scan-<bundle ID>-<UTC time>.md`, and that file attached to the bundle |
+
+Each agent's name is its check's name. Each check fills only its own evidence item.
+
+A check files findings only in its own part. When it sees a problem in another check's part, it files nothing for it: the check that
+owns that part files it. Where two parts meet:
+
+- A dependency's version range, its pin and how it is installed are Architecture and access. A known vulnerability in it (a CVE,
+  PYSEC or GHSA ID) is Vulnerability scan.
+- Who can call a route, and what it changes, is Architecture and access. A scanner hit in the code is Vulnerability scan.
+- The kind of data that the App holds, and its class, is Purpose and data. Who can read that data through the App is Architecture
+  and access.
 
 ## The scan
 

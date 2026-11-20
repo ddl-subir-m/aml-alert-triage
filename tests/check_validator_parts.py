@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCAN = ROOT / "governance" / "scan.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "scan"
 START, END = "== scan summary ==", "== end of scan summary =="
+TAG = "app-validation-two-ways"   # the tag that keeps the two validators of spec #260 (ticket #390)
 WAIT_JOB_TAIL = 8000   # the service's wait_job shows the last 8,000 characters of the Job's log (agent_runtime/run.py)
 failed = []
 
@@ -266,11 +267,65 @@ says("Findings", "severity", "evidence", "false", "reason")
 says("Critical vulns", "yes", "no", "s0")
 says("Verdict for the approver", "approve", "approve after fixes", "do not approve")
 
+# ---------------------------------------------------------------------------------------------------- the shared rules: the checks
+# Spec #388, Implementation Decisions 5 to 7: three checks, each one built its own way, each one owns one part. The names are the
+# ones of the spec (and of governance/checks.json, which this check does not read).
+RULES = ROOT / "governance" / "README.md"
+rules = RULES.read_text() if RULES.is_file() else ""
+CHECKS = ["Purpose and data", "Architecture and access", "Vulnerability scan"]
+
+
+def section(text, heading):
+    """The text of the section '## <heading>' of a Markdown page, to the next '## ' heading ("" when there is none)."""
+    m = re.search(rf"^## {re.escape(heading)}\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def table(text):
+    """The rows of the first Markdown table of a text, as lists of cells, with no header row and no rule row."""
+    lines = [ln for ln in text.splitlines() if ln.startswith("|")]
+    return [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in lines[2:]]
+
+
+def one_line(text):
+    return " ".join(text.split())
+
+
+checks = {r[0]: r for r in table(section(rules, "The three checks"))}
+check("governance/README.md has a row for each of the three checks, in the spec's order, and no other row",
+      list(checks) == CHECKS, list(checks))
+BUILT = {"Purpose and data": "wizard agent", "Architecture and access": "registered agent", "Vulnerability scan": "framework agent"}
+check("each check's row says how it is built: a wizard agent, a registered agent (an agent folder), a framework agent (LangGraph)",
+      all(len(checks.get(c, [])) > 1 and BUILT[c] in checks[c][1].lower() for c in CHECKS)
+      and "agent folder" in " ".join(checks.get("Architecture and access", [])) and "LangGraph" in " ".join(checks.get("Vulnerability scan", [])),
+      {c: checks.get(c, [""])[1:2] for c in CHECKS})
+FOLDER = {c: "governance/check-" + c.lower().replace(" ", "-") + "/" for c in CHECKS}
+check("each check's row names its folder (governance/check-<name>/)", all(f"`{FOLDER[c]}`" in checks.get(c, []) for c in CHECKS),
+      {c: checks.get(c) for c in CHECKS})
+check("each check's row names its own evidence item, Validation: <check name>",
+      all(f"Validation: {c}" in " ".join(checks.get(c, [])) for c in CHECKS)
+      and all(f"Validation: {o}" not in " ".join(checks.get(c, [])) for c in CHECKS for o in CHECKS if o != c), checks)
+OWNS = {"Purpose and data": ("what the app is for", "what data it holds", "intake", "not code security"),
+        "Architecture and access": ("access", "who can call what", "tech stack", "design", "dependencies", "pinned", "installed"),
+        "Vulnerability scan": ("known vulnerabilities", "code", "dependencies")}
+check("each check's row says what it owns (spec #388, Implementation Decision 6)",
+      all(all(w in " ".join(checks.get(c, [])).lower() for w in OWNS[c]) for c in CHECKS),
+      {c: [w for w in OWNS[c] if w not in " ".join(checks.get(c, [])).lower()] for c in CHECKS})
+docs = {c: " ".join(checks.get(c, [])[-1:]) for c in CHECKS}
+check("each check's row says where its doc goes: checks 1 and 2 push it to their task branch and attach it as a Report, check 3 "
+      "writes it to a dataset snapshot and attaches that file",
+      all("task branch" in docs[c] and "Report" in docs[c] for c in CHECKS[:2])
+      and "dataset snapshot" in docs[CHECKS[2]] and "task branch" not in docs[CHECKS[2]], docs)
+check("each check's doc file name names the check and the bundle ID",
+      all(re.search(rf"`[^`]*{c.lower().replace(' ', '-')}-<bundle ID>[^`]*\.md`", docs[c]) for c in CHECKS), docs)
+check("governance/README.md says that a check files findings only in its own part",
+      "A check files findings only in its own part." in one_line(rules), one_line(section(rules, "The three checks"))[:300])
+check("governance/README.md names the tag app-validation-two-ways, which keeps the same job done two ways (spec #388, user story 47)",
+      any(TAG in ln and "the same job, two ways" in ln for ln in rules.splitlines()), [ln for ln in rules.splitlines() if TAG in ln])
+
 # ----------------------------------------------------------------------------------------- the severity scale and the finding names
 # write_governance_finding's own words: "severity: S0 (critical), S1 (high), S2 (medium) or S3 (low)" (agent_runtime/gateway.py).
 SCALE = {"S0": "critical", "S1": "high", "S2": "medium", "S3": "low"}
-RULES = ROOT / "governance" / "README.md"
-rules = RULES.read_text() if RULES.is_file() else ""
 rows = dict(re.findall(r"^\| (S\d) \((\w+)\) \|", rules, re.M))
 check("governance/README.md has the severity scale, S0 to S3, with write_governance_finding's words", rows == SCALE, rows)
 flat = " ".join(rules.split())
@@ -301,7 +356,6 @@ check("the validators' public files point at no private note (the probe, the tri
 # ------------------------------------------------------------------------- the two validators of spec #260: on the tag, not on the branch
 # Spec #388 (ticket #390) took them off the branch. The tag app-validation-two-ways keeps their folders and their checks. No file of
 # the branch names one of them, but on a line that also names the tag (to say where it is). This file is left out: it names them.
-TAG = "app-validation-two-ways"
 OLD = ["governance/validator-folder", "governance/validator-langgraph", "tests/check_validator_folder.py",
        "tests/check_validator_langgraph.py"]
 still = [p for p in OLD if (ROOT / p).exists()]
