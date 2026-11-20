@@ -9,8 +9,8 @@
       {"field": "project.id", "op": "equals", "value": "__DEMO_PROJECT_ID__"}
     ]
   },
-  "titleTemplate": "App validator (agent folder): bundle {{bundle.id}}",
-  "instructionTemplate": "Validate the App of governance bundle {{bundle.id}} ({{bundle.name}}) in project {{project.name}}. The bundle moved from {{fromStage}} to {{toStage}}. Follow the checklist of the skill app-validation, and fill only the evidence item \"Validation (agent folder)\" of bundle {{bundle.id}}.",
+  "titleTemplate": "Architecture and access: bundle {{bundle.id}}",
+  "instructionTemplate": "Check the architecture and access of the App of governance bundle {{bundle.id}} ({{bundle.name}}) in project {{project.name}}. The bundle moved from {{fromStage}} to {{toStage}}. Follow the checklist of the skill architecture-and-access, and fill only the evidence item \"Validation: Architecture and access\" of bundle {{bundle.id}}.",
   "defaultResources": [],
   "writeBack": []
 }

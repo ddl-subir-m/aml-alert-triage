@@ -256,14 +256,18 @@ def irule(name, *words):
     check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
 
 
-irule("load the skill app-validation first, and do its checklist in order", "first", "skill app-validation", "in order")
+irule(f"load the skill {SLUG} first, and do its checklist in order", "first", f"skill {SLUG}", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
-irule("file only the real findings, each name starting with [folder]", "only the real findings", '"[folder] "')
+irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
+      f'"[{NAME}] "')
+irule("...none for a known vulnerability nor for the data class: the other two checks' parts", "known vulnerability",
+      f'"{SCAN_CHECK}"', "data class", f'"{PURPOSE}"', "file none")
+irule("it runs no scan and starts no Job", "no scan", "no job")
 irule("a false hit goes in the doc with its reason", "false hit", "doc", "reason")
 irule("say what it could not check, in the doc and in the result", "could not check", "doc", "result")
 irule("nobody answers an event task: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
 irule("the checklist's writes are the task's work: no asking first", "push", "attachment", "findings", "evidence", "without asking")
-irule("end with report_result, once, last", "domino_report_result", "once", "last")
+irule("end with report_result, once, last, with the skill's four lines on top", "domino_report_result", "once", "last", "four lines")
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
@@ -277,8 +281,10 @@ bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
 # ------------------------------------------------------------------------------------------------- the event subscription's file
-# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), for the live script (#270). Its one
-# placeholder is the demo project's ID. Deploy doesn't upload it: an agent folder holds no trigger.
+# The body of `POST /api/agents/{id}/triggers` (the service's agent_write.create_trigger), for the live script (#397). Its one
+# placeholder is the demo project's ID. Deploy doesn't upload it (it is not a known path). Spec #388 decision 13: an API
+# subscription in this ticket; domino-agent-service#398 moves it into the folder (subscriptions/<name>.md, filter on project.name).
+# This part and subscribe() below are the two places that it changes.
 SUB_FILE = FOLDER / "subscription.json"
 PROJECT_ID = "__DEMO_PROJECT_ID__"
 # The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
@@ -290,7 +296,7 @@ except ValueError as e:
     sub = {"error": str(e)}
 sub = sub if isinstance(sub, dict) else {}
 event = sub.get("event") or {}
-check("governance/validator-folder/subscription.json is an event subscription to governance.bundle.stage_changed, on",
+check(f"{PATH}/subscription.json is an event subscription to governance.bundle.stage_changed, on",
       sub.get("type") == "event" and event.get("eventType") == "governance.bundle.stage_changed" and sub.get("enabled") is True
       and sub.get("name"), {k: sub.get(k) for k in ("type", "name", "enabled", "event", "error")})
 policy_yaml = text(ROOT / "governance" / "app-deployment-policy.yaml")
@@ -299,10 +305,10 @@ check("its filter: the bundle moved to the policy's stage named Validation (exac
                               {"field": "project.id", "op": "equals", "value": PROJECT_ID}]
       and re.search(r"^  - name: Validation$", policy_yaml, re.M), event.get("filter"))
 title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplate") or ""
-check("its title template names the bundle ID (the scripted check's task search matches the title and the key only)",
-      "{{bundle.id}}" in title and len(title) <= 90, title)
+check("its title template starts with the check's name and names the bundle ID (Validation status searches the title and the key)",
+      title.startswith(f"{NAME}: ") and "{{bundle.id}}" in title and len(title) <= 90, title)
 check("its instruction template names the bundle ID, the evidence item to fill, and the skill",
-      "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and "app-validation" in instruction, instruction)
+      "{{bundle.id}}" in instruction and f'"{EVIDENCE}"' in instruction and f"skill {SLUG}" in instruction, instruction)
 fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
 check("each placeholder of the two templates is a field of the stage-change payload (a field that isn't stays as {{...}})",
       fields and fields <= set(PAYLOAD), sorted(fields - set(PAYLOAD)))
@@ -313,7 +319,7 @@ check("it pins no resource and writes nothing back: the event names the bundle a
 leaks = sorted({f"{rel}: {m.group(0)}" for rel, body in every.items()
                 for m in re.finditer(r"[0-9a-f]{24}|agt_[0-9a-z]{6,}|[\w.-]+\.domino\.tech|apps-internal/[0-9a-f]+|eyJ[\w-]{20,}", body)})
 check("no file of the folder has a Domino host, the ID of a Domino object or a token", not leaks, leaks)
-dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_validator_folder.py", text(Path(__file__)))] if chr(0x2014) in body)
+dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
 
 # ---------------------------------------------------------------------------------------------------------------- the READMEs
