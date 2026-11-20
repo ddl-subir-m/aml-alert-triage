@@ -161,4 +161,36 @@ check("the last step gives the result's four lines, in order, with checks.json's
       all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),
       got)
 
+# ------------------------------------------------------------------------------------------- the instructions (the system prompt)
+ilines = [ln.lower() for ln in instructions.splitlines()]
+
+
+def irule(name, *words):
+    """One line of instructions.md says the rule: it holds every one of `words` (case aside)."""
+    check(f"the instructions say: {name}", any(all(w.lower() in ln for w in words) for ln in ilines), words)
+
+
+irule("load the store skill purpose-and-data first, and do its checklist in order", "first", "skill purpose-and-data", "in order")
+irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
+irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
+      f'"[{NAME.lower()}] "')
+irule("judge the data class by the kind of data that the App is built to hold, not by whether the sample is fake", "kind of data",
+      "built to hold", "not by whether", "fake")
+irule("a false hit goes in the doc with its reason", "false hit", "doc", "reason")
+irule("say what it could not check, in the doc and in the result", "could not check", "doc", "result")
+irule("nobody answers an event task: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
+irule("the checklist's writes are the task's work: no asking first", "push", "attachment", "findings", "evidence", "without asking")
+irule("end with report_result, once, last", "domino_report_result", "once", "last")
+
+# --------------------------------------------------------------------------------------------------------------- the tool names
+# opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
+NAMES = {"domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_write_bundle_attachment",
+         "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result", "domino_ask_user",
+         "domino_request_access"}
+named = set(re.findall(r"\bdomino_[a-z_]+", skill + instructions))
+check("the skill and the instructions name the checklist's Domino tools, and no other", named == NAMES, sorted(named ^ NAMES))
+bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|git_push|write_[a-z_]+|report_result)\(",
+                             skill + instructions)))
+check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
+
 done()
