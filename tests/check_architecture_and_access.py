@@ -8,12 +8,15 @@ registers from it.
 The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
 and the rules from governance/README.md and governance/validation-doc.md (the shared rules of the three checks).
 
-With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and not
-its unit test or the README), the settings of definition.md, the checklist's rules and the order of its tools (the own tool
-own_route_table before the writes), the instructions' rules, the tool names (as a harness agent sees them: domino_<name> and
-own_route_table), the own tool's file (the standard library only, and no code that it imports or runs), the subscription's file
+With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and the
+custom subagent's file, subagents/route-reviewer.md, and not the unit test or the README), the settings of definition.md, the
+checklist's rules and the order of its tools (the own tool own_route_table, then one task call of the custom subagent route-reviewer,
+both before the writes), the instructions' rules, the tool names (as opencode names them: domino_<name> and own_route_table), the own
+tool's file (the standard library only, and no code that it imports or runs), the custom subagent's file (its settings: the agent's
+model, read only, Project files read; its instructions and its answer form), the subscription's file
 (subscriptions/bundle-enters-validation.md: its filter on the demo project's name and its two templates, which name the bundle ID), no
-Domino host or ID (the repo is public), and the folder's README.
+Domino host or ID (the repo is public), no em dash, the glossary's words (spec #459: the folder is demo text), and the folder's
+README.
 
 With domino_agent (the domino-agent package of this Python, or the package of the AGENT_SERVICE_REPO checkout), it runs the own tool's
 unit test, test_route_table.py (python -m unittest in the folder, spec #459 seam 1). With neither, that part prints a SKIP line.
@@ -22,13 +25,14 @@ With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkou
 gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS), and the service's own tool reader reads the tool file
 (domino_agent/own_tools.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with a fake Domino (the service's
 seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
-  - `domino-agent deploy --dry-run` passes the service's folder rules, and its Changed line names the tool file; `deploy` registers
-    the agent, which can't run yet, with its own tool, and adds the subscription from its file (with the seam's project name in place
-    of the demo project's name in the temporary clone).
+  - `domino-agent deploy --dry-run` passes the service's folder rules, and its Changed line names the tool file and subagents;
+    `deploy` registers the agent, which can't run yet, with its own tool and its custom subagent, and adds the subscription from its
+    file (with the seam's project name in place of the demo project's name in the temporary clone).
   - A stage move (the audit poller's payload) starts no task before the service account's token, nor for an analyst who may not use
     the agent; then one task, as the service account, and its Job.
-  - The Job's spec (the skill, the own tool, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
-    for that task on the event's bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
+  - The Job's spec (the skill, the own tool, the custom subagent as opencode gets it, read only, with the built-in subagent off, the
+    access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions for that task on the event's
+    bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
     attached to the task", and run_job is denied.
   - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
