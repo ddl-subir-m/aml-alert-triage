@@ -542,4 +542,32 @@ check("no file of the folder has a Domino host, the ID of a Domino object or a t
 dashed = sorted(rel for rel, body in [*every.items(), ("tests/check_purpose_and_data.py", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
 
+service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+if not service:
+    done("AGENT_SERVICE_REPO is not set, so the tool names, the wizard's labels, the agents API and the event's task weren't checked "
+         "against the service. Set it to a domino-agent-service checkout (governance/check-purpose-and-data/README.md, \"The check\")")
+service = Path(service).expanduser().resolve()
+if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "static" / "js" / "pages" / "wizard.js").is_file():
+    check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and static/js/pages/wizard.js)",
+          False)
+    done()
+sys.path.insert(0, str(service))
+from agent_runtime import gateway, proxies  # noqa: E402  (stdlib only, so any OS)
+
+offered = {f"domino_{n}" for n in gateway.TOOLS} | {f"domino_{n}" for n in proxies.RELAY_TOOLS}
+check("each tool that they name is a gateway tool or a relay tool of this service, as opencode names it (domino_<name>)",
+      named and named <= offered, sorted(named - offered))
+
+# Each text in quotes in the README's tables (a label, or a choice of the wizard) is in the wizard's code, as a string. A few labels are
+# built from parts: the gateway's name, the account's name, the event's source and name (the service's agent_service/catalog.py).
+JS = "\n".join(p.read_text() for p in sorted((service / "static" / "js").rglob("*.js")))
+CATALOG = text(service / "agent_service" / "catalog.py")
+BUILT = {"LLM Gateway models": ("'LLM Gateway'" in JS and "gatewayName()} models`" in JS),
+         "<account>'s token": "idAccount()}'s token`" in JS,
+         "Governance: Bundle stage changed": '"source": "Governance",\n        "name": "Bundle stage changed"' in CATALOG}
+quoted = sorted({q for label, value, _ in wizard_rows + tab_rows for q in [label, *re.findall(r'"([^"]+)"', value)]})
+unknown = [q for q in quoted if not BUILT.get(q) and not any(form in JS for form in (f"'{q}'", f'"{q}"', f"`{q}`", f"`{q}$" + "{"))]
+check("each label and choice in quotes in the README's tables is the wizard's own text (its code in static/js)",
+      len(quoted) > 40 and not unknown, unknown)
+
 done()

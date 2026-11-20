@@ -90,7 +90,7 @@ on step 5: "Project sandbox" sets Project datasets to Read only and turns Git pu
 | Setting | Set it to | In agent.json |
 |---|---|---|
 | "What runs the agent?" | the card "Domino Agent Harness (opencode)" | `lane` |
-| "Name" | `Purpose and data`, exactly: "Validation status" finds the check's task by this name | `name` |
+| "Name" | `Purpose and data`, exactly: the scripted check Validation status finds the check's task by this name | `name` |
 | "Description" | the `description` of agent.json | `description` |
 | "Where can it work?" | "Any project" | `scope` |
 | "Project required as trigger input" | checked (the default) | `inputs` |
