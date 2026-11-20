@@ -2,113 +2,116 @@
 name: architecture-and-access
 description: The checklist of the check Architecture and access, from the governance bundle to the filled evidence item. Use it in every task of this agent.
 ---
-# Validate the App of a governance bundle
+# Check the architecture and access of the App of a governance bundle
 
 The task's instruction names the bundle ID (`bundleId` below). Do the steps in order. A step is done when its "Done when" line is true.
 
-The project folder (its path is in the operating rules) holds the shared parts of the validators:
+You are the check "Architecture and access", one of the three checks of the Validation stage. Your part: all access (who can call each route or tool, what it changes, and which identity each write records), the tech stack, the design, and the dependencies with how they are pinned and installed. You run no scan and start no Job.
 
-- `governance/README.md`: the severity scale (S0 to S3), the finding names, the rule for "critical vulns" and the rule for a failed scan.
+The project folder (its path is in the operating rules) holds the shared rules of the three checks:
+
+- `governance/README.md`: the evidence fields, the verdict rule, the severity scale (S0 to S3) with its examples for each check, the finding names and the rule for the result.
 - `governance/validation-doc.md`: the template of the doc.
-- `governance/scan.py`: the scan, which you run in a Domino Job.
 
-When a call fails or is denied, go on with the steps that don't need its answer. Name the call and Domino's answer under "What the validator could not check" (in the doc, or in the result when the doc is already pushed). Try a failed call again at most once.
+File findings only in your own part, never in the parts of the other two checks, "Purpose and data" and "Vulnerability scan". Where two parts meet:
+
+- A known vulnerability (a CVE, PYSEC or GHSA ID) in a dependency or in the code is the part of the check "Vulnerability scan": file none. A dependency's version range, its pin and how it is installed are your part.
+- The kind of data that the App holds, and its data class, are the part of the check "Purpose and data": file none. Who can read that data through the App is your part.
+
+When a call fails or is denied, go on with the steps that don't need its answer. Name the call and Domino's answer under "What this check could not check" (in the doc, or in the result when the doc is already pushed). Try a failed call again at most once.
 
 ## 1. Read the bundle and its policy
 
 - `domino_get_bundle(bundleId)`: the bundle's name, its project and its stage.
-- `domino_get_policy(bundleId)`: the policy that the bundle follows. In its stage named "Validation", find the evidence item whose name is exactly "Validation (agent folder)", and keep its `id`: that is your evidenceId.
-- In that item's `artifacts`, find each field by its `details.label` and keep its `id`: "Verdict", "Critical vulns", "Summary", "Doc location".
+- `domino_get_policy(bundleId)`: the policy that the bundle follows. In its stage named "Validation", find the evidence item whose name is exactly "Validation: Architecture and access", and keep its `id`: that is your evidenceId.
+- In that item's `artifacts`, find each field by its `details.label` and keep its `id`: "Verdict", "Highest severity", "Summary", "Doc location".
 - A radio field takes one of its `details.options` as its value: use the option's `value`, exactly.
 - The Intake values that the analyst filled: in the stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
+
+The Intake's Users say who must reach the App, and its Data class says how much harm an open route can do. Use them to pick the severity of an access finding. Do not judge the data class itself: that is the part of the check "Purpose and data".
 
 Done when: you have the evidenceId and the four artifact IDs, or you know which of them the policy doesn't have, and you have the three Intake values (or know which ones are not filled).
 
 ## 2. Read the App
 
-Read the App's code and its start script in the project folder: `README.md`, `app.sh`, each file that `app.sh` starts or installs, each file of code that they import, and each requirements file. Also read `governance/README.md`. Collect:
+Read the App's code and its start script in the project folder: `README.md`, `app.sh`, each file that `app.sh` starts or installs, each file of code that they import, and each requirements file. Find:
 
-- the purpose and the users, from the code and the README;
 - the tech stack: the language, the frameworks, the server and the storage;
-- the architecture: the entry point, the routes or tools, where the state is, and who can call what;
-- each dependency, with its version or range and how it is installed: from a requirements file, by the start script when the App starts, or from the Domino Environment.
+- the design: the entry point, the parts and how they connect, the routes or tools, and where the state is;
+- who can call each route or tool, and what it changes: who can open the App (its Domino access setting decides it), and each access check in the code, or that there is none;
+- which identity each write records: the header or the value that the code reads (for example `domino-username`), and what it records when there is none;
+- each dependency, with its version or range, how it is pinned (an exact version, a range, or none), and how and when it is installed: from a requirements file, by the start script from PyPI each time the App starts, or already in the Domino Environment.
 
-The doc's "Users and data class" are the Intake values (step 1), as the analyst filled them: write "not filled" for a field with no value. The doc's "Purpose" comes from the code and the README: say where it differs from the Intake's "Purpose".
+Done when: each fact for the doc's sections from "Tech stack" to "Dependencies" has a file (and a line, where it is code) as its evidence.
 
-Done when: each fact for the doc's sections from "Purpose" to "Dependencies" has a file (and a line, where it is code) as its evidence.
+## 3. Sort what you found
 
-## 3. Run the scan
+For each problem in your part, decide: a real finding or a false hit.
 
-- `domino_run_job(command="python governance/scan.py", title="App validation scan, bundle <bundleId>")`. Keep the Job's ID from the answer (`job.id`).
-- `domino_wait_job(jobId)`. While it says that the Job is still running, call it again.
-- When the Job is finished, find the scan summary in the end of its output: the lines between `== scan summary ==` and `== end of scan summary ==`. Domino adds lines of its own after the summary. If the summary isn't there, `domino_get_job_logs(jobId)` gives more of the log.
-- The summary's `commit:` line is the commit that the scan read. Its `result:` line says whether both tools ran.
+- A real finding gets a severity on the scale of `governance/README.md` (S0, S1, S2 or S3: use its examples for this check), a name `[Architecture and access] <what> in <where>`, its evidence (the file and line, and the code) and a fix. `<where>` is a route, a file or a dependency.
+- A false hit is a thing that looked like a problem and is not one. It gets the reason from the code: what the code really does, or why the App needs it. False hits never count, and you file no false hit.
 
-When the Job did not end `Succeeded`, or the summary's `result:` line is not `result: both tools ran`, the scan failed. Then follow "A failed scan" in `governance/README.md` in the later steps: the verdict is `do not approve`, and there is no finding from the scan (file none). Critical vulns is `no` unless a finding from the code is S0, and its reason then starts with "No S0 finding; dependencies not scanned". The Summary (step 9) and could not check say that the scan failed, and why.
+Then pick two of the evidence values, with the rules of `governance/README.md`:
 
-Done when: you have the summary, or you know why there is none (the Job failed, or a tool could not run). A tool that could not run goes under could not check, and so does each part that the summary says was not checked (`- not audited: ...`, `- not scanned: ...`).
+- Highest severity: the highest severity of your real findings, `S0` to `S3`, or `none` when you have no real finding.
+- Verdict: `do not approve` when at least one real finding is S0 or S1. `approve` when the highest severity is S2, S3 or `none`. `could not check` when the check could not do its work (for example you could not read the App's code, or Domino denied `domino_get_policy`): this comes before the other two. The verdict's reason names the findings that decide it.
 
-## 4. Sort each hit
+Done when: each problem is a real finding or a false hit, each real finding has a severity and a name, each false hit has a reason, and you have the Verdict and the Highest severity.
 
-For each hit of the scan summary (each known vulnerability of pip-audit, each hit of bandit), read the code that it points at. Then decide: a real finding or a false hit.
+## 4. Write the doc
 
-- A real finding gets a severity on the scale of `governance/README.md` (S0, S1, S2 or S3), a name `[folder] <short title>`, its evidence (the file and line, and the hit or the code) and a fix.
-- A known vulnerability of a dependency is S0 when a caller can reach the vulnerable function through the App's code. Find that call in the code, and cite it.
-- A false hit gets the reason why it is false, from the code: what the flagged line really does, or why the App needs it.
+- Copy `governance/validation-doc.md` to `docs/validation/architecture-and-access-<bundleId>.md` in the project folder.
+- Keep the shared top part (from the title to "What this check could not check") and only your middle part, `## Architecture and access`. Delete the other two middle parts, `## Purpose and data` and `## Vulnerability scan`, with all their text.
+- Replace each `{{field}}` with its text. Keep every heading of your parts, in its order. Delete every comment (`<!-- ... -->`).
+- `app`: the App's name. `check`: `Architecture and access`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
+- `app_and_version`: the App's name, its repository, and the commit that you read (`git rev-parse HEAD` in the project folder).
+- `verdict`, `highest_severity` and `summary`: the values of step 3. The summary is three to five sentences: the verdict's reason, and each real finding by its name and its severity.
+- `doc_location`: only the file and where it goes, `docs/validation/architecture-and-access-<bundleId>.md` on the task branch `agent/<task key>`, with no commit (the doc is written before the push).
+- `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call.
+- `tech_stack`, `architecture`, `access` and `dependencies`: the facts of step 2, with their evidence. `dependencies` is a table.
+- `real_findings`: the table of the real findings, with the same names and severities that you file. `false_hits`: the table of the false hits, with their reasons.
 
-Then review the code for what no scanner sees, and add each real finding of it: who can call each route and what it changes, which identity each write records, and what is installed, from where, and when.
+Done when: the file has no `{{` and no `<!--` left, it has only the top part and your middle part, and each section has its text.
 
-Done when: each hit is a real finding or a false hit, each real finding has a severity, and each false hit has a reason.
+## 5. Push the doc
 
-## 5. Write the doc
+- `domino_git_push(message="Validation doc of bundle <bundleId> (Architecture and access)")` commits the doc to the task branch and pushes it. Its answer is JSON: keep `ok`, `branch`, `commit` and `dryRun`.
 
-- Copy `governance/validation-doc.md` to `docs/validation/agent-folder-<bundleId>.md` in the project folder.
-- Replace each `{{field}}` with its text. Keep every heading, in its order. Delete every comment (`<!-- ... -->`).
-- `validator`: `App validator (agent folder)`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
-- `critical_vulns`: `yes` when at least one real finding is S0, else `no`. The reason names those findings, or says why no finding is S0.
-- `verdict`: exactly one of `approve`, `approve after fixes`, `do not approve`. The reason names the findings that decide it.
-- `could_not_check`: each limit of this review. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each tool that could not run, and each failed or denied call.
+Done when: you have the branch and the commit, and you know whether `ok` is true and whether `dryRun` is true.
 
-Done when: the file has no `{{` and no `<!--` left, and each section has its text.
+## 6. Attach the doc
 
-## 6. Push the doc
-
-- `domino_git_push(message="Validation doc of bundle <bundleId> (agent folder)")` commits the doc to the task branch and pushes it. Its answer is JSON: keep `ok`, `branch`, `commit` and `dryRun`.
-
-Done when: you have the branch and the commit, and you know whether `dryRun` is true.
-
-## 7. Attach the doc
-
-- Only when the push answered `ok` true and `dryRun` false: `domino_write_bundle_attachment(bundleId, type="Report", identifier={"filename": "docs/validation/agent-folder-<bundleId>.md", "commit": <the push's commit>, "source": "GBP", "branch": <the push's branch>})`.
+- Only when the push answered `ok` true and `dryRun` false: `domino_write_bundle_attachment(bundleId, type="Report", identifier={"filename": "docs/validation/architecture-and-access-<bundleId>.md", "commit": <the push's commit>, "source": "GBP", "branch": <the push's branch>})`.
 - When `dryRun` is true, the commit is not on the remote: attach nothing. Say under could not check in the result: "The push was a dry run, so the doc is not in the repo and not attached to the bundle".
-- When `ok` is false, the doc is not in the repo either: attach nothing, and say why under could not check in the result.
+- When `ok` is false, the push failed and the doc is not in the repo either: attach nothing, and say why under could not check in the result (with Domino's answer).
 
 Done when: the bundle has the Report attachment, or the result will say why it has none.
 
-## 8. File the real findings
+## 7. File the real findings
 
-For each real finding of the doc: `domino_write_governance_finding(bundleId, name="[folder] <short title>", severity="S0" to "S3", description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File no false hit.
+For each real finding of the doc: `domino_write_governance_finding(bundleId, name="[Architecture and access] <what> in <where>", severity="S0" to "S3", description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File only the findings of your part, and file no false hit.
 
 Done when: each real finding of the doc is filed once.
 
-## 9. Fill your evidence item
+## 8. Fill your evidence item
 
-Fill only your own evidence item, "Validation (agent folder)": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Critical vulns ID>: "yes" or "no", <Summary ID>: <three to five sentences: the verdict's reason, and the real findings by name and severity>, <Doc location ID>: <the doc location>})`.
+Fill only your own evidence item, "Validation: Architecture and access": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Highest severity ID>: <the highest severity>, <Summary ID>: <the summary>, <Doc location ID>: <the doc location>})`. The first three values are the same as in the doc.
 
-The doc location is one line: `<branch> at <commit>, docs/validation/agent-folder-<bundleId>.md`. When the doc is not in the repo: `Not in the repo: <why>. The doc is in the task's result.`
+The doc location is one line: `<branch> at <commit>, docs/validation/architecture-and-access-<bundleId>.md`, with the push's branch and commit. When the doc is not in the repo: `Not in the repo: <why>. The doc is in the task's result.`
 
 Done when: the answer's `results` show your four values for your evidenceId.
 
-## 10. Report the result
+## 9. Report the result
 
-Call `domino_report_result(summary)`, once, last. The summary starts with these three lines, each on its own line, with one of the values and the same doc location as in step 9:
+Call `domino_report_result(summary)`, once, last. The summary starts with these four lines, each on its own line, in this order: one of the values, the summary on one line, and the same doc location as in step 8. They are plain text, with no Markdown on those lines.
 
 ```
-Verdict: approve | approve after fixes | do not approve
-Critical vulns: yes | no
+Verdict: approve | do not approve | could not check
+Highest severity: S0 | S1 | S2 | S3 | none
+Summary: <the summary, on one line>
 Doc location: <the doc location>
 ```
 
-Then: the real findings (name and severity), the false hits (the hit and the reason), and "Could not check:" with each limit and each failed or denied call. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
+Then: the real findings (name and severity), the false hits (what, and the reason), and "Could not check:" with each limit and each failed or denied call. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
 
 Done when: `domino_report_result` answered "Recorded".

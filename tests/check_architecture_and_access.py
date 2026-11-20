@@ -133,9 +133,9 @@ check(f"definition.md: the title {NAME} (Validation status finds the task by its
       {k: got.get(k) for k in WANT} == WANT, {k: (got.get(k), v) for k, v in WANT.items() if got.get(k) != v})
 
 # ------------------------------------------------------------------------------------------------------- the checklist (the skill)
-EVIDENCE = "Validation (agent folder)"   # the evidence item's name in governance/app-deployment-policy.yaml (#266)
-VERDICTS = ("approve", "approve after fixes", "do not approve")
-DOC = "docs/validation/agent-folder-<bundleId>.md"   # where the doc goes on the task branch
+DOC = f"docs/validation/{SLUG}-<bundleId>.md"   # the doc's file on the task branch (governance/README.md, "The three checks")
+V = (VERDICTS + ["(no verdict)"] * 3)[:3]       # approve, do not approve, could not check (checks.json's order)
+PURPOSE, SCAN_CHECK = (OTHERS + ["(no check)"] * 2)[:2]   # the other two checks, in checks.json's order
 lines = [ln.lower() for ln in skill.splitlines()]
 
 
@@ -146,68 +146,106 @@ def rule(name, *words):
 
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
-rule("find the evidence item by its exact name, and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
-rule("find each field by its label: Verdict, Critical vulns, Summary, Doc location", "details.label", '"verdict"', '"critical vulns"',
-     '"summary"', '"doc location"')
+rule("find its evidence item by its exact name (checks.json), and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
+rule("find each of the four fields by its label (checks.json)", "details.label", *(f'"{label}"' for label in LABELS))
 rule("a radio field takes one of its options' values", "radio", "details.options", "value")
-rule("read the App's code and its start script", "app.sh", "code", "read")
 rule("find the Intake values with get_policy: the stage Intake, its item Intake, and each field by its label", 'stage named "intake"',
      '"purpose"', '"users"', '"data class"', "details.label")
 rule("...each field's value is its result.artifactContent, and a field with no result is not filled", "result.artifactcontent",
      "no `result`", "not filled")
-rule("the doc's Users and data class are the Intake values, and the doc's purpose says where the code differs from the Intake's",
-     '"users and data class"', "intake", "not filled", '"purpose"', "differs")
-check("the skill no longer says that the Intake values can't be read, nor names them as a limit of every review",
-      not [ln for ln in lines if "intake" in ln and ("not readable" in ln or "no gateway tool" in ln or "always:" in ln)],
-      [ln for ln in lines if "intake" in ln and ("not readable" in ln or "no gateway tool" in ln or "always:" in ln)])
-rule("run the shared scan script in a Domino Job", "domino_run_job", '"python governance/scan.py"')
-rule("wait for the Job, again while it still runs", "domino_wait_job", "still", "again")
-rule("find the scan summary by its two marker lines", "== scan summary ==", "== end of scan summary ==")
-rule("...with more of the log from get_job_logs", "domino_get_job_logs")
-rule("a failed scan follows the shared rule of governance/README.md: do not approve, and no finding from the scan", "the scan failed",
-     '"a failed scan"', "do not approve", "no finding from the scan")
-rule("...critical vulns is no only as 'No S0 finding; dependencies not scanned', and the summary says that the scan failed",
-     "no s0 finding; dependencies not scanned", "summary", "the scan failed")
-rule("the commit that was scanned is the summary's commit line", "commit:", "summary")
-rule("sort each hit: a real finding or a false hit", "each hit", "real finding", "false hit")
-rule("a false hit has the reason why it is false", "false hit", "reason")
-rule("the severity scale is governance/README.md's", "governance/readme.md", "severity", "s0", "s3")
-rule("a known vulnerability is S0 when a caller can reach it through the App's code", "known vulnerability", "s0", "reach")
-rule("the doc follows the shared template", "governance/validation-doc.md", DOC.lower())
+rule("read the App's code and its start script", "app.sh", "code", "read")
+rule("find who can call each route or tool, and what it changes", "who can call", "each route", "what it changes")
+rule("find which identity each write records", "which identity", "each write", "records")
+rule("find the tech stack: the language, the frameworks, the server and the storage", "tech stack", "frameworks", "storage")
+rule("find the design: the parts, the routes and where the state is", "design", "routes", "state")
+rule("find each dependency, how it is pinned, and how and when it is installed", "each dependency", "pinned", "installed")
+
+# Its part only (governance/README.md, "The three checks"): no scan, and nothing filed in the other two checks' parts
+SCAN = re.compile(r"domino_run_job|domino_wait_job|domino_get_job_logs|governance/scan\.py|pip-audit|bandit")
+check("the checklist and the instructions have no scan step: no Job, no scan script, no scanner (Run a Job is off)",
+      not SCAN.search(skill + instructions), sorted(set(SCAN.findall(skill + instructions))))
+rule("file findings only in its own part, never in the other two checks' parts", "only in", "own part", f'"{PURPOSE}"',
+     f'"{SCAN_CHECK}"')
+rule("...a known vulnerability (a CVE, PYSEC or GHSA ID) is the Vulnerability scan's part: file none", "known vulnerability", "cve",
+     f'"{SCAN_CHECK}"', "file none")
+rule("...the data class is the Purpose and data part: file none; who can read the data through the App is its part", "data class",
+     f'"{PURPOSE}"', "file none", "who can read")
+
+# The evidence values, by the shared rules (governance/README.md, "The evidence fields" and "The severity scale")
+rule("the severity scale is governance/README.md's, S0 to S3, with its examples for each check", "governance/readme.md", "s0", "s3",
+     "examples")
+rule("a real finding's name is [Architecture and access] <what> in <where>", f"`[{NAME}] <what> in <where>`")
+rule("Highest severity is the highest severity of its real findings, or none", "highest severity", "real findings", "`none`")
+rule(f"the verdict is `{V[1]}` when a real finding is S0 or S1", f"`{V[1]}`", "real finding", "s0 or s1")
+rule(f"...`{V[0]}` when the highest severity is S2, S3 or none", f"`{V[0]}`", "s2, s3 or `none`")
+rule(f"...`{V[2]}` when the check could not do its work", f"`{V[2]}`", "could not do its work")
+rule("false hits never count, and none is filed", "false hit", "never count", "no false hit")
+
+# The doc: governance/validation-doc.md's shared top part and this check's middle part (the template is the source of the fields)
+TEMPLATE = re.sub(r"<!--.*?-->", "", text(ROOT / "governance" / "validation-doc.md"), flags=re.S)
+names = [c.get("name") for c in CHECKS.get("checks") or [] if isinstance(c, dict)]
+heads = {n: m.start() for n in names for m in [re.search(rf"^## {re.escape(n)}$", TEMPLATE, re.M)] if m}   # each middle part
+starts = sorted(heads.values())
+
+
+def middle(n):
+    """The template's middle part of the check `n`: from its heading to the next middle part."""
+    return TEMPLATE[heads[n]:next((s for s in starts if s > heads[n]), len(TEMPLATE))] if n in heads else ""
+
+
+FIELD = r"\{\{(\w+)\}\}"
+mine = set(re.findall(FIELD, TEMPLATE[:starts[0]] + middle(NAME))) if starts else set()   # the top part and its own middle part
+theirs = set(re.findall(FIELD, "".join(middle(o) for o in OTHERS))) - mine
+check(f"governance/validation-doc.md has a shared top part and this check's middle part, ## {NAME}, with their fields",
+      bool(middle(NAME)) and {"verdict", "doc_location", "real_findings"} <= mine, sorted(mine))
+rule("the doc follows the shared template, at its file name", "governance/validation-doc.md", DOC)
+rule("...keeps the shared top part and only its own middle part, and deletes the other two", f"`## {NAME}`", "delete",
+     *(f"`## {o}`" for o in OTHERS))
 rule("...with every field replaced and every comment deleted", "{{field}}", "<!--")
-rule("critical vulns is yes when a real finding is S0", "critical_vulns", "yes", "s0")
-rule("the verdict is one of three values", "verdict", *VERDICTS)
-rule("the doc says what the validator could not check", "could_not_check", "default branch")
-rule("push the doc with git_push, and keep its branch, commit and dryRun", "domino_git_push", "branch", "commit", "dryrun")
+unsaid = sorted(f for f in mine if f"`{f}`" not in skill)
+check("the skill says how to fill each field of the top part and of its own middle part (the template's fields)", mine and not unsaid,
+      unsaid)
+said = sorted(f for f in theirs if f"`{f}`" in skill)
+check("...and names no field of the other two middle parts only", not said, said)
+rule("the doc's check is the check's name", "`check`", f"`{NAME}`")
+rule("the doc's own doc location names only the file and the task branch, with no commit (it is written before the push)",
+     "`doc_location`", "no commit")
+rule("the doc says what the check could not check, always the default branch", "`could_not_check`", "default branch")
+
+# The push, the attachment, the findings, the evidence and the result
+rule("push the doc with git_push, and keep its ok, branch, commit and dryRun", "domino_git_push", "`ok`", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
-     '"gbp"', "branch", "commit", DOC.lower())
-rule("...only when the push is on the remote (dryRun false)", "only when", "dryrun", "false")
-rule("a dry-run push: attach nothing, and say so under what the validator could not check", "dryrun", "true", "attach nothing",
+     '"gbp"', "branch", "commit", DOC)
+rule("...only when the push is on the remote (ok true, dryRun false)", "only when", "`ok` true", "dryrun", "false")
+rule("a dry-run push: attach nothing, and say so under what the check could not check", "dryrun", "true", "attach nothing",
      "could not check")
-rule("file each real finding, its name starting with [folder]", "domino_write_governance_finding", '"[folder] ', "severity")
-rule("file no false hit", "no false hit")
+rule("a failed push (ok false): attach nothing, and say why", "`ok` is false", "attach nothing", "why")
+rule("file each real finding with its name and severity, and no false hit", "domino_write_governance_finding",
+     f'"[{NAME}] <what> in <where>"', "severity", "no false hit")
 rule("fill only its own evidence item, by the IDs from get_policy", "domino_write_policy_result", "only", f'"{EVIDENCE}"', "evidenceid")
-rule("a failed or denied call: go on with the other steps, and name it under what the validator could not check", "fail", "denied",
+rule("...with its four fields, by their IDs", "domino_write_policy_result", *(f"<{label} id>" for label in LABELS))
+rule("the doc location: the task branch at the push's commit, and the doc's file", f"`<branch> at <commit>, {DOC}`")
+rule("...or 'Not in the repo', with why", "`not in the repo: <why>. the doc is in the task's result.`")
+rule("a failed or denied call: go on with the other steps, and name it under what the check could not check", "fail", "denied",
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", "domino_run_job", "domino_wait_job", "domino_git_push",
-         "domino_write_bundle_attachment", "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
+order = ["domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_write_bundle_attachment",
+         "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check("the checklist's tools come in the spec's order: bundle and policy, scan, push, attachment, findings, evidence, result",
+check("the checklist's tools come in order: bundle and policy, push, attachment, findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
 check("each step ends with its completion criterion (a 'Done when' line)",
       steps and all("Done when:" in part for part in re.split(r"^## \d+\. ", skill, flags=re.M)[1:]), steps)
-result = [ln.strip() for ln in skill.split("## ")[-1].splitlines()]
-# The labels are the scripted check's (governance/validation_status.py LABELS: the one source, which the LangGraph graph also uses)
-LABELS = tuple(runpy.run_path(str(ROOT / "governance" / "validation_status.py")).get("LABELS") or ("(no LABELS)",) * 3)
-want = [f"{LABELS[0]}: {' | '.join(VERDICTS)}", f"{LABELS[1]}: yes | no", f"{LABELS[2]}: "]
+result = [ln.strip() for ln in re.split(r"^## \d+\. ", skill, flags=re.M)[-1].splitlines()]
+want = [f"{LABELS[0]}: {' | '.join(VERDICTS)}", f"{LABELS[1]}: {' | '.join(SEVERITIES)}", f"{LABELS[2]}: ", f"{LABELS[3]}: "]
 got = [next((ln for ln in result if ln.startswith(w.split(":")[0] + ":")), None) for w in want]
-check("the last step gives the result's three lines, in order, with the scripted check's labels and the exact Verdict values",
-      all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),
-      got)
+check("the last step gives the result's four lines, in order, with the labels of checks.json and its exact verdicts and severities",
+      all(got) and got[:2] == want[:2] and all(g.startswith(w) for g, w in zip(got, want))
+      and [result.index(g) for g in got] == sorted(result.index(g) for g in got), got)
+rule("...as plain text, with no Markdown on those lines", "no markdown")
 
 # ------------------------------------------------------------------------------------------------------------- the instructions
 ilines = [ln.lower() for ln in instructions.splitlines()]
@@ -229,9 +267,9 @@ irule("end with report_result, once, last", "domino_report_result", "once", "las
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
-NAMES = {"domino_get_bundle", "domino_get_policy", "domino_run_job", "domino_wait_job", "domino_get_job_logs", "domino_git_push",
-         "domino_write_bundle_attachment", "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result",
-         "domino_ask_user", "domino_request_access"}
+NAMES = {"domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_write_bundle_attachment",
+         "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result", "domino_ask_user",
+         "domino_request_access"}   # the instructions name the last two only to forbid them
 named = set(re.findall(r"\bdomino_[a-z_]+", skill + instructions))
 check("the skill and the instructions name the checklist's Domino tools, and no other", named == NAMES, sorted(named ^ NAMES))
 bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait_job|git_push|write_[a-z_]+|report_result)\(",
