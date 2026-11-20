@@ -649,7 +649,7 @@ try:
     # A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's tests/check_phase3.py
     # audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload, then published
     # through the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
-    BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}
+    BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}   # made up (Domino gives a bundle a UUID)
     real_get = domino.get
 
     def bundle_get(path, params=None, cache=True, token=None, credential=None):

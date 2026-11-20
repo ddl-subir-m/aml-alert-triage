@@ -502,7 +502,7 @@ check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (th
 import requests  # noqa: E402  (the service's checks image has it)
 from agent_service import audit_source, domino  # noqa: E402
 
-BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}
+BUNDLE = {"id": "4f2b7c1e-0d3a-4e5f-9a8b-7c6d5e4f3a21", "name": "aml-case-management v7"}   # made up (Domino gives a bundle a UUID)
 real_get = domino.get
 
 
