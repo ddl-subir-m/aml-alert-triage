@@ -1,5 +1,7 @@
-"""The shared parts of the two App validators (domino-agent-service spec #260, Implementation Decision 7), seen from outside: the scan
-script as a Domino Job runs it, the doc template, and the severity scale with the rule for finding names (governance/README.md).
+"""The shared parts of the three checks of the App validation demo (domino-agent-service spec #388, Implementation Decisions 5 to 7),
+seen from outside: the scan script as a Domino Job runs it, the doc template (one shared top part and one middle part for each
+check), and the shared rules of governance/README.md (the three checks, the four evidence fields and their values, the severity scale
+with its examples for each check, the finding names, the result and a failed scan). The file name is the one of spec #260.
 
 The scan script runs with no network: a bare venv (no pip-audit, no bandit, no pip) and fake scanners on PYTHONPATH that answer with
 the real tools' output, saved in tests/fixtures/scan/ (pip-audit 2.10.1 and bandit 1.9.4 on case_server: `clean` is main,
@@ -266,7 +268,8 @@ check("governance/README.md has a row for each of the three checks, in the spec'
 BUILT = {"Purpose and data": "wizard agent", "Architecture and access": "registered agent", "Vulnerability scan": "framework agent"}
 check("each check's row says how it is built: a wizard agent, a registered agent (an agent folder), a framework agent (LangGraph)",
       all(len(checks.get(c, [])) > 1 and BUILT[c] in checks[c][1].lower() for c in CHECKS)
-      and "agent folder" in " ".join(checks.get("Architecture and access", [])) and "LangGraph" in " ".join(checks.get("Vulnerability scan", [])),
+      and "agent folder" in " ".join(checks.get("Architecture and access", []))
+      and "LangGraph" in " ".join(checks.get("Vulnerability scan", [])),
       {c: checks.get(c, [""])[1:2] for c in CHECKS})
 FOLDER = {c: "governance/check-" + c.lower().replace(" ", "-") + "/" for c in CHECKS}
 check("each check's row names its folder (governance/check-<name>/)", all(f"`{FOLDER[c]}`" in checks.get(c, []) for c in CHECKS),
@@ -302,11 +305,12 @@ check("governance/README.md has the four evidence fields, in order: Verdict, Hig
       list(fields) == list(FIELDS), list(fields))
 values = {f: re.findall(r"`([^`]+)`", " ".join(fields.get(f, [])[1:2])) for f in FIELDS}
 check("Verdict's values are exactly approve, do not approve and could not check", values["Verdict"] == FIELDS["Verdict"], values)
-check("Highest severity's values are exactly S0, S1, S2, S3 and none", values["Highest severity"] == FIELDS["Highest severity"], values)
+check("Highest severity's values are exactly S0, S1, S2, S3 and none", values["Highest severity"] == FIELDS["Highest severity"],
+      values)
 check("Summary and Doc location are text, with no list of values", not values["Summary"] and not values["Doc location"]
       and all(len(fields.get(f, [])) > 1 and fields[f][1] for f in ("Summary", "Doc location")), values)
 evidence = one_line(section(rules, "The evidence fields"))
-check("governance/README.md says that Highest severity is the highest severity of the check's real findings, and none when it has none",
+check("governance/README.md says that Highest severity is the highest severity of the check's real findings, and none with none",
       "the highest severity of the check's real findings" in evidence and re.search(r"`none` when [^.]*no real finding", evidence),
       evidence[:400])
 check("governance/README.md says when the Verdict is could not check: the check could not do its work, and the Summary says why",
@@ -324,8 +328,8 @@ check("governance/README.md has the severity scale, S0 to S3, with write_governa
 # The examples that the user agreed (spec #388, Implementation Decision 7), so that "S1" means the same in each check.
 scale = section(rules, "The severity scale")
 examples = table(scale[scale.find("### Examples"):]) if "### Examples" in scale else []
-check("the severity scale has examples for each of the three checks, and for no other", sorted({r[0] for r in examples}) == sorted(CHECKS),
-      sorted({r[0] for r in examples}))
+check("the severity scale has examples for each of the three checks, and for no other",
+      sorted({r[0] for r in examples}) == sorted(CHECKS), sorted({r[0] for r in examples}))
 AGREED = [("Purpose and data", "S1", ("an intake data class lower than the data that the app is built to hold",)),
           ("Architecture and access", "S1", ("`post /reset`", "anyone who can open the app can delete all state")),
           ("Architecture and access", "S2", ("a write with no `domino-username`", 'recorded as "no identity"')),
@@ -349,13 +353,15 @@ check("a check files only its real findings, and a false hit goes in its doc onl
       re.search(r"files only its real findings\. A false hit goes in its doc only, [^.]*with the reason", one_line(names)) is not None,
       one_line(names)[:400])
 check("governance/README.md names no validator of spec #260: no [folder], no [LangGraph] finding names",
-      "[folder]" not in rules and "[LangGraph]" not in rules, [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
+      "[folder]" not in rules and "[LangGraph]" not in rules,
+      [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
 
 # The result: spec #388, Implementation Decision 7. Each check ends with report_result, whose first lines are the four evidence
 # values, so that "Validation status" and the task page show the same result. Each line is "<field label>: <value>".
 result_rule = section(rules, "The result")
 check("governance/README.md has the rule for the result: each check ends with report_result, once, last",
-      re.search(r"`report_result`, once, last", one_line(result_rule)) is not None, one_line(result_rule)[:300] or "no '## The result'")
+      re.search(r"`report_result`, once, last", one_line(result_rule)) is not None,
+      one_line(result_rule)[:300] or "no '## The result'")
 block = re.search(r"```\n(.*?)```", result_rule, re.S)
 first = block.group(1).splitlines()[:4] if block else []
 check("the result's first four lines are the four evidence fields, in order, each as '<label>: <value>'",
@@ -377,7 +383,8 @@ check("a failed scan gives the Verdict could not check, and never do not approve
       "The Verdict is `could not check`" in failed_scan and "`do not approve`" not in failed_scan, failed_scan[:400])
 check("a failed scan gives no finding from the scan", "No finding comes from the scan" in failed_scan, failed_scan[:400])
 check("after a failed scan, the Summary and the doc's Scan results and 'What this check could not check' say that the scan failed, "
-      "and why", all(w in failed_scan for w in ("Summary", "Scan results", "What this check could not check", "why")), failed_scan[:400])
+      "and why", all(w in failed_scan for w in ("Summary", "Scan results", "What this check could not check", "why")),
+      failed_scan[:400])
 
 # ------------------------------------------------------------------------------------------------------------------ the doc template
 # Spec #388, Implementation Decision 7: one shared top part (the App, the commit, the bundle, the check's name, the four evidence
@@ -432,8 +439,8 @@ says(("Evidence",), "approve", "do not approve", "could not check", "s0", "s3", 
 says(("What this check could not check",), "the commit of the app version under review", "default branch", "running app")
 says(("Purpose and data", "Purpose"), "code", "readme", "intake's purpose")
 says(("Purpose and data", "Users"), "intake's users")
-says(("Purpose and data", "Data class"), "kind of data", "built to hold", "intake's data class", "not by whether the sample data is fake",
-     "public", "internal", "confidential", "restricted")
+says(("Purpose and data", "Data class"), "kind of data", "built to hold", "intake's data class",
+     "not by whether the sample data is fake", "public", "internal", "confidential", "restricted")
 says(("Architecture and access", "Tech stack"), "language", "frameworks", "server", "storage")
 says(("Architecture and access", "Architecture"), "entry point", "routes", "where the state is", "who can call what")
 says(("Architecture and access", "Access"), "who can open the app", "what it changes", "identity")

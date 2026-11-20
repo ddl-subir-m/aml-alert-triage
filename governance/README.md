@@ -114,12 +114,13 @@ Doc location: <the Doc location>
 
 Each line is the field's label, a colon and the value, with no Markdown. "Validation status" reads these lines, so it and the task's
 page show the same result. Then come the real findings (name and severity), the false hits (the hit and the reason), and "Could not
-check:" with each limit of the check. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
+check:" with each limit of the check. When the doc is not at its location (not pushed, or not in a snapshot), add the whole doc after
+them, so that the approver can read it.
 
 ## The scan
 
-The Vulnerability scan starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job` until the Job
-ends.
+The Vulnerability scan starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job`
+until the Job ends.
 
 - It installs pip-audit and bandit with pip when the Domino Environment does not have them (the Job reaches PyPI).
 - It runs pip-audit on `case_server/requirements.txt` (pip-audit resolves the requirements from PyPI) and bandit on `case_server/` at
@@ -163,6 +164,8 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_validator_pa
 It runs the scan with no network: in a bare venv, with fake scanners that answer with the real tools' output (saved in
 `tests/fixtures/scan/`: `clean` is main, `vulnerable` is pip-audit's answer for `pyyaml==5.3.1`, and `gaps` has a file that bandit
 can't parse and a package that isn't on PyPI). It covers the summary (each tool, its version and its hits, at the end of the output,
-nothing on stderr), the JSON files, the parts that a tool did not check, a tool that cannot run, and the install. It
-also checks the doc template's sections and this page's rules. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it
-checks the severity scale against the gateway's `write_governance_finding`. Without it, that part prints a SKIP line.
+nothing on stderr), the JSON files, the parts that a tool did not check, a tool that cannot run, and the install. It also checks
+this page's rules (the three checks, the evidence fields and their values, the scale and its examples, the finding names, the result
+and a failed scan), and the doc template (its shared top part, and each check's middle part with its findings). With
+`AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it checks the severity scale against the gateway's
+`write_governance_finding`. Without it, that part prints a SKIP line.
