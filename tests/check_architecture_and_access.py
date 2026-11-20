@@ -30,9 +30,12 @@ With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. N
   python tests/check_architecture_and_access.py                                                   # the files only
   AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_architecture_and_access.py   # on Linux: everything (README)
 """
+import ast
+import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 from functools import partial
 from pathlib import Path
@@ -71,14 +74,22 @@ SLUG = NAME.lower().replace(" ", "-")   # architecture-and-access: the Registrat
 SKILL = f"skills/{SLUG}/SKILL.md"
 SUB_NAME = "bundle-enters-validation"   # the trigger name of the three checks' form, "Bundle enters Validation", as a file name
 SUB = f"subscriptions/{SUB_NAME}.md"    # the event subscription (ADR 0049): the file name is the trigger's name and its identity
-UPLOADED = ("definition.md", "instructions.md", SKILL, SUB)   # what deploy uploads of the folder
+TOOL_NAME = "route_table"               # the own tool (spec #459, decision 4): the agent sees it as own_route_table
+TOOL = f"tools/{TOOL_NAME}.py"
+OWN = f"own_{TOOL_NAME}"
+UNIT_TEST = f"test_{TOOL_NAME}.py"      # its unit test, next to definition.md: deploy does not upload it
+UPLOADED = ("definition.md", "instructions.md", SKILL, SUB, TOOL)   # what deploy uploads of the folder
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
 files = {k: v for k, v in every.items() if known(k)}
-check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, and one subscription file, {SUB}, and nothing else",
-      sorted(files) == sorted(UPLOADED), sorted(files))
-settings, instructions, skill, subscription = (files.get(k, "") for k in UPLOADED)
+check(f"{PATH}/ uploads definition.md, instructions.md, one own skill, {SLUG}, one subscription file, {SUB}, and one own tool "
+      f"file, {TOOL}, and nothing else", sorted(files) == sorted(UPLOADED), sorted(files))
+check(f"...the own tool's unit test, {UNIT_TEST}, and README.md are in the folder, next to definition.md, and deploy does not upload "
+      "them", all(f in every and not known(f) for f in (UNIT_TEST, "README.md")), sorted(every))
+check("the repo's .gitignore has __pycache__/: a run of the unit test writes it, and deploy refuses a folder with changes that are "
+      "not committed", "__pycache__/" in text(ROOT / ".gitignore").splitlines())
+settings, instructions, skill, subscription, tool_file = (files.get(k, "") for k in UPLOADED)
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
 top = re.match(r"---\n(.*?)\n---\n", skill, re.S)
@@ -193,6 +204,22 @@ rule("the doc says what the check could not check, always the default branch", "
 rule("the doc's Architecture section has a table of each route: method, path, who can call it, what it changes",
      "architecture section", "table of each route", "method", "path", "who can call it", "what it changes")
 
+# The own tool (spec #459, decision 6): the main agent calls it once, itself (a custom subagent's own-tool calls are not in the
+# transcript and get no Activity log row), in the step that reads the App, and the doc's route table comes from its rows
+rule(f"call the own tool {OWN} once, yourself, with the folder of the App's Python code", f"`{OWN}", "once", "yourself",
+     "`folder`", "relative to the project folder")
+rule("...its rows: the method, the path, the handler with its file and line, the identity and the writes", "row", "`method`",
+     "`path`", "`file`", "`line`", "`reads_identity`", "`changes_state`")
+rule("...read the handler of each row at its file and line: changes_state false means only that the rule found no write",
+     "handler of each row", "file and line", "`changes_state`", "`false`", "found no write")
+rule(f"when {OWN} fails (an exception, a timeout): do not call it again, and read the routes from the code", f"`{OWN}`", "fails",
+     "exception", "timeout", "do not call it again", "from the code")
+rule("...name the failed call under what the check could not check", "failed call", '"what this check could not check"')
+rule(f"...this alone does not make the Verdict `{V[2]}`", "alone does not make", f"`{V[2]}`")
+rule("each item of the tool's not_read goes under what the check could not check", "`not_read`", '"what this check could not check"')
+rule("the doc's route table has one line for each row of the tool, with its method and path exactly as the tool gives them",
+     "route table", "each row", f"`{OWN}`", "`method`", "`path`", "exactly")
+
 # The push, the attachment, the findings, the evidence and the result
 rule("push the doc with git_push, and keep its ok, branch, commit and dryRun", "domino_git_push", "`ok`", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
@@ -211,10 +238,11 @@ rule("a failed or denied call: go on with the other steps, and name it under wha
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_write_bundle_attachment",
+order = ["domino_get_bundle", "domino_get_policy", OWN, "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check("the checklist's tools come in order: bundle and policy, push, attachment, findings, evidence, result",
+check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN} (before the writes), push, attachment, "
+      "findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
@@ -242,6 +270,9 @@ irule("say what it could not check, in the doc and in the result", "could not ch
 irule("nobody answers an event task: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
 irule("the checklist's writes are the task's work: no asking first", "push", "attachment", "findings", "evidence", "without asking")
 irule("end with report_result, once, last, with the skill's four lines on top", "domino_report_result", "once", "last", "four lines")
+irule(f"call the own tool {OWN} yourself, once, as the checklist says: the doc's route table comes from its rows", OWN,
+      "yourself", "once", "route table", "rows")
+irule("...when it fails, read the routes from the code, and the check goes on", OWN, "fails", "from the code", "goes on")
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
@@ -253,6 +284,33 @@ check("the skill and the instructions name the checklist's Domino tools, and no 
 bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait_job|git_push|write_[a-z_]+|report_result)\(",
                              skill + instructions)))
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
+owns = set(re.findall(r"\bown_[a-z_]+", skill + instructions))
+check(f"they name one own tool, {OWN}: own_ and the name of the function with @tool in {TOOL}", owns == {OWN}, sorted(owns))
+
+# ------------------------------------------------------------------------------------------------------------------ the own tool
+# tools/route_table.py (spec #459, decision 4): a function with @tool from domino_agent. The service's own tool reader reads it in
+# full below (with AGENT_SERVICE_REPO), and the unit test next to definition.md checks what it gives. This part checks what neither
+# of them does: the tool uses the standard library only, and never imports or runs the App's code (it parses it with ast).
+try:
+    tree = ast.parse(tool_file)
+except SyntaxError as e:
+    tree = ast.Module(body=[], type_ignores=[])
+    check(f"{TOOL} is valid Python", False, e)
+marked = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+          and any(ast.unparse(d) in ("tool", "domino_agent.tool") for d in n.decorator_list)]
+check(f"{TOOL} has one own tool, {TOOL_NAME}, with one argument, folder (a str): the agent sees it as {OWN}",
+      [(n.name, [(a.arg, ast.unparse(a.annotation) if a.annotation else None) for a in n.args.args]) for n in marked]
+      == [(TOOL_NAME, [("folder", "str")])], [ast.unparse(n.args) for n in marked])
+imported = sorted({(n.module or "") if isinstance(n, ast.ImportFrom) else a.name for n in ast.walk(tree)
+                   if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names})
+tops = {m.split(".")[0] for m in imported}
+RUNS = {"subprocess", "importlib", "runpy", "multiprocessing", "ctypes"}   # modules that import or run other code
+check("...it imports only the standard library and domino_agent, and no module that imports or runs other code",
+      tops <= (set(sys.stdlib_module_names) | {"domino_agent"}) - RUNS, imported)
+runs_code = sorted({ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+                   & {"exec", "eval", "compile", "__import__", "os.system", "os.popen"})
+check("...and it calls no exec, eval, compile, __import__, os.system or os.popen: it parses the App's code with ast.parse",
+      not runs_code and "ast.parse" in tool_file, runs_code)
 
 # ------------------------------------------------------------------------------------------------- the event subscription's file
 # subscriptions/bundle-enters-validation.md (domino-agent-service ADR 0049, ticket #398): `domino-agent deploy` (0.4.0 or later)
@@ -358,6 +416,49 @@ rrule("...and pushes for real, else the push is a dry run and the doc isn't atta
 rrule("the demo project's default branch has the shared rules", "default branch", "governance/readme.md",
       "governance/validation-doc.md")
 rrule("how to run this check", f"python tests/{Path(__file__).name}")
+brule = shared.rules("the folder's README says", readme, units=shared.blocks)   # one paragraph, list item or table row says it
+brule(f"its file table names the own tool's file, {TOOL}, and deploy uploads it", f"| `{TOOL}` |", "| yes |")
+brule(f"...and the own tool's unit test, {UNIT_TEST}, which deploy does not upload", f"| `{UNIT_TEST}` |", "| no |")
+check('the folder\'s README has the section "Its own tool"', "\n## Its own tool\n" in readme)
+brule(f"the agent sees the own tool as {OWN}, a function with @tool from domino_agent", f"`{OWN}`", "`@tool`", "`domino_agent`")
+brule("...it uses the standard library only (ast), and never imports or runs the App's code", "standard library", "`ast`",
+      "never imports or runs")
+brule("...its argument is the folder of the App's Python code, relative to the project folder", "`folder`",
+      "relative to the project folder", "`case_server`")
+brule("...each row: the kind, the method, the path, the handler with its file and line, the identity and the writes", "row",
+      "method", "path", "handler", "file and line", "`reads_identity`", "`changes_state`")
+brule("...not_read: each file that is not valid Python, and each decorator that the tool does not know", "`not_read`",
+      "not valid python", "decorator")
+brule("the main agent calls it once, itself, and the doc's route table comes from its rows", "once", "itself", "route table",
+      "rows")
+brule("...when the call fails, the agent reads the routes from the code, and that alone does not make the Verdict could not check",
+      "fails", "from the code", "alone", "`could not check`")
+brule("the unit test runs in the folder with python -m unittest", f"cd {PATH}", "python -m unittest")
+brule("...it needs the domino-agent package or a domino-agent-service checkout on PYTHONPATH, and no network",
+      "`domino-agent`", "`pythonpath`", "no network")
+brule("...its run writes __pycache__/, which the repo's .gitignore ignores, else deploy refuses the folder", "`__pycache__/`",
+      "`.gitignore`", "refuses")
+
+# --------------------------------------------------------------------------------------------- the own tool's unit test
+# test_route_table.py, as the README says to run it (python -m unittest, in the folder). It needs domino_agent: the domino-agent
+# package of this Python, or the package of the AGENT_SERVICE_REPO checkout. -B: no __pycache__ (the folder can be read only).
+SERVICE_REPO = os.environ.get("AGENT_SERVICE_REPO", "").strip()
+env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+package = importlib.util.find_spec("domino_agent") is not None
+if not package and SERVICE_REPO and (Path(SERVICE_REPO).expanduser() / "domino_agent" / "__init__.py").is_file():
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(Path(SERVICE_REPO).expanduser().resolve()), env.get("PYTHONPATH")) if p)
+    package = True
+if not package:
+    print("SKIP: this Python has no domino_agent (no domino-agent package and no AGENT_SERVICE_REPO), so the own tool's unit test, "
+          f"{UNIT_TEST}, did not run ({PATH}/README.md, \"Its unit test\")", flush=True)
+elif UNIT_TEST in every:
+    ran = subprocess.run([sys.executable, "-B", "-m", "unittest", "-v"], cwd=FOLDER, env=env, capture_output=True, text=True,
+                         timeout=120)
+    count = re.search(r"^Ran (\d+) tests? in", ran.stderr, re.M)
+    told = [ln for ln in ran.stderr.splitlines() if ln.startswith(("FAIL:", "ERROR:", "Ran ", "OK", "FAILED"))]
+    check(f"the own tool's unit test passes ({UNIT_TEST}, python -m unittest in the folder): on the App's code, the demo branch's "
+          "POST /upload and small sample files", ran.returncode == 0 and count and int(count.group(1)) > 0
+          and ran.stderr.rstrip().endswith("OK"), told or ran.stderr[-600:])
 check(f"governance/README.md (the shared rules, the hub of the three checks) names this folder, {PATH}/",
       f"`{PATH}/`" in text(ROOT / "governance" / "README.md"))
 

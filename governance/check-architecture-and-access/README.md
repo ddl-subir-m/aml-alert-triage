@@ -17,6 +17,8 @@ doc template) are on [governance/README.md](../README.md).
 | `instructions.md` | The instructions: the check's rules. They become the agent's system prompt. | Yes |
 | `skills/architecture-and-access/SKILL.md` | The checklist, an own skill: the steps from the bundle to the filled evidence item, with the tool of each step. | Yes |
 | `subscriptions/bundle-enters-validation.md` | The event subscription: its event and filter on top, its instruction below them. The file name is its name. | Yes |
+| `tools/route_table.py` | The own tool `route_table`: the table of the ways into the App, from the App's code. The agent sees it as `own_route_table`. | Yes |
+| `test_route_table.py` | The own tool's unit test. It is next to `definition.md`, not in `tools/`, so deploy does not upload it. | No |
 | `README.md` | This page. | No |
 
 The agent's title, "Architecture and access", is the check's name in `governance/checks.json`. The scripted check "Validation
@@ -30,12 +32,14 @@ The checklist's steps, in order:
    field (Verdict, Highest severity, Summary, Doc location) by its label.
    It reads the Intake values that the analyst filled with `domino_get_policy`: each filled field has its value in
    `result.artifactContent`. The Intake's Users and Data class help it pick the severity of an access finding. It does not judge the data class.
-2. It reads the App's code, its start script and its requirements. It finds who can call each route and what it changes, which
+2. It calls its own tool `own_route_table` once, for the table of the App's routes and MCP tools (below, "Its own tool"). Then it
+   reads the App's code, its start script and its requirements. It finds who can call each route and what it changes, which
    identity each write records, the tech stack, the design, and each dependency with how it is pinned and installed.
 3. It sorts each problem into a real finding (with a severity, S0 to S3) or a false hit (with the reason). Then it picks the Verdict
    and the Highest severity by the shared rules.
 4. It writes the doc from `governance/validation-doc.md`: the shared top part and its own middle part, "Architecture and access".
-   The doc's file on the task branch is `docs/validation/architecture-and-access-<bundleId>.md`.
+   The doc's file on the task branch is `docs/validation/architecture-and-access-<bundleId>.md`. The route table of its
+   Architecture section comes from the rows of `own_route_table`.
 5. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
 6. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
    (`domino_write_bundle_attachment`).
@@ -55,6 +59,54 @@ Where it can't do the whole job, it says so under "What this check could not che
 - **The App version's commit.** An event task reads the demo project's default branch, not the commit of the App version under
   review.
 - **What only the running App shows.** The Apps proxy, the identity headers, and who can open the App (its Domino access setting).
+
+## Its own tool
+
+`tools/route_table.py` is the agent's own tool `route_table`: a Python function with `@tool` from `domino_agent`
+(domino-agent-service's `docs/write-an-agent-folder.md`, "Your own tools"). The agent sees it as `own_route_table`. It uses the
+standard library only (`ast`): it parses the App's code, and never imports or runs it. `definition.md` has no list of own tools:
+the folder `tools/` is the switch.
+
+- Its argument, `folder`: the folder of the App's Python code, relative to the project folder (for this App, `case_server`).
+- Its result: `files` (the files that it read), `rows` and `not_read`. For this App it is about 2 KB, well under the 51 KB of a
+  result that the model sees.
+- Each row is one way into the App: each MCP tool (`@mcp.tool`, a POST to the MCP endpoint, with the path
+  `/mcp (tool: <name>)`) and each custom route (`@mcp.custom_route`). A row has the kind, the method, the path, the handler with
+  its file and line, `reads_identity` and `changes_state`, with the file and line of the evidence (`identity_at`, `changes_at`).
+- `reads_identity`: the handler, or a function of the same file that it calls, has the text `domino-username` (the header with
+  the caller's identity).
+- `changes_state`: the handler, or a function of the App's code that it calls, has a write: a SQL text that writes, `open` to
+  write, a call that writes a file or a folder, or a `global` statement. The tool's docstring (its description for the model) has
+  the full rule. `false` means only that the rule found no write.
+- `not_read`: each file that is not valid Python, and each decorator that the tool does not know. The doc names each one under
+  "What this check could not check".
+
+On the App's code of `main`, it gives 5 MCP tools (`get_alert`, `get_customer_profile`, `get_transactions`, `close_alert`,
+`escalate_to_sar`) and 2 custom routes (`POST /reset`, `GET /`). `close_alert` and `escalate_to_sar` read the identity and change
+state. `POST /reset` reads no identity and changes state. `GET /` and the three `get_` tools change nothing.
+
+In each task, the main agent calls it once, itself, in step 2 of the checklist, and the doc's route table comes from its rows. When
+the call fails (an exception or a timeout), the agent reads the routes from the code, and names the failed call under "What this
+check could not check". That alone does not make the Verdict `could not check`. The task page shows the call with the mark "own
+tool", its argument and its result, and the Activity log has a row for it, `own_route_table`.
+
+### Its unit test
+
+`test_route_table.py` calls the tool as a plain function: `@tool` gives back the function as it is. It needs the `domino-agent`
+package (`pip install domino-agent`), or a domino-agent-service checkout on `PYTHONPATH`: no agent service and no network. Run it in
+this folder:
+
+```
+cd governance/check-architecture-and-access
+python -m unittest
+```
+
+It reads the App's code (on `main`: the 5 MCP tools and the 2 custom routes, each with its handler, file and line), a sample of the
+demo branch's `POST /upload` (no identity, changes nothing), and small sample files: a handler that reads the identity through a
+helper, a decorator that the tool does not know, a file that is not valid Python, and the writes of the rule.
+
+The run writes `__pycache__/`, and the repo's `.gitignore` ignores it. Else deploy refuses the folder, because it has changes that
+are not committed.
 
 ## Its subscription
 
@@ -102,7 +154,7 @@ The access rows are in `definition.md`. An edit in the wizard is a commit to the
 | Resources not attached to the task | No access | The check works only on the task's project and the event's bundle. |
 
 The tools: Run a Job off (no scan, so the agent has no `domino_run_job`), Git push on (the doc leaves the Job only through the push),
-no subagents. `on-error: fail`: nobody answers an event task, so a denied call ends the task with a report, and never waits for a
+no subagents. Its own tool, `own_route_table`, comes from the folder `tools/`, not from a setting. `on-error: fail`: nobody answers an event task, so a denied call ends the task with a report, and never waits for a
 person.
 
 ## Deploy it
