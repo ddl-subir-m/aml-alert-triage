@@ -731,11 +731,15 @@ python tests/check_validation_policy.py
 One line per case, with a non-zero exit code on any failure. It needs PyYAML (`pip install pyyaml`) to read the policy. It checks
 `checks.json` against the spec, the three stages, the evidence items and their fields against `checks.json`, the scripted check's
 command and parameters, the placeholders, and that the file has no host name and no Domino ID. Then it runs the scripted check with
-`python -S` against a fake App on 127.0.0.1 (in the shape of the agent service's task search) and a fake Domino API proxy: three
-rows and the count line, a check with no task, a running, waiting, queued, failed or cancelled task, earlier tasks, another agent's
-task, no merged verdict, another `checks.json` next to a copy of the script, `newest`, the token (sent, never printed), the output
-file, only GET requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App
-URL that isn't https. Nothing calls a Domino host. The live run is domino-agent-service #397.
+`python -S` against a fake App on 127.0.0.1 (in the shape of the agent service's task search) and a fake Domino API proxy. Its cases:
+
+- three rows and the count line, with no merged verdict, and a check with no task;
+- a running, waiting, queued, failed or cancelled task, earlier tasks, and another agent's task;
+- another `checks.json` next to a copy of the script, and the bundle ID `newest`;
+- the token (sent, never printed), the output file, and only GET requests;
+- each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App URL that isn't https.
+
+Nothing calls a Domino host. The live run is domino-agent-service #397.
 
 ## Live check
 
