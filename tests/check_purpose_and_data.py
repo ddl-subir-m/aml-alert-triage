@@ -193,4 +193,135 @@ bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|git_
                              skill + instructions)))
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
+# ---------------------------------------------------------------------------------------------------- the reference settings
+# agent.json: the agent as the wizard's Save sends it (POST /api/agents: the draft of the service's static/js/pages/wizard.js), with
+# placeholders for the names and IDs of a deployment. Its values are #388 decision 8's. compare.py fills it and compares it.
+MODEL = "google/gemini-3.8-flash"   # not sonnet: Anthropic's cyber safeguards refuse this work (domino-agent-service#270)
+LIMITS = {"maxRuntimeMin": 45, "maxTurns": 120, "idleWaitMin": 0}   # check 2's (#260's folder validator: 45 minutes, 120 turns, no wait)
+SA, ANALYST, APPROVER = "__SERVICE_ACCOUNT__", "__ANALYST__", "__APPROVER__"
+try:
+    ref = json.loads(every.get("agent.json", ""))
+except ValueError as e:
+    ref = {"error": str(e)}
+ref = ref if isinstance(ref, dict) else {}
+g = ref.get("guardrails") or {}
+check("agent.json is the agent's settings, in the order of the wizard's steps, with no other key",
+      list(ref) == ["lane", "name", "description", "tags", "scope", "inputs", "model", "execution", "systemPrompt", "directTrigger",
+                    "skills", "completion", "onError", "identity", "access", "guardrails"], list(ref))
+check(f"its title is the check's name, {NAME!r}: Validation status finds the check's task by its agent's name",
+      ref.get("name") == NAME and ref.get("description"), (ref.get("name"), ref.get("description")))
+check("it is a harness agent (the card Domino Agent Harness), for any project, with a required project input",
+      ref.get("lane") == "harness" and ref.get("scope") == {"type": "global"} and ref.get("tags") == []
+      and ref.get("inputs") == [{"name": "project", "type": "project", "required": True, "multiple": False, "description": ""}],
+      {k: ref.get(k) for k in ("lane", "scope", "tags", "inputs")})
+check(f"its model is the LLM Gateway alias {MODEL}, with the grants of the identity that it acts as",
+      ref.get("model") == {"source": "gateway", "models": [MODEL], "access": "acting"}, ref.get("model"))
+check("its Environment is the harness's, by name, and its limits are check 2's: 45 minutes, 120 turns, no wait for an answer",
+      ref.get("execution") == {"environment": {"name": "Domino Agent Runtime (opencode)"}, **LIMITS}, ref.get("execution"))
+check2 = ROOT / "governance" / "check-architecture-and-access" / "definition.md"
+if check2.is_file():
+    got2 = {k: int(m.group(1)) if (m := re.search(rf"^  {k}: (\d+)", text(check2), re.M)) else None
+            for k in ("minutes", "turns", "wait-minutes")}
+    check("...the same limits as check 2's definition.md", got2 == {"minutes": 45, "turns": 120, "wait-minutes": 0}, got2)
+else:
+    print("SKIP: check 2's definition.md is not on this branch, so the limits were compared with #260's folder validator only",
+          flush=True)
+check("its system prompt is instructions.md (a placeholder that compare.py fills)", ref.get("systemPrompt") == "__INSTRUCTIONS__",
+      ref.get("systemPrompt"))
+check("its skill is the store skill purpose-and-data, as the wizard's picker names it (its ID and version come from the store)",
+      ref.get("skills") == [{"id": "__SKILL_ID__", "name": "purpose-and-data", "version": "__SKILL_VERSION__"}], ref.get("skills"))
+check("a person closes the task, a failure ends it with a report (Error recovery: Fail and report), with no plan and no check-ins",
+      ref.get("completion") == "review" and ref.get("onError") == "fail" and g.get("planFirst") is False
+      and g.get("checkInOften") is False, (ref.get("completion"), ref.get("onError"), g.get("planFirst"), g.get("checkInOften")))
+check("no suggested prompt and no notification for a task started by hand",
+      ref.get("directTrigger") == {"starterPrompts": [], "writeBack": []}, ref.get("directTrigger"))
+check("it acts as a service account (a placeholder: no user name in the public repo)",
+      ref.get("identity") == {"mode": "service_account", "serviceAccount": {"userName": SA}}, ref.get("identity"))
+check("it is shared with specific people: the analyst who moves the stage, and the approver as an editor (to read its tasks)",
+      ref.get("access") == {"mode": "restricted", "users": [ANALYST], "editors": [APPROVER]}, ref.get("access"))
+check("its tools: Shell on, Web fetch off, Subagents off, Start Domino jobs off (Run a Job off), Git push on",
+      g.get("tools") == {"bash": True, "web": False, "subagents": False, "jobs": False, "push": True}, g.get("tools"))
+check("its Resource access: Project files Read & write (the push needs it), Project datasets No access, Other resources attached "
+      "to the task Read & write (the event's bundle), Resources not attached to the task No access",
+      g.get("access") == {"project": "write", "data": "none", "inputs": {}, "named": "write", "other": "none"}, g.get("access"))
+check("its outbound traffic: Domino services only", g.get("network") == {"mode": "domino", "domains": []}, g.get("network"))
+check("guardrails has the wizard's five parts and no other", sorted(g) == ["access", "checkInOften", "network", "planFirst", "tools"],
+      sorted(g))
+
+# ------------------------------------------------------------------------------------------------------------- the compare helper
+# compare.py runs with the stdlib only, as the live script runs it: `fill` gives the body to send, `diff` compares a read-back.
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+HELPER = FOLDER / "compare.py"
+VALUES = {"__SERVICE_ACCOUNT__": "sa-one", "__ANALYST__": "ana", "__APPROVER__": "abe", "__SKILL_ID__": "skl_one",
+          "__SKILL_VERSION__": "0.1.0", "__DEMO_PROJECT_ID__": "proj-one"}
+SETS = [x for k, v in VALUES.items() for x in ("--set", f"{k}={v}")]
+work = Path(tempfile.mkdtemp(prefix="check-purpose-and-data-"))
+atexit.register(shutil.rmtree, work, ignore_errors=True)
+
+
+def helper(*args):
+    """compare.py with `args`, as `python3 -I -S` runs it (no site-packages, no current folder). -> (exit code, stdout + stderr)"""
+    p = subprocess.run([sys.executable, "-I", "-S", str(HELPER), *args], capture_output=True, text=True, timeout=60, cwd=work)
+    return p.returncode, p.stdout + p.stderr
+
+
+code, out = helper("fill", "agent.json", *SETS)
+try:
+    body = json.loads(out) if code == 0 else {}
+except ValueError:
+    body = {}
+check("compare.py fill agent.json gives the body to send, with each placeholder filled and the system prompt from instructions.md",
+      code == 0 and "__" not in json.dumps(body) and body.get("systemPrompt") == instructions.strip()
+      and (body.get("identity") or {}).get("serviceAccount") == {"userName": "sa-one"}
+      and body.get("access") == {"mode": "restricted", "users": ["ana"], "editors": ["abe"]}
+      and body.get("skills") == [{"id": "skl_one", "name": "purpose-and-data", "version": "0.1.0"}], (code, out[:400]))
+code, out = helper("fill", "agent.json", *SETS[:-4])
+check("...and refuses, naming it, when a placeholder has no value", code != 0 and "__SKILL_VERSION__" in out and "{" not in out,
+      (code, out[:300]))
+
+
+def stored(b):
+    """`b` as GET /api/agents/{id} answers for it: the service's app.py _agent_summary adds its own keys, and a stored agent has the
+    values of the deployment (the IDs, the hardware tier, the owner, the credential's record)."""
+    s = json.loads(json.dumps(b))
+    s.update(id="agt_x", owner={"userName": "someone"}, createdAt="2026-11-19T00:00:00Z", enabled=True, harness={"id": "domino-agent"},
+             identityCredential={"status": "active", "account": "sa-one", "last4": "abcd"}, stats={"tasks": 0}, canUse=True)
+    s["identity"]["serviceAccount"].update(id="u-1", idpId="idp-1")
+    s["execution"].update(hardwareTier="small-k8s", environment={"id": "env-1", "name": "Domino Agent Runtime (opencode)"})
+    s["skills"][0]["version"] = "0.1.0"
+    s["directTrigger"] = {"id": "trg_dir_agt_x", "enabled": True, "starterPrompts": [], "defaultResources": [], "defaultRuntime": None,
+                          "writeBack": []}
+    s["systemPrompt"] = instructions.strip() + "\n"   # a paste can end with a new line
+    return s
+
+
+def diff(reference, got):
+    path = work / "read-back.json"
+    path.write_text(json.dumps(got))
+    return helper("diff", reference, str(path), *SETS)
+
+
+if body:
+    code, out = diff("agent.json", stored(body))
+    check("compare.py diff agent.json <read-back> finds no difference in the agent as the service stores it: it compares only "
+          "the keys of the reference (no ID, no owner, no hardware tier), and text with no space at its ends",
+          code == 0 and out.strip().splitlines()[-1:] == ["Same as agent.json."], (code, out[:400]))
+    wrong = stored(body)
+    wrong["guardrails"]["tools"]["subagents"] = True   # the wizard's default for Subagents is on
+    wrong["access"]["editors"] = []
+    code, out = diff("agent.json", wrong)
+    check("...and names each setting that differs, with the wanted and the stored value, and exits 1",
+          code == 1 and "guardrails.tools.subagents: wants false, has true" in out and "access.editors: wants [\"abe\"], has []" in out,
+          (code, out[:400]))
+    gone = stored(body)
+    del gone["guardrails"]["tools"]["push"]
+    gone["skills"] = []
+    code, out = diff("agent.json", gone)
+    check("...also a setting that is missing, and a list of another length",
+          code == 1 and "guardrails.tools.push: missing" in out and "skills: wants 1 item, has 0" in out, (code, out[:400]))
+
 done()
