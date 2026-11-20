@@ -352,6 +352,20 @@ check("governance/README.md has no rule of spec #260 left: no Critical vulns, no
 SCALE = {"S0": "critical", "S1": "high", "S2": "medium", "S3": "low"}
 rows = dict(re.findall(r"^\| (S\d) \((\w+)\) \|", rules, re.M))
 check("governance/README.md has the severity scale, S0 to S3, with write_governance_finding's words", rows == SCALE, rows)
+# The examples that the user agreed (spec #388, Implementation Decision 7), so that "S1" means the same in each check.
+scale = section(rules, "The severity scale")
+examples = table(scale[scale.find("### Examples"):]) if "### Examples" in scale else []
+check("the severity scale has examples for each of the three checks, and for no other", sorted({r[0] for r in examples}) == sorted(CHECKS),
+      sorted({r[0] for r in examples}))
+AGREED = [("Purpose and data", "S1", ("an intake data class lower than the data that the app is built to hold",)),
+          ("Architecture and access", "S1", ("`post /reset`", "anyone who can open the app can delete all state")),
+          ("Architecture and access", "S2", ("a write with no `domino-username`", 'recorded as "no identity"')),
+          ("Architecture and access", "S2", ("`mcp` installed from pypi at app start",)),
+          ("Vulnerability scan", "S0", ("a known vulnerability that a caller can reach through the app's code",))]
+for name, severity, said in AGREED:
+    hit = [r for r in examples if len(r) > 2 and r[0] == name and all(w in one_line(r[1]).lower() for w in said)]
+    check(f"the scale's example for {name}: {said[0]} is {severity}", [r[2] for r in hit] == [severity], hit or examples)
+check("each example's severity is on the scale", examples and all(len(r) > 2 and r[2] in SCALE for r in examples), examples)
 flat = " ".join(rules.split())
 check("governance/README.md says that each finding's name starts with the validator's short name, [folder] or [LangGraph]",
       "[folder]" in flat and "[LangGraph]" in flat and "starts with" in flat, flat[:300])

@@ -90,14 +90,27 @@ python governance/scan.py --out /tmp/governance-scan
 
 ## The severity scale
 
-The four severities that the gateway tool `write_governance_finding` takes.
+The four severities that the gateway tool `write_governance_finding` takes. One scale for all three checks, so that "S1" means the
+same in each check.
 
 | Severity | Use it for |
 |---|---|
 | S0 (critical) | A caller can run code on the App's machine. Or a known vulnerability (a CVE, PYSEC or GHSA ID) that a caller can reach through the App's code. |
-| S1 (high) | A caller can wipe, change or read data that they must not, with no code execution. |
-| S2 (medium) | A weakness that can do harm only together with another flaw, an insider or a bad release of a dependency. |
-| S3 (low) | A hardening step or a gap in a record, with no direct harm. |
+| S1 (high) | A caller can wipe, change or read data that they must not, with no code execution. Or the App holds data of a higher class than its Intake says, so the data gets less protection than it needs. |
+| S2 (medium) | A weakness that can do harm only together with another flaw, an insider or a bad release of a dependency. Or a record that can't say who made a change. |
+| S3 (low) | A hardening step or a gap in a record or a document, with no direct harm. |
+
+### Examples for each check
+
+The examples show how to pick a severity. They are not a list of the expected findings.
+
+| Check | Example | Severity |
+|---|---|---|
+| Purpose and data | An Intake data class lower than the data that the App is built to hold | S1 |
+| Architecture and access | `POST /reset`: anyone who can open the App can delete all state | S1 |
+| Architecture and access | A write with no `domino-username`, recorded as "no identity" | S2 |
+| Architecture and access | `mcp` installed from PyPI at App start | S2 |
+| Vulnerability scan | A known vulnerability that a caller can reach through the App's code | S0 |
 
 ## Finding names
 
