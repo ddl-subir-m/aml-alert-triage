@@ -1,17 +1,20 @@
 """The scripted check "Validation status" of the App deployment policy (governance/app-deployment-policy.yaml, domino-agent-service
-spec #260). An approver clicks Run on the bundle's Validation stage, and Domino runs this file as a Job, as that person:
+specs #260 and #388). An approver clicks Run on the bundle's Validation stage, and Domino runs this file as a Job, as that person:
 
   governance/validation_status.py <bundle ID> <the agent service App's own URL>
 
-It finds the validators' tasks with the App's task search (GET /api/tasks, q = the bundle ID, event trigger), as the person who
-clicked (the Job's token), and prints one block for each validator: the agent, the task, its status, its verdict, its critical vulns,
-its doc's location and the task's link. The bundle ID "newest" (the policy's default) shows the newest event task of each validator
-in the Job's project instead. Its lines go to stdout (the Job's log) and to validation_status.txt (the check's output, outputTypes
-txt). It sends only GET requests to the App: it never starts or changes an agent. It prints no token, and it sends the token only to
-an https URL.
+It finds the checks' tasks with the App's task search (GET /api/tasks, q = the bundle ID, event trigger), as the person who clicked
+(the Job's token). It prints a table with one row for each check: its verdict, its highest severity, and its task's key and status.
+Below each row are the task's title, the doc location and the task's link. Then one count line counts the verdicts, for example
+"2 of 3 say do not approve". There is no merged verdict: the checks advise, and the approver decides.
 
-A validator is found by its agent's name (VALIDATORS). Its verdict, critical vulns and doc location are lines of its result (the
-task's summary): "Verdict: ...", "Critical vulns: ...", "Doc location: ..." (Markdown aside).
+The bundle ID "newest" (the policy's default) shows the newest event task of each check in the Job's project instead. Its lines go
+to stdout (the Job's log) and to validation_status.txt (the check's output, outputTypes txt). It sends only GET requests to the App:
+it never starts or changes an agent. It prints no token, and it sends the token only to an https URL.
+
+The checks and the labels come from checks.json, next to this file: the one source of the names and labels. A check is found by its
+agent's name, which is the check's name. Its verdict, highest severity and doc location are lines of its result (the task's
+summary): "Verdict: ...", "Highest severity: ...", "Doc location: ..." (Markdown aside).
 """
 import base64
 import json
@@ -21,15 +24,18 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import namedtuple
 
-# The validators, in the order of the Validation stage: the evidence item's name, and the agent's name (#267 and #268).
-VALIDATORS = (("Validation (agent folder)", "App validator (agent folder)"),
-              ("Validation (LangGraph)", "App validator (LangGraph)"))
-LABELS = ("Verdict", "Critical vulns", "Doc location")   # the first lines of each validator's result: "<label>: <value>". The one
-# source: the LangGraph graph writes its result with these, and the agent folder's checklist names them (its check compares).
-WIDTH = 16   # the label column: "critical vulns: " is the longest label
+CHECKS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checks.json")
+WIDTH = 15   # the label column of the lines below a row: "earlier tasks: " is the longest label
 OUTPUT = "validation_status.txt"
 LINES = []   # every line said, for the output file
+FINISHED = ("review", "done")     # the task ended with its result
+ENDED = ("failed", "cancelled")   # the task ended with no result
+# One check's row. cells: [check, verdict, highest severity, task]. below: the lines below it, as (label, value). counted: what the count
+# line counts for it, as (kind, value): ("verdict", <the verdict>), ("no verdict yet", <status>), ("no verdict", <why>) or
+# ("not started", None).
+Row = namedtuple("Row", "cells below counted")
 
 
 def say(line=""):
@@ -37,8 +43,15 @@ def say(line=""):
     print(line, flush=True)
 
 
-def field(label, value):
-    say(f"  {label + ':':<{WIDTH}}{value}")
+def load_checks():
+    """checks.json: the checks' names (in the policy's order), the four fields' labels, and the policy's verdicts."""
+    with open(CHECKS) as f:
+        source = json.load(f)
+    names = [c["name"] for c in source["checks"]]
+    fields, verdicts = source["fields"], source["verdicts"]
+    if not names or not all(isinstance(x, str) and x for x in names + [fields["verdict"], fields["severity"], fields["doc"]]):
+        raise ValueError("a check's name or a field's label is missing")
+    return names, fields, verdicts
 
 
 def token():
@@ -94,46 +107,74 @@ def get_tasks(app, query, tok):
     return tasks
 
 
-def result_lines(summary):
-    """The verdict, critical vulns and doc location lines of a validator's result (its task's summary), Markdown aside."""
+def result_lines(summary, labels):
+    """The lines of a check's result (its task's summary) with these labels, Markdown aside: {label in lower case: value}."""
     found = {}
     for line in (summary or "").splitlines():   # "- **Verdict:** approve", "_Doc location_: `a_b`": marks around, never inside
-        m = re.match(rf"[\s>#*_`-]*({'|'.join(LABELS)})[*_`]*\s*:(.+)$", line, re.I)
+        m = re.match(rf"[\s>#*_`-]*({'|'.join(map(re.escape, labels))})[*_`]*\s*:(.+)$", line, re.I)
         value = m.group(2).strip(" \t*_`") if m else ""
         if value and m.group(1).lower() not in found:
             found[m.group(1).lower()] = value
     return found
 
 
-ENDED = {"failed": "the task failed", "cancelled": "the task was cancelled"}
-
-
-def show(app, title, agent, tasks, where):
-    """One validator's block. `tasks` are its tasks, newest first: the newest is the validation; a new stage move starts a new one."""
-    say(title)
-    field("agent", agent)
+def row(app, name, tasks, fields, where):
+    """One check's Row: its cells, the lines below it, and what the count line counts for it. `tasks` are its tasks, newest first:
+    the newest is the validation; a new stage move starts a new one."""
     if not tasks:
-        field("status", "not started")
-        field("note", f"no task of this agent {where} that you may read (only its owner and editors see all its tasks)")
-        say()
-        return
+        note = f"no task of this agent {where} that you may read (only its owner and editors see all its tasks)"
+        return Row([name, "-", "-", "not started"], [("note", note)], ("not started", None))
     t, status = tasks[0], tasks[0].get("status") or "unknown"
-    field("task", f"{t.get('key')}  {t.get('title')}")
-    field("status", f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status)
-    got = result_lines(t.get("summary"))
+    shown = f"{status} ({t['waitingReason']})" if status == "waiting" and t.get("waitingReason") else status
+    labels = [fields["verdict"], fields["severity"], fields["doc"]]
+    got = result_lines(t.get("summary"), labels)
+    if status in FINISHED:
+        verdict, severity, doc = (got.get(x.lower(), "not in the result") for x in labels)
+        kind = ("verdict", verdict) if fields["verdict"].lower() in got else ("no verdict", "not in its result")
+    elif status in ENDED:
+        verdict, severity, doc = "-", "-", "-"
+        kind = ("no verdict", status)
+    else:
+        verdict, severity, doc = "not yet", "not yet", "not yet"
+        kind = ("no verdict yet", status)
+    below = [("title", t.get("title") or "")]
     if status in ENDED:
-        field("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none")
-    for label in (x.lower() for x in LABELS):
-        if status in ("review", "done"):
-            field(label, got.get(label, "not in the task's result"))
-        elif status in ENDED:
-            field(label, f"none ({ENDED[status]})")
-        else:
-            field(label, f"not yet (the task is {status})")
-    field("task link", f"{app}/#/tasks/{t.get('id')}")
+        below.append(("result", (t.get("summary") or "").strip().split("\n")[0][:200] or "none"))
+    below += [("doc location", doc), ("task link", f"{app}/#/tasks/{t.get('id')}")]
     if len(tasks) > 1:
-        field("earlier tasks", ", ".join(f"{e.get('key')} ({e.get('status')})" for e in tasks[1:]))
-    say()
+        below.append(("earlier tasks", ", ".join(f"{e.get('key')} ({e.get('status')})" for e in tasks[1:])))
+    return Row([name, verdict, severity, f"{t.get('key')}, {shown}"], below, kind)
+
+
+def count(kinds, verdicts):
+    """The count line: how many checks say each verdict (the policy's verdicts in its order, then any other as the check wrote it),
+    how many have no verdict yet (their tasks still run), how many have none (their tasks ended without one), and how many are not
+    started. It merges nothing: each check is counted once, as it is."""
+    n, said, policy = len(kinds), {}, {v.lower(): v for v in verdicts}
+    for kind, value in kinds:
+        if kind == "verdict":
+            key = value.strip().rstrip(".").strip().lower()
+            said.setdefault(key, [policy.get(key, value), 0])[1] += 1
+    order = [v for v in policy if v in said] + [k for k in said if k not in policy]
+    parts = [f"{said[k][1]} of {n} {'says' if said[k][1] == 1 else 'say'} {said[k][0]}" for k in order]
+    for kind, verb, text in (("no verdict yet", ("has", "have"), "no verdict yet"), ("no verdict", ("has", "have"), "no verdict"),
+                             ("not started", ("is", "are"), "not started")):
+        values = [value for k, value in kinds if k == kind]
+        if values:
+            why = f" ({', '.join(dict.fromkeys(values))})" if kind != "not started" else ""
+            parts.append(f"{len(values)} of {n} {verb[len(values) != 1]} {text}{why}")
+    return ", ".join(parts) + "."
+
+
+def table(rows, fields):
+    """The rows (each a Row) as a table: the cells between | marks, each column as wide as its widest cell, then each row's lines below
+    it."""
+    head = ["Check", fields["verdict"], fields["severity"], "Task"]
+    widths = [max(len(cells[i]) for cells in [head] + [r.cells for r in rows]) for i in range(3)]
+    for cells, below in [(head, [])] + [(r.cells, r.below) for r in rows]:
+        say(" | ".join([f"{c:<{w}}" for c, w in zip(cells, widths)] + [cells[3]]))
+        for label, value in below:
+            say(f"    {label + ':':<{WIDTH}}{value}")
 
 
 def safe_url(app):
@@ -149,10 +190,16 @@ def main(argv):
     if bundle in ("", "newest"):   # the policy's default: no bundle ID typed
         scope = f"project {project}" if project else "any project"
         query, where = {"trigger_type": "event", **({"project": project} if project else {})}, f"in {scope}"
-        say(f"Validation status: no bundle ID given, so the newest validation of each validator in {scope}")
+        say(f"Validation status: no bundle ID given, so the newest validation of each check in {scope}")
     else:
         query, where = {"q": bundle, "trigger_type": "event"}, "names the bundle"
         say(f"Validation status of bundle {bundle}")
+    try:
+        names, fields, verdicts = load_checks()
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        say(f"No checks: {CHECKS} did not give the checks and their labels ({e.__class__.__name__}: {e}). It is in the repo, next "
+            "to this script: ask your governance admin.")
+        return 1
     if not safe_url(app):
         say(f"No App URL: {app!r} is not the agent service App's https URL. The policy's service_url must be the App's own URL "
             "(it ends in /apps-internal/<App ID>): ask your governance admin.")
@@ -171,8 +218,11 @@ def main(argv):
         say(f"App error: {e}")
         return 1
     tasks = sorted(tasks, key=lambda t: t.get("createdAt") or "", reverse=True)   # newest first, as the route sorts them
-    for title, agent in VALIDATORS:
-        show(app, title, agent, [t for t in tasks if t.get("agentName") == agent], where)
+    rows = [row(app, name, [t for t in tasks if t.get("agentName") == name], fields, where) for name in names]
+    table(rows, fields)
+    say()
+    say(count([r.counted for r in rows], verdicts))
+    say("The checks advise. You decide.")
     return 0
 
 

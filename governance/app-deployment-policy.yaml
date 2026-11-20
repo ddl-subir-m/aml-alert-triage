@@ -1,4 +1,6 @@
-# The policy "App deployment policy" (domino-agent-service spec #260): the definition, in Domino's policy YAML.
+# The policy "App deployment policy" (domino-agent-service specs #260 and #388): the definition, in Domino's policy YAML. The
+# Validation stage has one evidence item for each check, and the scripted check "Validation status". The checks' evidence items
+# and their fields' labels and values are those of governance/checks.json.
 #
 # The shape is Domino's policy YAML (docs.domino.ai, Governance, "Policy components"): Domino took a policy in this shape and
 # published it (from Draft to Published). The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
@@ -45,9 +47,11 @@ stages:
                   value: "Restricted"
   - name: Validation
     evidenceSet:
-      - id: Local.validation-agent-folder
-        name: Validation (agent folder)
-        description: The result of the agent folder validator (harness lane, opencode). The validator fills it.
+      - id: Local.validation-purpose-and-data
+        name: "Validation: Purpose and data"
+        description: >-
+          The result of the check Purpose and data: what the App is for and what data it holds, compared with the Intake. The
+          agent Purpose and data fills it.
         definition:
           - artifactType: input
             details:
@@ -56,31 +60,41 @@ stages:
               options:
                 - label: Approve
                   value: "approve"
-                - label: Approve after fixes
-                  value: "approve after fixes"
                 - label: Do not approve
                   value: "do not approve"
+                - label: Could not check
+                  value: "could not check"
           - artifactType: input
             details:
               type: radio
-              label: Critical vulns
+              label: Highest severity
+              helpText: The highest severity of the check's real findings, on the one scale of the three checks. S0 is critical.
               options:
-                - label: "Yes"
-                  value: "yes"
-                - label: "No"
-                  value: "no"
+                - label: S0 (critical)
+                  value: "S0"
+                - label: S1 (high)
+                  value: "S1"
+                - label: S2 (medium)
+                  value: "S2"
+                - label: S3 (low)
+                  value: "S3"
+                - label: None (no real finding)
+                  value: "none"
           - artifactType: input
             details:
               type: textarea
               label: Summary
+              helpText: The verdict's reason, and the real findings by name and severity.
           - artifactType: input
             details:
               type: textinput
               label: Doc location
-              helpText: Where the validation doc is (its branch and commit). The bundle's Report attachment links it.
-      - id: Local.validation-langgraph
-        name: Validation (LangGraph)
-        description: The result of the LangGraph validator (framework lane). The validator fills it.
+              helpText: Where the check's doc is (its branch and commit). The bundle's Report attachment links it.
+      - id: Local.validation-architecture-and-access
+        name: "Validation: Architecture and access"
+        description: >-
+          The result of the check Architecture and access: who can call what, the tech stack, the design and the dependencies. The
+          agent Architecture and access fills it.
         definition:
           - artifactType: input
             details:
@@ -89,33 +103,85 @@ stages:
               options:
                 - label: Approve
                   value: "approve"
-                - label: Approve after fixes
-                  value: "approve after fixes"
                 - label: Do not approve
                   value: "do not approve"
+                - label: Could not check
+                  value: "could not check"
           - artifactType: input
             details:
               type: radio
-              label: Critical vulns
+              label: Highest severity
+              helpText: The highest severity of the check's real findings, on the one scale of the three checks. S0 is critical.
               options:
-                - label: "Yes"
-                  value: "yes"
-                - label: "No"
-                  value: "no"
+                - label: S0 (critical)
+                  value: "S0"
+                - label: S1 (high)
+                  value: "S1"
+                - label: S2 (medium)
+                  value: "S2"
+                - label: S3 (low)
+                  value: "S3"
+                - label: None (no real finding)
+                  value: "none"
           - artifactType: input
             details:
               type: textarea
               label: Summary
+              helpText: The verdict's reason, and the real findings by name and severity.
           - artifactType: input
             details:
               type: textinput
               label: Doc location
-              helpText: Where the validation doc is (its dataset snapshot and file). The bundle's attachment links it.
+              helpText: Where the check's doc is (its branch and commit). The bundle's Report attachment links it.
+      - id: Local.validation-vulnerability-scan
+        name: "Validation: Vulnerability scan"
+        description: >-
+          The result of the check Vulnerability scan: known vulnerabilities in the code and the dependencies. The agent
+          Vulnerability scan fills it.
+        definition:
+          - artifactType: input
+            details:
+              type: radio
+              label: Verdict
+              options:
+                - label: Approve
+                  value: "approve"
+                - label: Do not approve
+                  value: "do not approve"
+                - label: Could not check
+                  value: "could not check"
+          - artifactType: input
+            details:
+              type: radio
+              label: Highest severity
+              helpText: The highest severity of the check's real findings, on the one scale of the three checks. S0 is critical.
+              options:
+                - label: S0 (critical)
+                  value: "S0"
+                - label: S1 (high)
+                  value: "S1"
+                - label: S2 (medium)
+                  value: "S2"
+                - label: S3 (low)
+                  value: "S3"
+                - label: None (no real finding)
+                  value: "none"
+          - artifactType: input
+            details:
+              type: textarea
+              label: Summary
+              helpText: The verdict's reason, and the real findings by name and severity.
+          - artifactType: input
+            details:
+              type: textinput
+              label: Doc location
+              helpText: Where the check's doc is (its dataset snapshot and file). The bundle's attachment links it.
       - id: Local.validation-status
         name: Validation status
         description: >-
-          Click Run to see each validator's task: its status, verdict and doc. The check runs as you, reads the agent service App,
-          and never starts or changes an agent. Type the bundle's ID in bundle_id, or keep newest.
+          Click Run to see one row for each check (its verdict, highest severity, doc and task) and a count of the verdicts. The
+          check runs as you, reads the agent service App, and never starts or changes an agent. Type the bundle's ID in bundle_id,
+          or keep newest.
         definition:
           - artifactType: policyScriptedCheck
             details:

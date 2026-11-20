@@ -1,0 +1,24 @@
+{
+  "lane": "harness",
+  "name": "Purpose and data",
+  "description": "Checks what the App of a governance bundle is for and what data it holds, against the Intake answers, when the bundle moves to the Validation stage. Pushes a doc to its task branch, attaches it, files its findings and fills the evidence item \"Validation: Purpose and data\". Fake data only.",
+  "tags": [],
+  "scope": {"type": "global"},
+  "inputs": [{"name": "project", "type": "project", "required": true, "multiple": false, "description": ""}],
+  "model": {"source": "gateway", "models": ["google/gemini-3.8-flash"], "access": "acting"},
+  "execution": {"environment": {"name": "Domino Agent Runtime (opencode)"}, "maxRuntimeMin": 45, "maxTurns": 120, "idleWaitMin": 0},
+  "systemPrompt": "__INSTRUCTIONS__",
+  "directTrigger": {"starterPrompts": [], "writeBack": []},
+  "skills": [{"id": "__SKILL_ID__", "name": "purpose-and-data", "version": "__SKILL_VERSION__"}],
+  "completion": "review",
+  "onError": "fail",
+  "identity": {"mode": "service_account", "serviceAccount": {"userName": "__SERVICE_ACCOUNT__"}},
+  "access": {"mode": "restricted", "users": ["__ANALYST__"], "editors": ["__APPROVER__"]},
+  "guardrails": {
+    "planFirst": false,
+    "checkInOften": false,
+    "access": {"project": "write", "data": "none", "inputs": {}, "named": "write", "other": "none"},
+    "tools": {"bash": true, "web": false, "subagents": false, "jobs": false, "push": true},
+    "network": {"mode": "domino", "domains": []}
+  }
+}
