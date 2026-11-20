@@ -220,7 +220,7 @@ that none of the server's tools resets the system.
 
 The agent is one definition, `agent/definition.json`, and three entry points: one for each framework. Each entry point is a 1-line
 file that names a ready-made agent of domino-agui, the platform's helper library (domino-agent-service ADR 0030). The repo has no
-other triage code (the LangGraph validator of "The LangGraph validator" has its own graph). The library is on PyPI
+other triage code. The library is on PyPI
 (https://pypi.org/project/domino-agui/). Its source is on GitHub (https://github.com/ddl-subir-m/domino-agui).
 
 | Variant | Framework (as the wizard names it) | File: its one line | Entry point |
@@ -511,8 +511,8 @@ python tests/check_registration.py
 ```
 
 A stdlib script, one line per case, with a non-zero exit code on any failure. It checks every field of the definition and every AML
-rule in its system prompt, each entry point's one line (and that the repo has no other agent code but the LangGraph validator's graph
-and its check), the print mode for each `--framework` (with a placeholder Environment, and no call), and the script's calls to a small
+rule in its system prompt, each entry point's one line (and that the repo has no other agent code), the print mode for each
+`--framework` (with a placeholder Environment, and no call), and the script's calls to a small
 fake App on 127.0.0.1: create and update with your token only (extended identity) and with `--view-as`, each variant with the
 Environment that the App lists last for its framework, `--environment` (no list asked), no certified Environment, an App without the
 list, an update found by the variant's name, a 401 in each way, the App that sees another person, the view-as switch off (both
@@ -711,24 +711,6 @@ shape of the agent service's task search) and a fake Domino API proxy: both vali
 queued or failed task, earlier tasks, another agent's task, `newest`, the token (sent, never printed), the output file, only GET
 requests, each App error (401, 403, 500, 503, a redirect, an answer that is not a task list, no answer), and an App URL that isn't
 https. Nothing calls a Domino host. The live run is domino-agent-service #270.
-
-## The agent folder validator
-
-One of the two App validators of the App deployment policy (domino-agent-service spec #260): a harness agent (opencode),
-`App validator (agent folder)`, whose definition is the agent folder `governance/validator-folder/`. When a bundle moves to the
-Validation stage, it reads the App's code, scans it in a Domino Job, commits a validation doc to its task branch, attaches the doc to
-the bundle, files the real findings and fills the evidence item "Validation (agent folder)". It follows the checklist of its own skill,
-`skills/app-validation`. What it does, what the owner adds before it can run (the service account and its token, the sharing, the
-event subscription), and its check (`tests/check_validator_folder.py`): [governance/validator-folder/README.md](governance/validator-folder/README.md).
-
-## The LangGraph validator
-
-The other App validator of the App deployment policy (domino-agent-service spec #260): a framework agent, `App validator
-(LangGraph)`, made in the wizard, whose code is a fixed LangGraph graph in `governance/validator-langgraph/`. When a bundle moves to
-the Validation stage, its five steps (collect, scan, analyze, write, findings) read the App's code, scan it in a Domino Job, have the
-model sort the hits, write a validation doc to a dataset snapshot, attach the doc to the bundle, file the real findings and fill the
-evidence item "Validation (LangGraph)". What it does, how to make it in the wizard, what the live script fills in its event
-subscription, and its check (`tests/check_validator_langgraph.py`): [governance/validator-langgraph/README.md](governance/validator-langgraph/README.md).
 
 ## Live check
 
