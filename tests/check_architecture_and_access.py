@@ -8,19 +8,26 @@ registers from it.
 The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
 and the rules from governance/README.md and governance/validation-doc.md (the shared rules of the three checks).
 
-With no service, it checks the folder's files: the ones that deploy uploads, the settings of definition.md, the checklist's rules and
-the order of its tools, the instructions' rules, the tool names (as a harness agent sees them: domino_<name>), the subscription's file
+With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and not
+its unit test or the README), the settings of definition.md, the checklist's rules and the order of its tools (the own tool
+own_route_table before the writes), the instructions' rules, the tool names (as a harness agent sees them: domino_<name> and
+own_route_table), the own tool's file (the standard library only, and no code that it imports or runs), the subscription's file
 (subscriptions/bundle-enters-validation.md: its filter on the demo project's name and its two templates, which name the bundle ID), no
 Domino host or ID (the repo is public), and the folder's README.
 
+With domino_agent (the domino-agent package of this Python, or the package of the AGENT_SERVICE_REPO checkout), it runs the own tool's
+unit test, test_route_table.py (python -m unittest in the folder, spec #459 seam 1). With neither, that part prints a SKIP line.
+
 With the service (AGENT_SERVICE_REPO, the path of a domino-agent-service checkout), it checks each tool name against the service's
-gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with
-a fake Domino (the service's seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
-  - `domino-agent deploy --dry-run` passes the service's folder rules; `deploy` registers the agent, which can't run yet, and adds
-    the subscription from its file (with the seam's project name in place of the demo project's name in the temporary clone).
+gateway and relay (agent_runtime/gateway.py and proxies.py: stdlib, any OS), and the service's own tool reader reads the tool file
+(domino_agent/own_tools.py: stdlib, any OS). On Linux, it also starts that service over real HTTP with a fake Domino (the service's
+seam helper, tests/agent_folder_seam.py), with the folder committed in a temporary clone:
+  - `domino-agent deploy --dry-run` passes the service's folder rules, and its Changed line names the tool file; `deploy` registers
+    the agent, which can't run yet, with its own tool, and adds the subscription from its file (with the seam's project name in place
+    of the demo project's name in the temporary clone).
   - A stage move (the audit poller's payload) starts no task before the service account's token, nor for an analyst who may not use
     the agent; then one task, as the service account, and its Job.
-  - The Job's spec (the skill, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
+  - The Job's spec (the skill, the own tool, the access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions
     for that task on the event's bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
     attached to the task", and run_job is denied.
   - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
@@ -476,6 +483,14 @@ from agent_runtime import gateway, proxies  # noqa: E402  (stdlib only, so any O
 offered = {f"domino_{n}" for n in gateway.TOOLS} | {f"domino_{n}" for n in proxies.RELAY_TOOLS}
 check("each tool that they name is a gateway tool or a relay tool of this service, as opencode names it (domino_<name>)",
       named and named <= offered, sorted(named - offered))
+from domino_agent import own_tools  # noqa: E402  (the service's own tool reader: stdlib only, so any OS)
+
+found = own_tools.read({TOOL: tool_file})
+TOOL_ENTRY = {"name": TOOL_NAME, "args": [{"name": "folder", "type": "str", "optional": False}], "file": TOOL}
+check(f"the service's own tool reader reads {TOOL} with no refusal: one own tool, {TOOL_NAME}, with one argument, folder (a str), "
+      "and its docstring as its description", not found.problems and [{k: x.get(k) for k in TOOL_ENTRY} for x in found.tools]
+      == [TOOL_ENTRY] and found.tools[0].get("description", "").startswith("The table of the ways into a Python App"),
+      found.problems or [{k: v for k, v in x.items() if k != "description"} for x in found.tools])
 
 # --------------------------------------------------------------------------------------------------------------- the deploy
 if not files:
@@ -515,6 +530,10 @@ ran = seam.command("deploy", "--dry-run", PATH, cwd=repo.root, person=OWNER)
 check("deploy --dry-run passes the service's folder rules: it would create the agent, and registers nothing",
       ran.code == 0 and f"Dry run: would create {TITLE}" in ran.out and "Dry run: nothing was registered." in ran.out
       and registered() is None, ran)
+changed = re.search(r"^  Changed: (.*)$", ran.out, re.M)
+check(f"...its Changed line names the own tool's file, {TOOL} (and not the unit test or the README)",
+      changed and TOOL in changed.group(1).split(", ") and not {UNIT_TEST, "README.md"} & set(changed.group(1).split(", ")),
+      changed.group(0) if changed else ran.out)
 check(f"...and it says that it would add the subscription from its file, {SUB}",
       trigger_lines(ran.out) == [f"  Trigger: would add subscription {SUB_NAME} ({SUB})"], trigger_lines(ran.out) or ran.out)
 ran = seam.command("deploy", PATH, cwd=repo.root, person=OWNER)
@@ -549,6 +568,10 @@ own = a.get("ownSkills") or []
 check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (the API shows no text: the Job's spec has it)",
       [(s.get("name"), s.get("files")) for s in own] == [(SLUG, ["SKILL.md"])]
       and own[0].get("description") and own[0]["description"] in skill, own)
+tools_of = a.get("ownTools") or {}
+check(f"deploy registers the own tool {TOOL_NAME} from {TOOL}, with its argument folder, and only that file of tools/ (the API "
+      "shows no text)", tools_of.get("files") == [TOOL]
+      and [{k: x.get(k) for k in TOOL_ENTRY} for x in tools_of.get("tools") or []] == [TOOL_ENTRY], tools_of)
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
 # The deploy made the subscription from its file (deployed_subscription() reads it back), with the seam's project name in its filter. A
@@ -617,6 +640,15 @@ rules = str(spec.get("operatingRules") or "")
 check("the Job's spec has the instructions at the top of the agent's rules, and the access rows as the folder sets them",
       rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no access. "
       "Other resources attached to the task: read & write." in rules, rules[:300])
+own_spec = spec.get("ownTools") or {}
+check(f"the Job's spec has the own tool: the text of {TOOL} and the tool {TOOL_NAME}, with the limits of a call",
+      own_spec.get("files") == {TOOL: tool_file} and [x.get("name") for x in own_spec.get("tools") or []] == [TOOL_NAME]
+      and own_spec.get("timeoutSeconds") and own_spec.get("maxResultBytes"),
+      {k: (sorted(v) if k == "files" else v) for k, v in own_spec.items() if k != "tools"})
+oc = spec.get("opencodeConfig") or {}
+check(f"...and opencode gets the own tools' server, own, and the main agent may call {OWN} (own_*: allow)",
+      "own" in (oc.get("mcp") or {}) and (((oc.get("agent") or {}).get("build") or {}).get("permission") or {}).get("own_*")
+      == "allow", {"mcp": sorted(oc.get("mcp") or {}), "build": (oc.get("agent") or {}).get("build")})
 skills = [(s.get("name"), s.get("own"), s.get("content")) for s in spec.get("skills") or []]
 check(f"the Job gets the own skill {SLUG} with the checklist's text, at the commit that was deployed",
       skills == [(SLUG, True, skill)] and (spec.get("skills") or [{}])[0].get("commit") == repo.head, [s[:2] for s in skills])

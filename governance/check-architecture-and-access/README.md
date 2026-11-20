@@ -184,18 +184,24 @@ AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_architecture
 
 One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only. It reads the names from
 `governance/checks.json` (the check's name, its evidence item, the field labels, the verdicts and the severities) and the doc's
-fields from `governance/validation-doc.md`. It checks the files that deploy uploads, the settings of `definition.md`, the
-checklist's rules (no scan step) and the order of its tools, the instructions' rules, the subscription's file (its filter on the
-demo project's name), no Domino host or ID in the folder, and this page. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name
-against the service's gateway and relay. The rest needs Linux: it starts the agent service with a fake Domino (the service's seam
-helper, `tests/agent_folder_seam.py`), commits the folder in a temporary clone, and then:
+fields from `governance/validation-doc.md`. It checks the files that deploy uploads (the tool file, and not its unit test or this
+page), the settings of `definition.md`, the checklist's rules (no scan step, one call of `own_route_table`) and the order of its
+tools, the instructions' rules, the own tool's file (the standard library only), the subscription's file (its filter on the demo
+project's name), no Domino host or ID in the folder, and this page.
 
-- `domino-agent deploy --dry-run` passes the service's folder rules, and `deploy` registers the agent: its settings, its skill and
-  "can't run yet". It adds the subscription from its file, in the temporary clone with the seam's project name (`local-proj`) in
-  place of `aml-validation-demo`: the fake Domino has only that project.
+With the `domino-agent` package or `AGENT_SERVICE_REPO`, it runs the own tool's unit test (else a `SKIP:` line). With
+`AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name against the service's gateway and relay,
+and the service's own tool reader reads the tool file. The rest needs Linux: it starts the agent service with a fake Domino (the
+service's seam helper, `tests/agent_folder_seam.py`), commits the folder in a temporary clone, and then:
+
+- `domino-agent deploy --dry-run` passes the service's folder rules, and its `Changed:` line names `tools/route_table.py`.
+  `deploy` registers the agent: its settings, its skill, its own tool and "can't run yet". It adds the subscription from its file,
+  in the temporary clone with the seam's project name (`local-proj`) in place of `aml-validation-demo`: the fake Domino has only that
+  project.
 - A stage move starts no task before the token, nor for an analyst who may not use the agent. After both, it starts one task as
   the service account, with the bundle ID in its title, and its Job.
-- The Job's spec has the skill, the access rows, Run a Job off, Git push on, the permissions and the limits. The gateway's decisions
+- The Job's spec has the skill, the own tool (its file, and `own_*` allowed for the main agent), the access rows, Run a Job off,
+  Git push on, the permissions and the limits. The gateway's decisions
   for this task allow the attachment, the findings and the evidence on the event's bundle and `git_push`, and deny `run_job` and
   a project dataset.
 - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
