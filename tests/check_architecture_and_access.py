@@ -389,11 +389,10 @@ if not sys.platform.startswith("linux"):
 sys.path.insert(0, str(service / "tests"))
 import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
 
-MODEL = "google/gemini-3.8-flash"   # definition.md's alias: an OpenAI-format model on the Gateway (sonnet is refused: domino-agent-service#270)
-seam.GATEWAY.append({"id": MODEL, "providerType": "openai", "capabilities": ["chat", "tools"]})   # the seam's catalog has no such alias
+seam.GATEWAY.append({"id": MODEL, "providerType": "openai", "capabilities": ["chat", "tools"]})   # an OpenAI-format alias, not in the seam
 seam.start()
-OWNER, ANALYST, APPROVER, SA = "olivia", "rita", "bob", "app-validator-sa"   # people the seam's fake Domino knows, and the account
-TITLE, PATH = "App validator (agent folder)", "governance/validator-folder"
+OWNER, ANALYST, APPROVER, SA = "olivia", "rita", "bob", "check-sa"   # people the seam's fake Domino knows, and the service account
+TITLE = NAME   # the agent's title is the check's name (spec #388 decision 5)
 REMOTE = "https://github.com/ddl-subir-m/aml-alert-triage.git"
 repo = seam.Repo(every, path=PATH, remote=REMOTE)   # the whole folder, as git has it: deploy uploads only the known paths
 
@@ -401,7 +400,7 @@ repo = seam.Repo(every, path=PATH, remote=REMOTE)   # the whole folder, as git h
 def registered():
     """The agent that the folder's `name` registered, as its owner sees it, or None."""
     agents = seam.api("GET", "/api/agents", OWNER).json()
-    return next((a for a in agents if (a.get("registration") or {}).get("name") == "app-validator-folder"), None)
+    return next((a for a in agents if (a.get("registration") or {}).get("name") == SLUG), None)
 
 
 ran = seam.command("deploy", "--dry-run", PATH, cwd=repo.root, person=OWNER)
@@ -413,7 +412,7 @@ check("deploy registers it, and says that it can't run yet: it acts as a service
       ran.code == 0 and ran.out.startswith(f"Created {TITLE} (agt_") and "Can't run yet" in ran.out and "service account" in ran.out, ran)
 a = registered() or {}
 aid = a.get("id")
-check("the agent is a harness agent named App validator (agent folder), owned by the person who deployed it",
+check(f"the agent is a harness agent named {TITLE} (the check's name), owned by the person who deployed it",
       a.get("lane") == "harness" and a.get("name") == TITLE and (a.get("owner") or {}).get("userName") == OWNER,
       (a.get("lane"), a.get("name"), a.get("owner")))
 rec = a.get("registration") or {}
@@ -422,8 +421,8 @@ check("its Registration names the AML repo, the folder's path, the commit and a 
 check("its identity is a service account (the owner chooses which one, and adds its token)",
       (a.get("identity") or {}).get("mode") == "service_account", a.get("identity"))
 g = a.get("guardrails") or {}
-check("it runs Jobs and pushes its task branch, with no subagent (Run a Job: on, Git push: on)",
-      {k: (g.get("tools") or {}).get(k) for k in ("jobs", "push", "subagents")} == {"jobs": True, "push": True, "subagents": False},
+check("it runs no Job and pushes its task branch, with no subagent (Run a Job: off, Git push: on)",
+      {k: (g.get("tools") or {}).get(k) for k in ("jobs", "push", "subagents")} == {"jobs": False, "push": True, "subagents": False},
       g.get("tools"))
 check("its Resource access: Project files Read & write, Project datasets No access, attached Read & write, not attached No access",
       {k: (g.get("access") or {}).get(k) for k in ("project", "data", "named", "other")}
@@ -435,13 +434,13 @@ check("its limits: 45 minutes, 120 turns, and no wait for an answer",
 check(f"its model is the LLM Gateway alias {MODEL}", (a.get("model") or {}).get("models") == [MODEL], a.get("model"))
 check("its system prompt is instructions.md", a.get("systemPrompt") == instructions.strip(), (a.get("systemPrompt") or "")[:200])
 own = a.get("ownSkills") or []
-check("its own skill is app-validation, with its description and one file, SKILL.md (the API shows no text: the Job's spec has it)",
-      [(s.get("name"), s.get("files")) for s in own] == [("app-validation", ["SKILL.md"])]
+check(f"its own skill is {SLUG}, with its description and one file, SKILL.md (the API shows no text: the Job's spec has it)",
+      [(s.get("name"), s.get("files")) for s in own] == [(SLUG, ["SKILL.md"])]
       and own[0].get("description") and own[0]["description"] in skill, own)
 
 # ------------------------------------------------------------------------------------- the subscription and the event's task
 # The owner makes the subscription from subscription.json, as the live script does, with the demo project's ID: here the seam's
-# Git-based project. A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's
+# Git-based project (subscribe() below: domino-agent-service#398 makes it come from the deploy instead). A stage move reaches it as the audit poller publishes it: Domino's audit row (AuditEvent, as the service's
 # tests/check_phase3.py audit_event() copies a real stage move), made into the payload by the poller's own audit_source.to_payload,
 # then published through the subscription's test route, which runs the same fan-out (service.emit_event) as the person who calls it.
 import requests  # noqa: E402  (the service's checks image has it)
@@ -475,11 +474,17 @@ def stage_move(to="Validation", project=None, by=ANALYST):
     return audit_source.to_payload("governance.bundle.stage_changed", row)
 
 
-body = json.loads(text(SUB_FILE).replace(PROJECT_ID, seam.PROJECT["id"]))
-r = seam.api("POST", f"/api/agents/{aid}/triggers", OWNER, json=body)
-trigger = r.json() if r.status_code == 200 else {}
-check("the owner makes the subscription from subscription.json, with the demo project's ID in its one placeholder",
-      r.status_code == 200 and trigger.get("type") == "event" and trigger.get("enabled") is True, (r.status_code, r.text[:300]))
+def subscribe():
+    """The agent's event subscription, as its owner makes it: subscription.json with the seam's project ID in its one placeholder,
+    sent with POST /api/agents/{id}/triggers (the service's agent_write.create_trigger). -> the stored trigger, or {}."""
+    r = seam.api("POST", f"/api/agents/{aid}/triggers", OWNER, json=json.loads(text(SUB_FILE).replace(PROJECT_ID, seam.PROJECT["id"])))
+    made = r.json() if r.status_code == 200 else {}
+    check("the owner makes the subscription from subscription.json, with the demo project's ID in its one placeholder",
+          r.status_code == 200 and made.get("type") == "event" and made.get("enabled") is True, (r.status_code, r.text[:300]))
+    return made
+
+
+trigger = subscribe()
 
 
 def fire(payload, person):
@@ -507,7 +512,7 @@ check("then a stage move to Validation in the demo project starts one task, whic
       isinstance(fired, list) and len(fired) == 1 and fired[0].get("taskId") and fired[0].get("actingAs") == SA, fired)
 task_id = fired[0].get("taskId") if isinstance(fired, list) and fired else None
 task = seam.api("GET", f"/api/tasks/{task_id}", OWNER).json() if task_id else {}
-check("the task's title names the bundle ID (so the scripted check finds it), from the title template",
+check("the task's title is the check's name and the bundle ID (so the scripted check finds it), from the title template",
       task.get("title") == f"{TITLE}: bundle {BUNDLE['id']}", task.get("title"))
 check("its instruction names the bundle ID and its own evidence item, from the instruction template",
       BUNDLE["id"] in (task.get("instruction") or "") and f'"{EVIDENCE}"' in (task.get("instruction") or "")
@@ -532,14 +537,14 @@ check("the Job's spec has the instructions at the top of the agent's rules, and 
       rules.startswith(instructions.strip() + "\n\n## Operating rules") and "Project files: read & write. Project datasets: no access. "
       "Other resources attached to the task: read & write." in rules, rules[:300])
 skills = [(s.get("name"), s.get("own"), s.get("content")) for s in spec.get("skills") or []]
-check("the Job gets the own skill app-validation with the checklist's text, at the commit that was deployed",
-      skills == [("app-validation", True, skill)] and (spec.get("skills") or [{}])[0].get("commit") == repo.head, [s[:2] for s in skills])
+check(f"the Job gets the own skill {SLUG} with the checklist's text, at the commit that was deployed",
+      skills == [(SLUG, True, skill)] and (spec.get("skills") or [{}])[0].get("commit") == repo.head, [s[:2] for s in skills])
 perm = ((spec.get("opencodeConfig") or {}).get("permission")) or {}
-check("opencode may call the Domino tools, run a Job and push (the Job's permissions)",
+check("opencode may call the Domino tools and push, and may not run a Job (the Job's permissions)",
       {k: perm.get(k) for k in ("domino_*", "domino_run_job", "domino_git_push", "skill")}
-      == {"domino_*": "allow", "domino_run_job": "allow", "domino_git_push": "allow", "skill": "allow"}, perm)
-check("the Job ends a failure with a report (onError fail), pushes to the task branch, and has the folder's limits",
-      spec.get("onError") == "fail" and spec.get("tools") == {"push": True, "jobs": True}
+      == {"domino_*": "allow", "domino_run_job": "deny", "domino_git_push": "allow", "skill": "allow"}, perm)
+check("the Job ends a failure with a report (onError fail), pushes to the task branch, runs no Job, and has the folder's limits",
+      spec.get("onError") == "fail" and spec.get("tools") == {"push": True, "jobs": False}
       and (spec.get("push") or {}).get("branch") == f"agent/{task.get('key')}"
       and spec.get("limits") == {"maxMinutes": 45, "maxTurns": 120, "idleWaitMin": 0},
       {k: spec.get(k) for k in ("onError", "tools", "push", "limits")})
@@ -551,25 +556,28 @@ check("the event's bundle is a resource of the task, Read & write (the row 'Othe
       bundle.get("id") == BUNDLE["id"] and bundle.get("access") == "write", policy.get("resources"))
 CALLS = {
     "write_bundle_attachment": {"bundleId": BUNDLE["id"], "type": "Report", "identifier": {
-        "filename": f"docs/validation/agent-folder-{BUNDLE['id']}.md", "commit": "0" * 40, "source": "GBP", "branch": "agent/AGT-1"}},
-    "write_governance_finding": {"bundleId": BUNDLE["id"], "name": "[folder] A finding", "severity": "S1", "description": "Evidence."},
-    "write_policy_result": {"bundleId": BUNDLE["id"], "evidenceId": "ev-1", "content": {"art-verdict": "approve after fixes"}},
+        "filename": DOC.replace("<bundleId>", BUNDLE["id"]), "commit": "0" * 40, "source": "GBP", "branch": "agent/AGT-1"}},
+    "write_governance_finding": {"bundleId": BUNDLE["id"], "name": f"[{NAME}] Anyone who can open the App can delete all state in "
+                                 "POST /reset", "severity": "S1", "description": "Evidence."},
+    "write_policy_result": {"bundleId": BUNDLE["id"], "evidenceId": "ev-1", "content": {"art-verdict": V[1]}},
 }
 for name, args in CALLS.items():
     d = gateway.decide(name, args, policy) if policy else {}
     check(f"the gateway allows {name} on the event's bundle, by its own row (named), with no owner check",
           d.get("allow") is True and d.get("row") == "named" and not any(s.get("expect") for s in d.get("steps") or []),
           {k: d.get(k) for k in ("allow", "row", "why")})
-for name, args in (("run_job", {"command": "python governance/scan.py"}), ("git_push", {"message": "The doc"})):
-    d = gateway.decide(name, args, policy) if policy else {}
-    check(f"...and {name}, in the task's project", d.get("allow") is True, {k: d.get(k) for k in ("allow", "row", "why")})
+d = gateway.decide("git_push", {"message": "The doc"}, policy) if policy else {}
+check("...and git_push, in the task's project", d.get("allow") is True, {k: d.get(k) for k in ("allow", "row", "why")})
+d = gateway.decide("run_job", {"command": "python app.py"}, policy) if policy else {}
+check("...but no run_job: Start Domino jobs is off for this agent", d.get("allow") is False
+      and "Start Domino jobs is off" in (d.get("why") or ""), {k: d.get(k) for k in ("allow", "row", "why")})
 d = gateway.decide("get_dataset", {"datasetId": "ds-of-the-project"}, policy) if policy else {}
 check("...but no dataset of the project (Project datasets: No access)", d.get("allow") is False
       and "Project datasets is No access" in (d.get("why") or ""), {k: d.get(k) for k in ("allow", "row", "why")})
 listed = {f"domino_{t['name']}" for t in gateway.tool_defs(policy)} | {f"domino_{t}" for t in proxies.RELAY_TOOLS
                                                                         if t != "submit_plan"} if policy else set()
-check("each tool that the skill and the instructions name is one that this task's agent is offered", named <= listed,
-      sorted(named - listed))
+check("each tool that the skill and the instructions name is one that this task's agent is offered, and run_job is not",
+      named <= listed and "domino_run_job" not in listed, sorted(named - listed) or sorted(listed))
 
 fired = [fire(stage_move("Approval"), ANALYST), fire(stage_move(project=("p-other", "another-project")), ANALYST)]
 check("a stage move to another stage, or to Validation in another project, starts nothing (the filter)", fired == [[], []], fired)
