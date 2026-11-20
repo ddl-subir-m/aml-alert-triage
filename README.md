@@ -712,8 +712,9 @@ The checks advise. You decide.
 - **The bundle ID.** Domino doesn't give it to a scripted check, so it is a parameter. Its default, `newest`, shows the newest event
   task of each check in the Job's project. To see one bundle, type its ID.
 - **What it reads.** The checks and the labels come from `governance/checks.json`, next to the script. A check is found by its
-  agent's name, which is the check's name. The verdict, highest severity and doc location are lines of the check's result (its
-  `report_result`): `Verdict: ...`, `Highest severity: ...`, `Doc location: ...`.
+  agent's name, which is the check's name. The verdict, highest severity and doc location are lines of the check's result: the
+  `report_result` of Purpose and data and of Architecture and access, and the last streamed text of Vulnerability scan (a framework
+  agent, which has no `report_result`). The lines are `Verdict: ...`, `Highest severity: ...`, `Doc location: ...`.
 - **Who sees what.** The App shows a task only to the people who may read it. The approver must be an owner or an editor of the
   three agents.
 - **It changes nothing.** It sends only GET requests to the App, and never starts or changes an agent. It sends the token only to
