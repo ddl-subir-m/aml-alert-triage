@@ -322,9 +322,10 @@ check("no file of the folder has a Domino host, the ID of a Domino object or a t
 dashed = sorted(rel for rel, body in [*every.items(), (f"tests/{Path(__file__).name}", text(Path(__file__)))] if chr(0x2014) in body)
 check("no file of the folder, and not this check, has an em dash", not dashed, dashed)
 
-# ---------------------------------------------------------------------------------------------------------------- the READMEs
+# ------------------------------------------------------------------------------------------------------------ the folder's README
 # The folder holds no user names and no trigger: its README says what the owner adds before the agent can run.
-rlines = [ln.lower() for ln in every.get("README.md", "").splitlines()]
+readme = every.get("README.md", "")
+rlines = [ln.lower() for ln in readme.splitlines()]
 
 
 def rrule(name, *words):
@@ -332,7 +333,16 @@ def rrule(name, *words):
     check(f"the folder's README says: {name}", any(all(w.lower() in ln for w in words) for ln in rlines), words)
 
 
-rrule("deploy it with a dry run first", "domino-agent deploy --dry-run governance/validator-folder")
+rrule("it is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part", "#260",
+      "app-validation-two-ways", "narrowed")
+rrule("it links to the shared rules of the three checks", "(../readme.md)")
+rrule("it fills its own evidence item", f'"{EVIDENCE}"')
+rrule("it runs no scan and no Job (Run a Job is off): known vulnerabilities are the Vulnerability scan's part", "no scan",
+      "run a job", "off", f'"{SCAN_CHECK}"')
+rrule("its doc's file on the task branch", f"`{DOC}`")
+rrule("a task reads the Intake values that the analyst filled, with get_policy", "intake values", "analyst", "domino_get_policy")
+check('the folder\'s README has the section "Before it can run"', "\n## Before it can run\n" in readme)
+rrule("deploy it with a dry run first", f"domino-agent deploy --dry-run {PATH}")
 rrule("the owner adds the service account and its token, else it can't run yet", "service account", "token", "can't run yet")
 rrule("...and stores a new token before the old one expires", "token", "expires")
 rrule("the service account's rights: Contributor on the demo project, the model, the bundle", "service account", "contributor",
@@ -346,20 +356,16 @@ rrule("make the subscription from subscription.json, with the demo project's ID"
       "post /api/agents/{id}/triggers")
 rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
 rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
-rrule("the demo project's default branch has the shared parts", "default branch", "governance/scan.py",
+rrule("the demo project's default branch has the shared rules", "default branch", "governance/readme.md",
       "governance/validation-doc.md")
-rrule("how to run this check", "python tests/check_validator_folder.py")
-rrule("a task reads the Intake values that the analyst filled, with get_policy", "intake values", "analyst", "domino_get_policy")
-check("the folder's README no longer says that no gateway tool reads the Intake values",
-      not [ln for ln in rlines if "intake" in ln and "no gateway tool" in ln], [ln for ln in rlines if "intake" in ln])
-readme = text(ROOT / "README.md")
-check("the repo's README has a section for this validator that links to the folder's README",
-      "\n## The agent folder validator\n" in readme and "governance/validator-folder/README.md" in readme)
+rrule("how to run this check", f"python tests/{Path(__file__).name}")
+check(f"governance/README.md (the shared rules, the hub of the three checks) names this folder, {PATH}/",
+      f"`{PATH}/`" in text(ROOT / "governance" / "README.md"))
 
 service = os.environ.get("AGENT_SERVICE_REPO", "").strip()
 if not service:
     done("AGENT_SERVICE_REPO is not set, so the tool names, the deploy and the event's task weren't checked against the service. Set "
-         "it to a domino-agent-service checkout (governance/validator-folder/README.md, \"The check\")")
+         f"it to a domino-agent-service checkout ({PATH}/README.md, \"The check\")")
 service = Path(service).expanduser().resolve()
 if not (service / "agent_runtime" / "gateway.py").is_file() or not (service / "agent_runtime" / "proxies.py").is_file():
     check(f"AGENT_SERVICE_REPO ({service}) is a domino-agent-service checkout (agent_runtime/gateway.py and proxies.py)", False)
@@ -379,7 +385,7 @@ if not (service / "tests" / "agent_folder_seam.py").is_file() or not (service / 
     done()
 if not sys.platform.startswith("linux"):
     done("needs Linux for the deploy and the event's task: the service's app imports agent_runtime/sandbox.py. On a Mac, run it "
-         "with Docker, in the image of the service's checks (governance/validator-folder/README.md, \"The check\")")
+         f"with Docker, in the image of the service's checks ({PATH}/README.md, \"The check\")")
 sys.path.insert(0, str(service / "tests"))
 import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
 
