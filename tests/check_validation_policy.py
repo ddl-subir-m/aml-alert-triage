@@ -1,18 +1,23 @@
-"""The App deployment policy (governance/app-deployment-policy.yaml) and its scripted check (governance/validation_status.py), for
-domino-agent-service spec #260 (ticket #266), seen from outside.
+"""The App deployment policy (governance/app-deployment-policy.yaml), the one source of its names and labels
+(governance/checks.json), and its scripted check (governance/validation_status.py), for domino-agent-service specs #260 and #388
+(tickets #266 and #392), seen from outside.
 
-The policy: the YAML parses, and it has the three stages (Intake, Validation, Approval), the two validators' evidence items with their
-four fields, and the scripted check, with the placeholders that the live script fills.
+The one source: checks.json has the three checks (their names, evidence items and folders), the four fields' labels, the verdicts
+and the severities, as the spec says them.
+
+The policy: the YAML parses, and it has the three stages (Intake, Validation, Approval), the three checks' evidence items with the
+four fields of checks.json and their options, and the scripted check, with the placeholders that the live script fills.
 
 The scripted check: it runs as Domino runs it (with python -S, so only the stdlib), against a fake agent service App on 127.0.0.1
 (the task search GET /api/tasks, in the shape of app.py's list_tasks answer) and a fake Domino API proxy (the Job's token). From the
-fake answer it prints one block for each validator; it reads and never prints the token; it writes its output file; it sends only
-GET requests; and it prints each App error with its status.
+fake answer it prints one row for each check and one count line of the verdicts, with no merged verdict; a check with no task says
+not started, and a running task shows its status. It reads the checks from the checks.json next to it. It reads and never prints the
+token; it writes its output file; it sends only GET requests; and it prints each App error with its status.
 
   python tests/check_validation_policy.py
 
 One line per case, with a non-zero exit code on any failure. The policy part needs PyYAML (`pip install pyyaml`). No Domino host and
-no App: the live check is domino-agent-service #270.
+no App: the live check is domino-agent-service #397.
 """
 import base64
 import json
@@ -168,7 +173,7 @@ check("each ${name} in the command is a parameter, and each parameter is in the 
 check("each parameter is text, with a default (the value that a click runs with, when the person who clicks changes nothing)",
       params and all(p.get("type") == "text" and isinstance(p.get("default"), str) and p["default"] for p in params), params)
 default = {p.get("name"): p.get("default") for p in params}
-check("bundle_id's default is newest: with no bundle ID typed, the check shows the newest validation of each validator in the project",
+check("bundle_id's default is newest: with no bundle ID typed, the check shows the newest validation of each check in the project",
       default.get("bundle_id") == "newest", default)
 check("service_url's default is the placeholder __AGENT_SERVICE_URL__ (the live script fills it)",
       default.get("service_url") == "__AGENT_SERVICE_URL__", default)
@@ -192,8 +197,9 @@ check("the placeholders are these four, and the file's head names each one", set
       and all(re.search(rf"^#.*{p}", raw, re.M) for p in PLACEHOLDERS), set(re.findall(r"__[A-Z_]+__", body)))
 check("the file is for a PUBLIC repo: no host name, no cloud-dogfood, no Domino object ID",
       not re.search(r"https?://|\.domino\.tech|cloud-dogfood|\b[0-9a-f]{24}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-", raw), "a host or an ID")
-dashed = [p.name for p in (POLICY, ROOT / "governance" / "validation_status.py", Path(__file__)) if p.is_file() and "\u2014" in p.read_text()]
-check("no em dash in the policy, the scripted check or this check", not dashed, dashed)
+dashed = [p.name for p in (POLICY, CHECKS_FILE, ROOT / "governance" / "validation_status.py", Path(__file__))
+          if p.is_file() and "\u2014" in p.read_text()]
+check("no em dash in the policy, checks.json, the scripted check or this check", not dashed, dashed)
 
 # ------------------------------------------------------------------------------------------------- the scripted check, on a fake App
 SCRIPT = ROOT / "governance" / "validation_status.py"
@@ -201,46 +207,62 @@ check("the command's file, governance/validation_status.py, is in the repo", SCR
 if not SCRIPT.is_file():
     sys.exit(1)
 
-BUNDLE = "0e5e1b7a-0000-4000-8000-000000000266"   # a made-up bundle ID
+BUNDLE = "0e5e1b7a-0000-4000-8000-000000000392"   # a made-up bundle ID
 PROJECT = "aml-validation-demo"                   # the demo project, as the Job's DOMINO_PROJECT_NAME names it
+PD, AA, VS = "Purpose and data", "Architecture and access", "Vulnerability scan"   # the agents' names: the checks' names (decision 5)
+
+
 def fake_jwt(claims):
     """A fake JWT with no signature (alg none) for these claims. It is made when the check runs, so the repo holds no text in the
     shape of a token (a secret scanner reads one as a real secret)."""
     def part(value):
         return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=").decode()
-    return f"{part({'alg': 'none'})}.{part(claims)}.fake-signature-266"
+    return f"{part({'alg': 'none'})}.{part(claims)}.fake-signature"
 
 
 TOKEN = fake_jwt({"preferred_username": "amara"})   # a fake JWT, for amara (the approver)
-FOLDER, LANGGRAPH = "App validator (agent folder)", "App validator (LangGraph)"   # the validators' agent names (#267, #268)
 APP = {"tasks": [], "calls": [], "answer": None}
 PROXY = {"token": TOKEN, "calls": 0}
 
 
-def task(key, agent, status, summary=None, *, bundle=BUNDLE, created="2026-11-17T10:00:00Z", trigger="event", project=PROJECT,
+def task(key, agent, status, summary=None, *, bundle=BUNDLE, created="2026-11-19T10:00:00Z", trigger="event", project=PROJECT,
          waiting=None):
-    """A task as the agent service App's GET /api/tasks answers it: the task row (agent_service/service.py, create_task) plus what
-    app.py's _task_out adds (agentName, agentColor, sessionCount, openBlockers, tokens, costUsd, segmentKinds)."""
+    """A task as the agent service App's GET /api/tasks answers it: the task row (agent_service/service.py, create_task, with the
+    event trigger of a fired subscription) plus what app.py's _task_out adds (agentName, agentColor, sessionCount, openBlockers,
+    tokens, costUsd, segmentKinds). The title names the bundle, as each check's title template does (decision 13). The IDs are
+    made up, in no real ID's shape."""
     n = key.split("-")[1]
+    payload = {"source": "domino-audit-trail", "triggeredBy": "olivia", "occurredAt": 0, "auditTraceId": "trace-1",
+               "bundle": {"id": bundle, "name": "aml-case-management 1"}, "fromStage": "Intake", "toStage": "Validation",
+               "policy": {"id": "policy-1", "name": "App deployment policy"}, "project": {"id": "project-1", "name": project}}
     return {
-        "id": f"task_{n:0>10}", "key": key, "agentId": "agt_" + ("folder" if agent == FOLDER else "graph" if agent == LANGGRAPH else "other"),
-        "title": f"{agent}: validate bundle {bundle}", "instruction": f"Validate the App of bundle {bundle}.", "status": status,
+        "id": f"task_{n:0>10}", "key": key, "agentId": "fake-agent-" + agent.lower().replace(" ", "-"),
+        "title": f"{agent}: bundle {bundle}", "instruction": f"Check the App of bundle {bundle}.", "status": status,
         "waitingReason": waiting,
-        "trigger": ({"type": "event", "triggerId": "trg_x", "name": "On Validation", "eventType": "governance.bundle.stage_changed",
-                     "publishedBy": "audit-poller"} if trigger == "event" else {"type": trigger, "via": "app", "triggerId": "trg_d", "name": "From the app"}),
+        "trigger": ({"type": "event", "triggerId": "trigger-1", "name": "On Validation", "eventType": "governance.bundle.stage_changed",
+                     "publishedBy": "audit-poller"} if trigger == "event"
+                    else {"type": trigger, "via": "app", "triggerId": "trigger-2", "name": "From the app", "source": None}),
         "triggeredBy": {"userName": "olivia"}, "actingAs": {"mode": "service_account", "userName": "validator-sa", "kind": "service_account"},
-        "project": {"id": "p1", "name": project}, "resources": [], "inputs": {}, "context": {"bundle": {"id": bundle}},
-        "createdAt": created, "updatedAt": created, "completedAt": None, "summary": summary, "sessionIds": ["ses_1"],
+        "project": {"id": "project-1", "name": project}, "resources": [], "inputs": {}, "context": payload,
+        "createdAt": created, "updatedAt": created, "completedAt": None, "summary": summary, "sessionIds": ["session-1"],
         "deliverTo": [], "deliveries": [], "live": None, "intake": None, "accessCaps": None, "resolution": None,
         "agentName": agent, "agentColor": "#543FDE", "sessionCount": 1, "openBlockers": 0, "tokens": 1200, "costUsd": 0.02,
         "segmentKinds": ["job"],
     }
 
 
-DONE_FOLDER = ("The App is a small MCP server with an open reset route.\n\n**Verdict:** approve after fixes\n**Critical vulns:** yes\n"
-               "**Doc location:** agent/AGT-12 at 1a2b3c4, docs/validation/aml-case-management.md\n")
-DONE_GRAPH = ("Verdict: approve after fixes\nCritical vulns: yes\n"
-              "Doc location: dataset aml-validation-demo, snapshot 3, validation/aml-case-management.md\n")
+def result(verdict, severity, doc, summary="The reason, and the real findings by name and severity."):
+    """A check's result (its task's summary): report_result's first lines are the four evidence values (decision 7)."""
+    return f"Verdict: {verdict}\nHighest severity: {severity}\nSummary: {summary}\nDoc location: {doc}\n\nMore text of the result.\n"
+
+
+DOC_PD = f"agent/AGT-12 at 1a2b3c4, docs/validation/purpose-and-data-{BUNDLE}.md"
+DOC_AA = f"agent/AGT-13 at 5d6e7f8, docs/validation/architecture-and-access-{BUNDLE}.md"
+DOC_VS = f"dataset validation-docs, snapshot 3, vulnerability-scan-{BUNDLE}.md"
+DONE_PD = result("do not approve", "S1", DOC_PD)
+DONE_AA = ("**Verdict:** do not approve\n- **Highest severity:** `S1`\n**Summary:** [Architecture and access] POST /reset is open.\n"
+           f"**Doc location:** `{DOC_AA}`\n")
+DONE_VS = result("approve", "none", DOC_VS)
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -305,100 +327,146 @@ WORK = Path(tempfile.mkdtemp(prefix="check-validation-status-"))
 LAST = {}   # the last run's working folder
 
 
-def run(bundle=BUNDLE, url=None, tasks=(), env=None):
+def run(bundle=BUNDLE, url=None, tasks=(), env=None, script=SCRIPT):
     """Runs the scripted check as Domino runs it ('governance/validation_status.py' '<bundle>' '<url>'), in a fresh working
     folder, with python -S (so a package outside the stdlib fails it). Returns (exit code, stdout + stderr, the output file's text)."""
     APP["tasks"], APP["calls"] = list(tasks), []
     work = LAST["work"] = Path(tempfile.mkdtemp(dir=WORK))
     full = {"PATH": os.environ.get("PATH", ""), "DOMINO_API_PROXY": f"http://127.0.0.1:{proxy_server.server_port}",
             "DOMINO_PROJECT_NAME": PROJECT, "DOMINO_ARTIFACTS_DIR": str(work / "artifacts"), **(env or {})}
-    p = subprocess.run([sys.executable, "-S", str(SCRIPT), bundle, APP_URL if url is None else url], cwd=work, env=full,
+    p = subprocess.run([sys.executable, "-S", str(script), bundle, APP_URL if url is None else url], cwd=work, env=full,
                        capture_output=True, text=True, timeout=60)
     out = work / "validation_status.txt"
     return p.returncode, p.stdout + p.stderr, out.read_text() if out.is_file() else None
 
 
-def block(out, title):
-    """The lines of one validator's block: from its title line to the next empty line."""
+def row(out, name):
+    """One check's row: its line in the table (the cells between the | marks), then its indented lines below it, as (label, value)."""
     lines = out.splitlines()
-    if title not in lines:
-        return []
-    i = lines.index(title)
-    end = lines.index("", i) if "" in lines[i:] else len(lines)
-    return lines[i:end]
+    i = next((n for n, ln in enumerate(lines) if ln.startswith(name + " ") and "|" in ln), None)
+    if i is None:
+        return None, []
+    more = []
+    for ln in lines[i + 1:]:
+        if not ln.startswith("    "):
+            break
+        label, _, value = ln.strip().partition(":")
+        more.append((label, value.strip()))
+    return [c.strip() for c in lines[i].split("|")], more
 
 
-code, out, _ = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER), task("AGT-13", LANGGRAPH, "review", DONE_GRAPH)])
-check("two finished validators: exit 0", code == 0, out)
+def count_line(out):
+    return next((ln for ln in out.splitlines() if re.match(r"\d+ of \d+ ", ln)), None)
+
+
+ALL = [task("AGT-12", PD, "review", DONE_PD), task("AGT-13", AA, "done", DONE_AA), task("AGT-14", VS, "review", DONE_VS)]
+code, out, _ = run(tasks=ALL)
+check("three finished checks: exit 0", code == 0, out)
 check("the head names the bundle", f"Validation status of bundle {BUNDLE}" in out.splitlines(), out)
-check("one block for the agent folder validator: agent, task key, status, verdict, critical vulns, doc location, task link",
-      block(out, "Validation (agent folder)") == [
-          "Validation (agent folder)",
-          f"  agent:          {FOLDER}",
-          f"  task:           AGT-12  {FOLDER}: validate bundle {BUNDLE}",
-          "  status:         review",
-          "  verdict:        approve after fixes",
-          "  critical vulns: yes",
-          "  doc location:   agent/AGT-12 at 1a2b3c4, docs/validation/aml-case-management.md",
-          f"  task link:      {APP_URL}/#/tasks/task_0000000012"], out)
-check("one block for the LangGraph validator, after it (the verdict lines without Markdown)",
-      block(out, "Validation (LangGraph)") == [
-          "Validation (LangGraph)",
-          f"  agent:          {LANGGRAPH}",
-          f"  task:           AGT-13  {LANGGRAPH}: validate bundle {BUNDLE}",
-          "  status:         review",
-          "  verdict:        approve after fixes",
-          "  critical vulns: yes",
-          "  doc location:   dataset aml-validation-demo, snapshot 3, validation/aml-case-management.md",
-          f"  task link:      {APP_URL}/#/tasks/task_0000000013"]
-      and out.index("Validation (agent folder)") < out.index("Validation (LangGraph)"), out)
+lines = out.splitlines()
+head = next((n for n, ln in enumerate(lines) if ln.startswith("Check ")), None)
+check("a table: the head line Check | Verdict | Highest severity | Task, then one row for each check, in the order of checks.json",
+      head is not None and [c.strip() for c in lines[head].split("|")] == ["Check", "Verdict", "Highest severity", "Task"]
+      and [ln.split("|")[0].strip() for ln in lines[head + 1:] if "|" in ln] == [PD, AA, VS], out)
+check("...its columns line up: each | is at the same place in each line",
+      head is not None and len({tuple(m.start() for m in re.finditer(r"\|", ln)) for ln in lines if "|" in ln}) == 1, out)
+check("Purpose and data's row: its verdict, its highest severity, its task's key and status",
+      row(out, PD)[0] == [PD, "do not approve", "S1", "AGT-12, review"], row(out, PD))
+check("...then its task's title, its doc location and its task's link, below it",
+      row(out, PD)[1] == [("title", f"{PD}: bundle {BUNDLE}"), ("doc location", DOC_PD),
+                          ("task link", f"{APP_URL}/#/tasks/task_0000000012")], row(out, PD))
+check("Architecture and access's row: Markdown only around a label or a value goes (a value keeps its _ and *)",
+      row(out, AA)[0] == [AA, "do not approve", "S1", "AGT-13, done"] and ("doc location", DOC_AA) in row(out, AA)[1], row(out, AA))
+check("Vulnerability scan's row", row(out, VS)[0] == [VS, "approve", "none", "AGT-14, review"]
+      and ("doc location", DOC_VS) in row(out, VS)[1], row(out, VS))
+check("one count line that counts the verdicts, in the policy's order of verdicts: 1 of 3 says approve, 2 of 3 say do not approve",
+      count_line(out) == "1 of 3 says approve, 2 of 3 say do not approve.", count_line(out))
+check("...after the table", count_line(out) in lines and head is not None and lines.index(count_line(out)) > head + 3, out)
+check("...and then: the checks advise, you decide", "The checks advise. You decide." in lines, out)
 
-MARKED = ("_Verdict_: **do not approve**\n- **Critical vulns:** `no`\n"
-          "**Doc location**: `dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md`\n")
-code, out, _ = run(tasks=[task("AGT-17", FOLDER, "done", MARKED)])
-check("Markdown only around a value goes: the value itself keeps its _ and * (a doc location with _ prints as the validator wrote it)",
-      block(out, "Validation (agent folder)")[4:7] == [
-          "  verdict:        do not approve", "  critical vulns: no",
-          "  doc location:   dataset validation_docs, snapshot snap_2, file validation_aml_case__v2.md"], out)
+code, out, _ = run(tasks=[task("AGT-12", PD, "review", result("could not check", "none", DOC_PD)), task("AGT-14", AA, "running")])
+check("a check with no task yet: exit 0 (a result, not an error)", code == 0, out)
+check("...its row says not started, with no verdict and no severity",
+      row(out, VS)[0] == [VS, "-", "-", "not started"], row(out, VS))
+check("...and why a task can be missing for this person",
+      row(out, VS)[1] == [("note", "no task of this agent names the bundle that you may read (only its owner and editors see all its tasks)")],
+      row(out, VS))
+check("a task that still runs shows its status, and no verdict, severity or doc location yet",
+      row(out, AA)[0] == [AA, "not yet", "not yet", "AGT-14, running"] and ("doc location", "not yet") in row(out, AA)[1], row(out, AA))
+check("the count line counts could not check, a running task and not started apart",
+      count_line(out) == "1 of 3 says could not check, 1 of 3 has no verdict yet (running), 1 of 3 is not started.", count_line(out))
 
-code, out, _ = run(tasks=[task("AGT-14", FOLDER, "running")])
-check("a validator with no task yet: exit 0 (a result, not an error)", code == 0, out)
-check("...its block says not started, and why a task can be missing for this person",
-      block(out, "Validation (LangGraph)") == [
-          "Validation (LangGraph)",
-          f"  agent:          {LANGGRAPH}",
-          "  status:         not started",
-          "  note:           no task of this agent names the bundle that you may read (only its owner and editors see all its tasks)"],
-      out)
-check("a task that still runs shows its status, and no verdict yet",
-      block(out, "Validation (agent folder)")[3:6] == ["  status:         running", "  verdict:        not yet (the task is running)",
-                                                       "  critical vulns: not yet (the task is running)"], out)
-code, out, _ = run(tasks=[task("AGT-15", FOLDER, "waiting", waiting="approval"), task("AGT-16", LANGGRAPH, "queued")])
+code, out, _ = run(tasks=[task("AGT-15", PD, "waiting", waiting="approval"), task("AGT-16", AA, "queued"),
+                          task("AGT-17", VS, "failed", "Not run: the Job's Environment is not certified.\nMore lines.")])
 check("a waiting task shows what it waits for; a queued task shows queued",
-      "  status:         waiting (approval)" in block(out, "Validation (agent folder)")
-      and "  status:         queued" in block(out, "Validation (LangGraph)"), out)
-code, out, _ = run(tasks=[task("AGT-17", LANGGRAPH, "failed", "Not run: the Job's Environment is not certified.\nMore lines.")])
-check("a failed task shows its status, and the first line of its result",
-      block(out, "Validation (LangGraph)")[3:5] == ["  status:         failed",
-                                                    "  result:         Not run: the Job's Environment is not certified."], out)
-check("...and no verdict", "  verdict:        none (the task failed)" in block(out, "Validation (LangGraph)"), out)
-code, out, _ = run(tasks=[task("AGT-20", FOLDER, "review", DONE_FOLDER, created="2026-11-17T12:00:00Z"),
-                          task("AGT-18", FOLDER, "review", "Verdict: do not approve", created="2026-11-17T09:00:00Z"),
-                          task("AGT-19", FOLDER, "failed", "Not run.", created="2026-11-17T11:00:00Z"),
+      row(out, PD)[0] == [PD, "not yet", "not yet", "AGT-15, waiting (approval)"] and row(out, AA)[0] == [AA, "not yet", "not yet", "AGT-16, queued"],
+      (row(out, PD), row(out, AA)))
+check("a failed task shows its status, no verdict, and the first line of its result",
+      row(out, VS)[0] == [VS, "-", "-", "AGT-17, failed"] and ("result", "Not run: the Job's Environment is not certified.") in row(out, VS)[1],
+      row(out, VS))
+check("the count line: 2 of 3 have no verdict yet (waiting, queued), 1 of 3 has no verdict (failed)",
+      count_line(out) == "2 of 3 have no verdict yet (waiting, queued), 1 of 3 has no verdict (failed).", count_line(out))
+
+code, out, _ = run(tasks=[task("AGT-20", PD, "review", DONE_PD, created="2026-11-19T12:00:00Z"),
+                          task("AGT-18", PD, "review", result("approve", "none", DOC_PD), created="2026-11-19T09:00:00Z"),
+                          task("AGT-19", PD, "failed", "Not run.", created="2026-11-19T11:00:00Z"),
                           task("AGT-21", "Stage change listener", "review", "Verdict: approve"),
-                          task("AGT-22", LANGGRAPH, "review", DONE_GRAPH, trigger="direct")])
-b = block(out, "Validation (agent folder)")
-check("a new stage move gives a new task: the block shows the newest, and names the earlier ones",
-      len(b) > 2 and b[2].startswith("  task:           AGT-20 ") and "  verdict:        approve after fixes" in b
-      and "  earlier tasks:  AGT-19 (failed), AGT-18 (review)" in b, b)
-check("another agent's task that names the bundle is not a validator's, and a task that a person started is not a validation",
-      "AGT-21" not in out and "AGT-22" not in out and "  status:         not started" in block(out, "Validation (LangGraph)"), out)
-code, out, _ = run(tasks=[task("AGT-23", FOLDER, "done", "All good, no verdict line.")])
+                          task("AGT-22", AA, "review", DONE_AA, trigger="direct"),
+                          task("AGT-23", VS, "done", "All good, no verdict line.")])
+check("a new stage move gives a new task: the row shows the newest, and names the earlier ones",
+      row(out, PD)[0] == [PD, "do not approve", "S1", "AGT-20, review"] and ("earlier tasks", "AGT-19 (failed), AGT-18 (review)") in row(out, PD)[1],
+      row(out, PD))
+check("another agent's task that names the bundle is not a check's, and a task that a person started is not a validation",
+      "AGT-21" not in out and "AGT-22" not in out and row(out, AA)[0] == [AA, "-", "-", "not started"], out)
 check("a finished task with no verdict line in its result says so",
-      "  verdict:        not in the task's result" in block(out, "Validation (agent folder)"), out)
+      row(out, VS)[0] == [VS, "not in the result", "not in the result", "AGT-23, done"], row(out, VS))
+check("...and the count line counts it as no verdict",
+      count_line(out) == "1 of 3 says do not approve, 1 of 3 has no verdict (not in its result), 1 of 3 is not started.", count_line(out))
+code, out, _ = run(tasks=[task("AGT-24", PD, "review", "Verdict: Do not approve.\nHighest severity: S1"),
+                          task("AGT-25", AA, "review", "Verdict: approve after fixes\nHighest severity: S2"),
+                          task("AGT-26", VS, "cancelled")])
+check("a verdict is counted with its case and an end dot aside; one that is not the policy's is counted as the check wrote it",
+      count_line(out) == "1 of 3 says do not approve, 1 of 3 says approve after fixes, 1 of 3 has no verdict (cancelled)."
+      and row(out, PD)[0][1] == "Do not approve.", (count_line(out), row(out, PD)))
+code, out, _ = run(tasks=[])
+check("no task at all: three rows that say not started, and 3 of 3 are not started",
+      [row(out, n)[0] for n in (PD, AA, VS)] == [[n, "-", "-", "not started"] for n in (PD, AA, VS)]
+      and count_line(out) == "3 of 3 are not started.", out)
+
+# No merged verdict: the checks advise, and the approver decides.
+VERDICT_WORDS = re.compile(r"\b(approve|could not check)\b", re.I)
+for tasks, why in ((ALL, "mixed verdicts"), ([task("AGT-30", n, "review", result("approve", "none", "a doc")) for n in (PD, AA, VS)],
+                                             "three approve")):
+    code, out, _ = run(tasks=tasks)
+    named = [ln for ln in out.splitlines() if VERDICT_WORDS.search(ln)]
+    rows_ = [ln for ln in named if "|" in ln and ln.split("|")[0].strip() in (PD, AA, VS)]
+    parts = count_line(out)[:-1].split(", ") if count_line(out) else []
+    check(f"no merged verdict ({why}): a verdict shows only in a check's row and in the count line, whose parts are each "
+          "'<n> of 3 say(s) <verdict>'",
+          len(rows_) == 3 and set(named) == set(rows_) | {count_line(out)}
+          and all(re.fullmatch(r"\d of 3 says? (approve|do not approve|could not check)", p) for p in parts), named)
+    check(f"...and no overall result, pass or fail ({why})", not re.search(r"\b(overall|merged|pass(ed)?|fail(ed)?)\b", out, re.I), out)
+
+# The one source: the script reads governance/checks.json from its own folder (Domino runs it from the repo, as its command says).
+other = WORK / "other-source"
+other.mkdir()
+shutil.copy(SCRIPT, other / "validation_status.py")
+(other / "checks.json").write_text(json.dumps({**source, "checks": [{"name": "Only check", "evidenceItem": "Validation: Only check",
+                                                                     "folder": "governance/check-only"}],
+                                               "fields": {**SPEC_FIELDS, "verdict": "Decision"}}))
+code, out, _ = run(tasks=[task("AGT-40", "Only check", "review", "Decision: approve\nHighest severity: S3\nDoc location: x.md"),
+                          task("AGT-41", PD, "review", DONE_PD)], script=other / "validation_status.py")
+check("the checks and the labels come from the checks.json next to the script: another file there gives other rows",
+      row(out, "Only check")[0] == ["Only check", "approve", "S3", "AGT-40, review"] and row(out, PD)[0] is None
+      and count_line(out) == "1 of 1 says approve.", out)
+(other / "checks.json").unlink()
+code, out, text = run(tasks=ALL, script=other / "validation_status.py")
+check("no checks.json next to the script: it says so, exits 1, calls no App, and still writes its output file",
+      code == 1 and not APP["calls"] and any(ln.startswith("No checks: ") for ln in out.splitlines()) and "Traceback" not in out
+      and text is not None and "No checks: " in text, out)
 
 # The token: Domino's API proxy in the Job gives the token of the person who clicked Run.
-code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+code, out, text = run(tasks=ALL)
 check("it calls the App with the Job's token, from Domino's API proxy (DOMINO_API_PROXY/access-token)",
       APP["calls"] and all(c["auth"] == "Bearer " + TOKEN for c in APP["calls"]), APP["calls"])
 check("the head says whose view it is: the person who clicked Run (the token's user name), not the token",
@@ -406,7 +474,7 @@ check("the head says whose view it is: the person who clicked Run (the token's u
 check("it never prints the token: not in the Job's log, not in its output file",
       TOKEN not in out and TOKEN.split(".")[2] not in out and TOKEN not in (text or ""), "the token is in the output")
 PROXY["token"] = "Bearer " + TOKEN
-code, out, _ = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+code, out, _ = run(tasks=ALL)
 check("a proxy answer of the form \"Bearer <token>\" works the same", code == 0 and APP["calls"] and APP["calls"][0]["auth"] == "Bearer " + TOKEN
       and TOKEN not in out, APP["calls"])
 PROXY["token"] = TOKEN
@@ -423,15 +491,15 @@ def copy():
     return f.read_text() if f.is_file() else None
 
 
-code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER), task("AGT-16", LANGGRAPH, "running")])
+code, out, text = run(tasks=[task("AGT-12", PD, "review", DONE_PD), task("AGT-16", VS, "running")])
 check("it writes validation_status.txt in its working folder, with the lines of the Job's log",
-      text is not None and text.splitlines() == out.splitlines() and "Validation (LangGraph)" in text, text)
+      text is not None and text.splitlines() == out.splitlines() and count_line(text) is not None, text)
 check("...and a copy in the Job's artifacts folder (DOMINO_ARTIFACTS_DIR: a Git-based project keeps the Job's results there)",
       text is not None and copy() == text, copy())
 
 # Only GET: the check never starts or changes an agent.
 seen = []
-for tasks in ([], [task("AGT-12", FOLDER, "review", DONE_FOLDER)], [task("AGT-14", FOLDER, "running"), task("AGT-16", LANGGRAPH, "waiting")]):
+for tasks in ([], ALL, [task("AGT-14", PD, "running"), task("AGT-16", VS, "waiting")]):
     run(tasks=tasks)
     seen += APP["calls"]
 check("it sends only GET requests to the App, and only to its task search (GET /api/tasks)",
@@ -442,6 +510,8 @@ check("...with q = the bundle ID and the event trigger (trigger_type=event)",
 src = SCRIPT.read_text()
 check("the script has no way to send another method: no POST, PUT, PATCH or DELETE, and no request body",
       not re.search(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src), re.findall(r"\b(POST|PUT|PATCH|DELETE)\b|method\s*=|data\s*=", src))
+check("the scripted check names none of the #260 validators' fields, values or agents", not [o for o in OLD if o in src],
+      [o for o in OLD if o in src])
 
 # An App error: printed with its status (the App's errors are FastAPI's {"detail": ...}).
 ERRORS = {401: "Domino didn't accept that token. Send a current JWT or PAT as Authorization: Bearer <token>.",
@@ -449,9 +519,9 @@ ERRORS = {401: "Domino didn't accept that token. Send a current JWT or PAT as Au
           503: "Couldn't verify the caller with Domino: timed out"}
 for status, detail in ERRORS.items():
     APP["answer"] = (status, {"detail": detail}) if status != 500 else (500, b"Internal Server Error", "text/plain")
-    code, out, text = run(tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
-    check(f"an App error {status} is printed with its status and its detail, exit 1, and no validator block",
-          code == 1 and f"App error: HTTP {status}: {detail}" in out.splitlines() and "Validation (agent folder)" not in out
+    code, out, text = run(tasks=ALL)
+    check(f"an App error {status} is printed with its status and its detail, exit 1, and no row and no count",
+          code == 1 and f"App error: HTTP {status}: {detail}" in out.splitlines() and "|" not in out and count_line(out) is None
           and "Traceback" not in out, out)
     check(f"...and the output file says so too ({status})", text is not None and f"App error: HTTP {status}: {detail}" in text, text)
 APP["answer"] = (302, b"", "text/html", [("Location", "https://sign-in.example/login?next=/apps-internal/x")])
@@ -468,22 +538,23 @@ code, out, _ = run(url="http://127.0.0.1:9")
 check("an App that can't be reached: printed, exit 1", code == 1 and any(ln.startswith("App error: no answer from the App (") for ln in out.splitlines())
       and "Traceback" not in out, out)
 
-# bundle_id "newest" (the policy's default): the newest validation of each validator in the Job's project.
+# bundle_id "newest" (the policy's default): the newest validation of each check in the Job's project.
 OTHER = "0e5e1b7a-0000-4000-8000-000000000999"
-newest = [task("AGT-30", FOLDER, "review", DONE_FOLDER, bundle=OTHER, created="2026-11-17T12:00:00Z"),
-          task("AGT-31", FOLDER, "review", "Verdict: approve", created="2026-11-17T08:00:00Z"),
-          task("AGT-32", LANGGRAPH, "running", bundle=OTHER, created="2026-11-17T12:01:00Z"),
-          task("AGT-33", LANGGRAPH, "review", "Verdict: approve", bundle=OTHER, project="another-project", created="2026-11-17T13:00:00Z")]
+newest = [task("AGT-30", PD, "review", DONE_PD, bundle=OTHER, created="2026-11-19T12:00:00Z"),
+          task("AGT-31", PD, "review", result("approve", "none", DOC_PD), created="2026-11-19T08:00:00Z"),
+          task("AGT-32", VS, "running", bundle=OTHER, created="2026-11-19T12:01:00Z"),
+          task("AGT-33", VS, "review", DONE_VS, bundle=OTHER, project="another-project", created="2026-11-19T13:00:00Z")]
 code, out, _ = run(bundle="newest", tasks=newest)
 check("newest: one search for the event tasks of the Job's project (DOMINO_PROJECT_NAME), with no q",
       [c["query"] for c in APP["calls"]] == [{"trigger_type": ["event"], "project": [PROJECT]}], [c["query"] for c in APP["calls"]])
 check("...the head says that no bundle ID was given, and which project it read",
-      f"Validation status: no bundle ID given, so the newest validation of each validator in project {PROJECT}" in out.splitlines(), out)
-check("...each block shows that validator's newest task in the project, whose title names its bundle",
-      "  task:           AGT-30  " + f"{FOLDER}: validate bundle {OTHER}" in block(out, "Validation (agent folder)")
-      and "  earlier tasks:  AGT-31 (review)" in block(out, "Validation (agent folder)")
-      and "  task:           AGT-32  " + f"{LANGGRAPH}: validate bundle {OTHER}" in block(out, "Validation (LangGraph)")
-      and "AGT-33" not in out, out)
+      f"Validation status: no bundle ID given, so the newest validation of each check in project {PROJECT}" in out.splitlines(), out)
+check("...each row shows that check's newest task in the project, whose title names its bundle",
+      row(out, PD)[0][3] == "AGT-30, review" and ("title", f"{PD}: bundle {OTHER}") in row(out, PD)[1]
+      and ("earlier tasks", "AGT-31 (review)") in row(out, PD)[1]
+      and row(out, VS)[0][3] == "AGT-32, running" and "AGT-33" not in out
+      and ("note", "no task of this agent in project aml-validation-demo that you may read (only its owner and editors see all its tasks)")
+      in row(out, AA)[1], out)
 code, out, _ = run(bundle="", tasks=newest)
 check("an empty bundle ID is newest too", code == 0 and [c["query"] for c in APP["calls"]] == [{"trigger_type": ["event"], "project": [PROJECT]}],
       [c["query"] for c in APP["calls"]])
@@ -491,7 +562,7 @@ check("an empty bundle ID is newest too", code == 0 and [c["query"] for c in APP
 # The App's URL: the token goes only to an https App (or to this machine, for this check).
 for url, why in (("__AGENT_SERVICE_URL__", "the policy's placeholder"), ("", "no URL"), ("http://apps.example/apps-internal/x", "plain http")):
     PROXY["calls"] = 0
-    code, out, text = run(url=url, tasks=[task("AGT-12", FOLDER, "review", DONE_FOLDER)])
+    code, out, text = run(url=url, tasks=ALL)
     check(f"an App URL that isn't https ({why}): it says so, exits 1, reads no token and calls nothing",
           code == 1 and not APP["calls"] and PROXY["calls"] == 0 and any(ln.startswith("No App URL: ") for ln in out.splitlines())
           and text is not None, out)
