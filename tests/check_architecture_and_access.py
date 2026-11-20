@@ -525,6 +525,31 @@ brule("...it needs the domino-agent package or a domino-agent-service checkout o
       "`domino-agent`", "`pythonpath`", "no network")
 brule("...its run writes __pycache__/, which the repo's .gitignore ignores, else deploy refuses the folder", "`__pycache__/`",
       "`.gitignore`", "refuses")
+brule(f"its file table names the custom subagent's file, {SUBAGENT}, and deploy uploads it", f"| `{SUBAGENT}` |", "| yes |")
+check('the folder\'s README has the section "Its custom subagent"', "\n## Its custom subagent\n" in readme)
+brule(f"the custom subagent {SUBAGENT_NAME} has the agent's model, the tool read only and Project files read", f"`{SUBAGENT_NAME}`",
+      f"`{MODEL}`", "`tools: [read]`", "`project: read`")
+brule("...so it can't call Domino, run a command, call the own tool or write a file", "can't call domino", "run a command",
+      "own tool", "write a file")
+brule("...the main agent hands it the route table, the Intake's Users and Data class and the access rules, in one task call",
+      "one `task` call", "route table", "users", "data class", "access rules")
+brule("...its answer is one JSON object with a verdict for each route", "json", "each route", "who can call it", "what it changes",
+      "severity")
+brule("...the main agent calls the own tool itself: a custom subagent's own-tool calls are not in the transcript and get no Activity "
+      "log row", "itself", "own tool", "not in the transcript", "activity log")
+brule(f"...the main agent decides and files the findings: {SUBAGENT_NAME} files nothing", "main agent", "decides", "files nothing")
+brule(f"...with no usable answer, the main agent judges the routes itself, and that alone does not make the Verdict could not check",
+      "no usable answer", "itself", '"what this check could not check"', "alone", "`could not check`")
+brule("...the built-in subagent is off (subagents: false), and the custom subagent works with it off", "built-in subagent",
+      "`subagents: false`", "works with it off")
+brule("...the rules and the checklist reach the subagent too, so its instructions say that they are the main agent's",
+      "operating rules", "main agent", "no skill")
+check('the folder\'s README says "no subagents" nowhere: the built-in subagent is off, and it has a custom subagent',
+      "no subagents" not in readme.lower())
+brule("the check reads the custom subagent's file: its settings, its instructions and its answer form", f"`{SUBAGENT}`",
+      "settings", "answer form")
+brule("...and on Linux, deploy registers the custom subagent, and the Job's spec has it, read only", "deploy", "registers",
+      "custom subagent", "job's spec", "read only")
 
 # --------------------------------------------------------------------------------------------- the own tool's unit test
 # test_route_table.py, as the README says to run it (python -m unittest, in the folder). It needs domino_agent: the domino-agent
