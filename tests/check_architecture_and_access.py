@@ -229,6 +229,32 @@ rule("each item of the tool's not_read goes under what the check could not check
 rule("the doc's route table has one line for each row of the tool, with its method and path exactly as the tool gives them",
      "route table", "each row", f"`{OWN}`", "`method`", "`path`", "exactly")
 
+# The custom subagent (spec #459, decisions 5 and 6): the main agent hands it the table, once, and decides; it files the findings
+rule(f"hand the table to the custom subagent {SUBAGENT_NAME}, once: one call of the task tool, with its name as subagent_type",
+     f"`{SUBAGENT_NAME}`", "once", "`task`", "`subagent_type`")
+prompt_block = next((b for b in re.findall(r"```\n(.*?)\n```", skill, re.S) if "Route table:" in b), "")
+heads_of_prompt = [ln.split(":")[0] for ln in prompt_block.splitlines() if re.match(r"^[A-Z][a-z ]+:", ln)]
+check(f"...its prompt has the Intake's Users and Data class, the access rules and the table of {OWN}, as the tool gave it",
+      heads_of_prompt == ["Users", "Data class", "Access rules", "Route table"] and OWN in prompt_block
+      and "exactly as the tool gave it" in prompt_block, prompt_block or heads_of_prompt)
+rule("...the access rules: with no access check in the code, anyone who can open the App can call it", "anyone who can open the app",
+     "no access check")
+rule("...a write that records no identity is a problem", "each write", "`domino-username`", "records no identity")
+rule("...the severity: the scale of governance/README.md, with the Intake's Users and Data class", "severity", "governance/readme.md",
+     "users", "data class")
+rule("...judge only access: the other two checks' parts get no verdict", "only access", f'"{SCAN_CHECK}"', f'"{PURPOSE}"')
+rule(f"...a row with no verdict of {SUBAGENT_NAME}: judge it yourself, and name it under what the check could not check",
+     "no verdict", "yourself", '"what this check could not check"')
+rule(f"when {SUBAGENT_NAME} gives no usable answer: do not call it again, judge the routes yourself, and name the failed step, and "
+     f"this alone does not make the Verdict `{V[2]}`", f"`{SUBAGENT_NAME}`", "no usable answer", "do not call it again", "yourself",
+     "failed step", '"what this check could not check"', "alone does not make", f"`{V[2]}`")
+rule("sort each route problem of the review into a real finding or a false hit: the review is an input, the main agent decides",
+     "route problem", "review", "you decide")
+rule(f"the doc's route table takes who can call it and what it changes from the review of {SUBAGENT_NAME}", "route table",
+     "who can call it", "what it changes", f"`{SUBAGENT_NAME}`")
+rule(f"the main agent files the findings itself: {SUBAGENT_NAME} files nothing", "you file", f"`{SUBAGENT_NAME}`", "files nothing")
+rule("...and a review with no usable answer goes under could_not_check", "`could_not_check`", "no usable answer")
+
 # The push, the attachment, the findings, the evidence and the result
 rule("push the doc with git_push, and keep its ok, branch, commit and dryRun", "domino_git_push", "`ok`", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
@@ -247,11 +273,11 @@ rule("a failed or denied call: go on with the other steps, and name it under wha
      "go on", "could not check")
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
 
-order = ["domino_get_bundle", "domino_get_policy", OWN, "domino_git_push", "domino_write_bundle_attachment",
+order = ["domino_get_bundle", "domino_get_policy", OWN, SUBAGENT_NAME, "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
 at = [skill.find(t) for t in order]
-check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN} (before the writes), push, attachment, "
-      "findings, evidence, result",
+check(f"the checklist's tools come in order: bundle and policy, the own tool {OWN}, the custom subagent {SUBAGENT_NAME} (both "
+      "before the writes), push, attachment, findings, evidence, result",
       all(i >= 0 for i in at) and at == sorted(at), dict(zip(order, at)))
 steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)

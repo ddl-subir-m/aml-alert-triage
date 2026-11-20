@@ -28,7 +28,7 @@ The main agent's prompt has:
 1. Read the handler of each row at its file and line in the project folder, and each function of the App's code that it calls.
 2. Find who can call it, with the access rules: who can open the App, and each check in the code that limits the callers, or that there is none.
 3. Find what it changes: the state that it writes, or "nothing". A `changes_state` of `false` means only that the tool's rule found no write: check it in the code.
-4. Find each access problem: a change that any caller can make, a write that records no identity or an identity that the caller can set, or data that a caller can read and must not. Or "none".
+4. Find each access problem: a change that any caller can make, a write that records no identity, or data that a caller can read and must not. Or "none".
 5. Give each problem a severity on the shared scale of governance/README.md (S0, S1, S2 or S3), with its examples for the check "Architecture and access". The Intake's Users say who must reach the App, and its Data class says how much harm an open route can do. With no problem, the severity is `none`.
 6. Cite the evidence of each claim: a file and a line.
 
