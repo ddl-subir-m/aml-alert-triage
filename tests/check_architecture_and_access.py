@@ -771,9 +771,13 @@ check(f"the Job's spec has the custom subagent {SUBAGENT_NAME}: a subagent of op
       == {"description": SUB_DESCRIPTION, "mode": "subagent", "model": f"{provider}/{MODEL}", "prompt": sub_text},
       {k: compiled.get(k) for k in ("description", "mode", "model")})
 sub_perm, main_perm = compiled.get("permission") or {}, oc.get("permission") or {}
-DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "task", "own_*")
+# domino_write_project_*: the service denies the project's write tools for `access.project: read` (agent_service/custom_subagents.py,
+# WRITES): the proof of Project files read
+DENIED = ("edit", "bash", "webfetch", "websearch", "domino_*", "domino_run_job", "domino_git_push", "domino_write_project_*", "task",
+          "own_*")
 check("...it may read the project's files as the main agent does, and nothing more: no edit, no shell, no web, no Domino tool, no "
-      "Job, no push, no subagent and no own tool", sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
+      "Job, no push, no write to the project (Project files read), no subagent and no own tool",
+      sub_perm.get("read") == main_perm.get("read") and sub_perm.get("read")
       and {k: sub_perm.get(k) for k in DENIED} == dict.fromkeys(DENIED, "deny"), {k: sub_perm.get(k) for k in ("read", *DENIED)})
 check("...the main agent may start it (task: allow), and the built-in subagent stays off (opencode's general and explore disabled)",
       main_perm.get("task") == "allow" and {k: (oc.get("agent") or {}).get(k) for k in ("general", "explore")}
