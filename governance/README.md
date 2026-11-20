@@ -62,32 +62,6 @@ values:
   The doc is written before its push or its snapshot, so its own top part names only the file and where it goes, with no commit and
   no snapshot.
 
-## The scan
-
-The Vulnerability scan starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job` until the Job
-ends.
-
-- It installs pip-audit and bandit with pip when the Domino Environment does not have them (the Job reaches PyPI).
-- It runs pip-audit on `case_server/requirements.txt` (pip-audit resolves the requirements from PyPI) and bandit on `case_server/` at
-  every severity. Each tool's JSON goes to `$DOMINO_ARTIFACTS_DIR/governance-scan/`, with the tool's own messages in `<tool>.log`.
-- The last lines that it prints are the summary, between `== scan summary ==` and `== end of scan summary ==`: the commit that it
-  scanned, each tool with its version and its hits, where the JSON is, and a `result:` line.
-- It exits 0 when both tools ran, with hits or not. It exits 1 when a tool could not run, and the summary says which tool and why.
-  The doc then says so under "What this check could not check".
-- A tool can run and still miss a part: pip-audit does not audit a package that is not on PyPI (its `skip_reason`), and bandit does
-  not scan a file that it cannot parse (its `errors`). The summary counts only what was checked, and names each part that was not
-  (`- not audited: ...`, `- not scanned: ...`). The doc names each one under "What this check could not check".
-
-`wait_job` shows the end of the Job's log: its last 8,000 characters. The summary is short, so it is there. Domino adds a few lines of
-its own after the script's output, and the Job's stderr (Domino's messages only: the script writes nothing to stderr) comes after its
-stdout. So find the summary by its two marker lines. `get_job_logs` gives more of the log.
-
-On your computer, in a Python with pip-audit and bandit (or with network to install them):
-
-```bash
-python governance/scan.py --out /tmp/governance-scan
-```
-
 ## The severity scale
 
 The four severities that the gateway tool `write_governance_finding` takes. One scale for all three checks, so that "S1" means the
@@ -125,6 +99,48 @@ right team.
 | Vulnerability scan | `[Vulnerability scan] Code execution through yaml.full_load in POST /upload` |
 
 A check files only its real findings. A false hit goes in its doc only, under "False hits", with the reason.
+
+## The result
+
+Each check ends with `report_result`, once, last. Its summary starts with four lines, one for each evidence field, in the fields'
+order, with the same values as the evidence item:
+
+```
+Verdict: approve | do not approve | could not check
+Highest severity: S0 | S1 | S2 | S3 | none
+Summary: <the Summary, on one line>
+Doc location: <the Doc location>
+```
+
+Each line is the field's label, a colon and the value, with no Markdown. "Validation status" reads these lines, so it and the task's
+page show the same result. Then come the real findings (name and severity), the false hits (the hit and the reason), and "Could not
+check:" with each limit of the check. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
+
+## The scan
+
+The Vulnerability scan starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job` until the Job
+ends.
+
+- It installs pip-audit and bandit with pip when the Domino Environment does not have them (the Job reaches PyPI).
+- It runs pip-audit on `case_server/requirements.txt` (pip-audit resolves the requirements from PyPI) and bandit on `case_server/` at
+  every severity. Each tool's JSON goes to `$DOMINO_ARTIFACTS_DIR/governance-scan/`, with the tool's own messages in `<tool>.log`.
+- The last lines that it prints are the summary, between `== scan summary ==` and `== end of scan summary ==`: the commit that it
+  scanned, each tool with its version and its hits, where the JSON is, and a `result:` line.
+- It exits 0 when both tools ran, with hits or not. It exits 1 when a tool could not run, and the summary says which tool and why.
+  The doc then says so under "What this check could not check".
+- A tool can run and still miss a part: pip-audit does not audit a package that is not on PyPI (its `skip_reason`), and bandit does
+  not scan a file that it cannot parse (its `errors`). The summary counts only what was checked, and names each part that was not
+  (`- not audited: ...`, `- not scanned: ...`). The doc names each one under "What this check could not check".
+
+`wait_job` shows the end of the Job's log: its last 8,000 characters. The summary is short, so it is there. Domino adds a few lines of
+its own after the script's output, and the Job's stderr (Domino's messages only: the script writes nothing to stderr) comes after its
+stdout. So find the summary by its two marker lines. `get_job_logs` gives more of the log.
+
+On your computer, in a Python with pip-audit and bandit (or with network to install them):
+
+```bash
+python governance/scan.py --out /tmp/governance-scan
+```
 
 ## A failed scan
 

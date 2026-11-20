@@ -382,6 +382,20 @@ check("a check files only its real findings, and a false hit goes in its doc onl
 check("governance/README.md names no validator of spec #260: no [folder], no [LangGraph] finding names",
       "[folder]" not in rules and "[LangGraph]" not in rules, [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
 
+# The result: spec #388, Implementation Decision 7. Each check ends with report_result, whose first lines are the four evidence
+# values, so that "Validation status" and the task page show the same result. Each line is "<field label>: <value>".
+result_rule = section(rules, "The result")
+check("governance/README.md has the rule for the result: each check ends with report_result, once, last",
+      re.search(r"`report_result`, once, last", one_line(result_rule)) is not None, one_line(result_rule)[:300] or "no '## The result'")
+block = re.search(r"```\n(.*?)```", result_rule, re.S)
+first = block.group(1).splitlines()[:4] if block else []
+check("the result's first four lines are the four evidence fields, in order, each as '<label>: <value>'",
+      [ln.split(":")[0] for ln in first] == list(FIELDS), first)
+check("the result's Verdict and Highest severity lines give exactly their values",
+      first[:2] == ["Verdict: approve | do not approve | could not check", "Highest severity: S0 | S1 | S2 | S3 | none"], first)
+check("the result's four values are the same as the evidence item's", "the same values as the evidence item" in one_line(result_rule),
+      one_line(result_rule)[:300])
+
 # ---------------------------------------------------------------------------------------------- the shared rules: a failed scan
 # Spec #388, Implementation Decision 10: only check 3 runs the scan now. A failed scan gives "could not check" (it replaces spec #260's
 # "do not approve"), no finding from the scan, and the Summary and the doc say why.
