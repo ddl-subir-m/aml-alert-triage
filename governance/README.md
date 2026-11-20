@@ -33,9 +33,38 @@ owns that part files it. Where two parts meet:
 - The kind of data that the App holds, and its class, is Purpose and data. Who can read that data through the App is Architecture
   and access.
 
+## The evidence fields
+
+Each check fills its own evidence item with `write_policy_result`. The three items have the same four fields, with these labels and
+values:
+
+| Field | Its value |
+|---|---|
+| Verdict | `approve`, `do not approve` or `could not check` |
+| Highest severity | `S0`, `S1`, `S2`, `S3` or `none` |
+| Summary | A short text: the verdict's reason, and the real findings by name and severity |
+| Doc location | One line that says where the doc is |
+
+- **Verdict.** The check's advice: the approver decides. The reason names the findings that decide it. It is `could not check` when
+  the check could not do its work (for example a failed scan, a model that refused the call or gave no usable answer, or a call that
+  Domino denied), and the Summary says why.
+- **Highest severity.** It is the highest severity of the check's real findings, on the scale below: `S0` when at least one real
+  finding is S0. It is `none` when the check has no real finding. With `could not check`, it counts the real findings that the check
+  did file, and it is `none` when it filed none.
+- **Summary.** Three to five sentences: the verdict's reason, and each real finding by its name and its severity. With
+  `could not check`, it says what was not checked, and why.
+- **Doc location.** The same line in the evidence item and in the result:
+  - Purpose and data, Architecture and access (a pushed doc): `<task branch> at <commit>, docs/validation/<file>`. When the doc is
+    not in the repo: `Not in the repo: <why>. The doc is in the task's result.`
+  - Vulnerability scan (a dataset snapshot): `dataset <ID>, snapshot <ID>, file <name>`. When there is no snapshot:
+    `Not written: <why>.`
+
+  The doc is written before its push or its snapshot, so its own top part names only the file and where it goes, with no commit and
+  no snapshot.
+
 ## The scan
 
-A validator starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job` until the Job
+The Vulnerability scan starts it with the gateway tool `run_job` and the command `python governance/scan.py`, then calls `wait_job` until the Job
 ends.
 
 - It installs pip-audit and bandit with pip when the Domino Environment does not have them (the Job reaches PyPI).
@@ -44,10 +73,10 @@ ends.
 - The last lines that it prints are the summary, between `== scan summary ==` and `== end of scan summary ==`: the commit that it
   scanned, each tool with its version and its hits, where the JSON is, and a `result:` line.
 - It exits 0 when both tools ran, with hits or not. It exits 1 when a tool could not run, and the summary says which tool and why.
-  The doc then says so under "What the validator could not check".
+  The doc then says so under "What this check could not check".
 - A tool can run and still miss a part: pip-audit does not audit a package that is not on PyPI (its `skip_reason`), and bandit does
   not scan a file that it cannot parse (its `errors`). The summary counts only what was checked, and names each part that was not
-  (`- not audited: ...`, `- not scanned: ...`). The doc names each one under "What the validator could not check".
+  (`- not audited: ...`, `- not scanned: ...`). The doc names each one under "What this check could not check".
 
 `wait_job` shows the end of the Job's log: its last 8,000 characters. The summary is short, so it is there. Domino adds a few lines of
 its own after the script's output, and the Job's stderr (Domino's messages only: the script writes nothing to stderr) comes after its
@@ -77,22 +106,15 @@ Each finding's name starts with the validator's short name in brackets, then a s
 
 A validator files only the real findings. A false hit goes in the doc only, under "False hits", with the reason.
 
-## Critical vulns
-
-The doc's "Critical vulns" is `yes` when at least one real finding is S0, and `no` when none is. It is `not analyzed` when the
-analysis failed (the model refused the call, or gave no usable answer): nothing was checked, so it is neither. The evidence item's
-Critical vulns radio (`yes` or `no` only) then stays empty, and its Summary says why.
-
 ## A failed scan
 
-The scan failed when its Job did not end `Succeeded`, or when its summary's `result:` line is not `result: both tools ran` (a tool
-could not run). Then nobody checked the dependencies, and both validators do the same:
+Only the Vulnerability scan runs the scan. The scan failed when its Job did not end `Succeeded`, or when its summary's `result:` line
+is not `result: both tools ran` (a tool could not run). Then nobody checked the dependencies:
 
-- The verdict is `do not approve`: run the validation again when the scan runs.
-- No finding comes from the scan, so none is filed. The findings from the code are filed as usual.
-- Critical vulns stays `yes` or `no`: the policy's field has only these two values. It is `yes` when a finding from the code is S0.
-  Else it is `no`, and its reason starts with "No S0 finding; dependencies not scanned".
-- The evidence item's Summary, and the doc's "Scan results" and "What the validator could not check", say that the scan failed, and
+- The Verdict is `could not check`: run the check again when the scan runs.
+- No finding comes from the scan, so none is filed. A real finding in the code that the check found with no scan is filed as usual.
+- Highest severity counts only the real findings that the check filed. It is `none` when it filed none.
+- The evidence item's Summary, and the doc's "Scan results" and "What this check could not check", say that the scan failed, and
   why.
 
 ## The check

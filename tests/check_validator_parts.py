@@ -323,6 +323,30 @@ check("governance/README.md says that a check files findings only in its own par
 check("governance/README.md names the tag app-validation-two-ways, which keeps the same job done two ways (spec #388, user story 47)",
       any(TAG in ln and "the same job, two ways" in ln for ln in rules.splitlines()), [ln for ln in rules.splitlines() if TAG in ln])
 
+# --------------------------------------------------------------------------------------------- the shared rules: the evidence fields
+# Spec #388, Implementation Decision 7: each evidence item has the same four fields, with these values. They replace spec #260's
+# "Critical vulns" (yes or no, and "not analyzed" in the doc) and its verdict "approve after fixes".
+FIELDS = {"Verdict": ["approve", "do not approve", "could not check"], "Highest severity": ["S0", "S1", "S2", "S3", "none"],
+          "Summary": [], "Doc location": []}
+fields = {r[0]: r for r in table(section(rules, "The evidence fields"))}
+check("governance/README.md has the four evidence fields, in order: Verdict, Highest severity, Summary, Doc location, and no other",
+      list(fields) == list(FIELDS), list(fields))
+values = {f: re.findall(r"`([^`]+)`", " ".join(fields.get(f, [])[1:2])) for f in FIELDS}
+check("Verdict's values are exactly approve, do not approve and could not check", values["Verdict"] == FIELDS["Verdict"], values)
+check("Highest severity's values are exactly S0, S1, S2, S3 and none", values["Highest severity"] == FIELDS["Highest severity"], values)
+check("Summary and Doc location are text, with no list of values", not values["Summary"] and not values["Doc location"]
+      and all(len(fields.get(f, [])) > 1 and fields[f][1] for f in ("Summary", "Doc location")), values)
+evidence = one_line(section(rules, "The evidence fields"))
+check("governance/README.md says that Highest severity is the highest severity of the check's real findings, and none when it has none",
+      "the highest severity of the check's real findings" in evidence and re.search(r"`none` when [^.]*no real finding", evidence),
+      evidence[:400])
+check("governance/README.md says when the Verdict is could not check: the check could not do its work, and the Summary says why",
+      re.search(r"`could not check` when the check could not do its work", evidence) is not None and "Summary says why" in evidence,
+      evidence[:400])
+OLD_RULES = re.compile(r"critical vulns|not analyzed|approve after fixes", re.I)
+check("governance/README.md has no rule of spec #260 left: no Critical vulns, no 'not analyzed', no 'approve after fixes'",
+      not OLD_RULES.search(rules), sorted(set(m.group(0) for m in OLD_RULES.finditer(rules))))
+
 # ----------------------------------------------------------------------------------------- the severity scale and the finding names
 # write_governance_finding's own words: "severity: S0 (critical), S1 (high), S2 (medium) or S3 (low)" (agent_runtime/gateway.py).
 SCALE = {"S0": "critical", "S1": "high", "S2": "medium", "S3": "low"}
@@ -331,14 +355,20 @@ check("governance/README.md has the severity scale, S0 to S3, with write_governa
 flat = " ".join(rules.split())
 check("governance/README.md says that each finding's name starts with the validator's short name, [folder] or [LangGraph]",
       "[folder]" in flat and "[LangGraph]" in flat and "starts with" in flat, flat[:300])
-check("governance/README.md says that critical vulns is yes when at least one real finding is S0",
-      re.search(r"critical vulns.{0,40}yes.{0,80}at least one real finding is S0", flat, re.I) is not None, flat[:300])
-failed_scan = " ".join(rules[rules.find("## A failed scan"):].split("\n## ")[0].split()) if "## A failed scan" in rules else ""
-check("governance/README.md has one rule for a failed scan, for both validators: do not approve, no finding from the scan, critical "
-      "vulns no only as 'No S0 finding; dependencies not scanned', and the summary and the doc say that the scan failed",
-      all(w in failed_scan for w in ("result: both tools ran", "`do not approve`", "No finding comes from the scan",
-                                     "No S0 finding; dependencies not scanned", "Summary", "What the validator could not check")),
-      failed_scan[:400] or "no section '## A failed scan'")
+
+# ---------------------------------------------------------------------------------------------- the shared rules: a failed scan
+# Spec #388, Implementation Decision 10: only check 3 runs the scan now. A failed scan gives "could not check" (it replaces spec #260's
+# "do not approve"), no finding from the scan, and the Summary and the doc say why.
+failed_scan = one_line(section(rules, "A failed scan"))
+check("governance/README.md has the rule for a failed scan: when the Job did not succeed or the summary's result is not 'both tools "
+      "ran'", "`Succeeded`" in failed_scan and "`result: both tools ran`" in failed_scan, failed_scan[:400] or "no '## A failed scan'")
+check("the rule for a failed scan says that only the Vulnerability scan runs the scan",
+      re.search(r"[Oo]nly the Vulnerability scan runs the scan", failed_scan) is not None, failed_scan[:400])
+check("a failed scan gives the Verdict could not check, and never do not approve",
+      "The Verdict is `could not check`" in failed_scan and "`do not approve`" not in failed_scan, failed_scan[:400])
+check("a failed scan gives no finding from the scan", "No finding comes from the scan" in failed_scan, failed_scan[:400])
+check("after a failed scan, the Summary and the doc's Scan results and 'What this check could not check' say that the scan failed, "
+      "and why", all(w in failed_scan for w in ("Summary", "Scan results", "What this check could not check", "why")), failed_scan[:400])
 
 # --------------------------------------------------------------------------------------------- words that a public reader can follow
 # The repo is public. Its validator files say what was learned, never "as the probe did" (a private note). And they use the
