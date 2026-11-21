@@ -1,12 +1,13 @@
 ---
 # Check 2 of the App validation demo, "Architecture and access" (domino-agent-service spec #388, Implementation Decision 9): a
-# registered agent of the harness lane (opencode). When a governance bundle moves to the Validation stage, it checks the bundle's
+# registered agent (opencode). When a governance bundle moves to the Validation stage, it checks the bundle's
 # App with the checklist of its own skill, skills/architecture-and-access: all access, the tech stack, the design and the
 # dependencies. `domino-agent deploy governance/check-architecture-and-access` registers it. The data is fake.
 # It is the folder validator of spec #260 (the tag app-validation-two-ways keeps it), narrowed to its part: no scan, no Job.
 # The fields are on domino-agent-service's reference page, docs/definition-file.md. Its event subscription is the file
-# subscriptions/bundle-enters-validation.md. What the owner adds before it can run (the service account and its token, the sharing)
-# is in README.md, next to this file.
+# subscriptions/bundle-enters-validation.md. Its own tool is tools/route_table.py, and its custom subagent is
+# subagents/route-reviewer.md. What the owner adds before it can run (the service account and its token, the sharing) is in
+# README.md, next to this file.
 name: architecture-and-access
 title: Architecture and access   # exact: the check's name in governance/checks.json (Validation status finds the task by it)
 description: >-
@@ -24,7 +25,7 @@ limits:
   turns: 120
   wait-minutes: 0             # nobody answers an event task, so a question ends the Job at once
 tools:
-  subagents: false
+  subagents: false            # the built-in subagent: off. The custom subagent route-reviewer works with it off
   jobs: false                 # no scan: known vulnerabilities are the part of the check "Vulnerability scan"
   push: true                  # the doc leaves the Job only through domino_git_push, to the task branch agent/<task key>
 access:
