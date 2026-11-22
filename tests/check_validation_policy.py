@@ -72,7 +72,7 @@ check("verdicts: approve, do not approve, could not check", source.get("verdicts
 check("severities: S0, S1, S2, S3, none", source.get("severities") == SPEC_SEVERITIES, source.get("severities"))
 
 # ------------------------------------------------------------------------------------- the root README's section on the policy
-# Where the scripted check reads a check's lines (governance/README.md, "The result"): checks 1 and 2 end with report_result, and
+# Where the scripted check reads a check's lines (governance/rules.md, "The result"): checks 1 and 2 end with report_result, and
 # check 3, a framework agent with no report_result, ends with its run's last streamed text.
 readme = ROOT / "README.md"
 reads = next((" ".join(ln.strip() for ln in item.splitlines()) for item in re.split(r"\n(?=- \*\*)|\n\n", readme.read_text())
@@ -82,6 +82,9 @@ check(f"the root README says where the scripted check reads a check's lines: the
       f"streamed text of {VS} (a framework agent, which has no report_result)",
       f"the `report_result` of {PD} and of {AA}" in reads and f"the last streamed text of {VS}" in reads
       and "(its `report_result`)" not in reads, reads or "no '- **What it reads.**' item")
+policy_part = readme.read_text().split("\n## The App deployment policy\n", 1)[-1].split("\n## ", 1)[0] if readme.is_file() else ""
+check("the root README's policy section names the rules file of the three checks, governance/rules.md, in its file table",
+      "| `governance/rules.md` |" in policy_part, policy_part[:300])
 
 
 # ------------------------------------------------------------------------------------------------------------------- the policy

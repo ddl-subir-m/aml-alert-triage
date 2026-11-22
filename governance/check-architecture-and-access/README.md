@@ -8,8 +8,8 @@ It fills only its own evidence item, "Validation: Architecture and access". All 
 
 It is the folder validator of spec #260 (the tag `app-validation-two-ways` keeps it), narrowed to its part, as below.
 It runs no scan and no Job (Run a Job is off): known vulnerabilities are the part of the check "Vulnerability scan".
-The shared rules of the three checks (the evidence fields, the verdict rule, the severity scale, the finding names, the result and the
-doc template) are on [governance/README.md](../README.md).
+The shared rules of the three checks (the evidence fields, the verdict rule, could not check, the doc location, the severity scale,
+the finding names, the doc's template and the result) are on [governance/rules.md](../rules.md).
 
 | File | What it holds | Deployed |
 |---|---|---|
@@ -29,27 +29,27 @@ status" finds the check's task by it.
 
 The checklist's steps, in order:
 
-1. It reads the bundle and its policy (`domino_get_bundle`, `domino_get_policy`). It finds its evidence item by its name, and each
-   field (Verdict, Highest severity, Summary, Doc location) by its label.
-   It reads the Intake values that the analyst filled with `domino_get_policy`: each filled field has its value in
-   `result.artifactContent`. The Intake's Users and Data class help it pick the severity of an access finding. It does not judge the data class.
+1. It reads the bundle (`domino_get_bundle`) and the Intake values that the analyst filled, with `domino_get_policy`: each filled
+   field has its value in `result.artifactContent`. The Intake's Users and Data class help it pick the severity of an access
+   finding. It does not judge the data class.
 2. It calls its own tool `own_route_table` once, for the table of the App's routes and MCP tools (below, "Its own tool"). Then it
    reads the App's code, its start script and its requirements. It finds who can call each route and what it changes, which
    identity each write records, the tech stack, the design, and each dependency with how it is pinned and installed.
 3. It gives the route table to its custom subagent `route-reviewer`, in one `task` call (below, "Its custom subagent"). The
    subagent gives a verdict for each route, and changes nothing.
 4. It sorts each problem into a real finding (with a severity, S0 to S3) or a false hit (with the reason), with the review's
-   verdicts as input. Then it picks the Verdict and the Highest severity by the shared rules.
-5. It writes the doc from `governance/validation-doc.md`: the shared top part and its own middle part, "Architecture and access".
-   The doc's file on the task branch is `docs/validation/architecture-and-access-<bundleId>.md`. The route table of its
-   Architecture section comes from the rows of `own_route_table`, and who can call each route and what it changes from the review.
-6. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
-7. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
-   (`domino_write_bundle_attachment`).
-8. It files each real finding of its part, named `[Architecture and access] <what> in <where>` (`domino_write_governance_finding`).
-9. It fills its own evidence item (`domino_write_policy_result`).
-10. Its result (`domino_report_result`) starts with four lines: `Verdict: ...`, `Highest severity: ...`, `Summary: ...` and
-   `Doc location: ...`. The scripted check of the policy (`governance/validation_status.py`) shows them to the approver.
+   verdicts as input, and picks the Verdict and the Highest severity by the shared rules. Then it writes the doc from
+   `governance/validation-doc.md`: the shared top part and its own middle part, "Architecture and access". The doc's file on the
+   task branch is `docs/validation/architecture-and-access-<bundleId>.md`. The route table of its Architecture section comes from
+   the rows of `own_route_table`, and who can call each route and what it changes from the review.
+5. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`), and attaches it to the bundle: a
+   `Report` from `GBP`, with the task branch and the push's commit (`domino_write_bundle_attachment`).
+6. It files each real finding of its part, with its name by the finding names of `governance/rules.md`
+   (`domino_write_governance_finding`).
+7. It fills its own evidence item by its name, and each field (Verdict, Highest severity, Summary, Doc location) by its label
+   (`domino_write_policy_result`). The gateway finds their IDs in the bundle's policy, so the checklist searches for no ID.
+8. Its result (`domino_report_result`) starts with the four lines of `governance/rules.md`, "The result". The scripted check of
+   the policy (`governance/validation_status.py`) shows them to the approver.
 
 It files findings only in its own part. A known vulnerability (a CVE, PYSEC or GHSA ID) is the part of the check "Vulnerability
 scan", and the data class is the part of the check "Purpose and data": it files none for them.
@@ -183,7 +183,7 @@ these once, after the first deploy. A later deploy keeps them.
 | The approver | Share the agent with the approver as an owner or an editor. | The scripted check shows "not started": a user of the agent can't read its tasks. |
 | The poller | The platform App (the smoke App) has the project setting `SMOKE_AUDIT_POLL_SECONDS` (10 in the demo). | No stage move reaches the agent. |
 | Real pushes | The platform App has the project setting `SMOKE_PUSH_DRY_RUN=0`. | Each push is a dry run: the doc is not in the repo, and the check doesn't attach it. |
-| The shared rules | The demo project's default branch has `governance/README.md` and `governance/validation-doc.md` (the demo branch is rebased on main). | The checklist has no shared rules, and the doc has no template. |
+| The shared rules | The demo project's default branch has `governance/rules.md`, `governance/README.md` and `governance/validation-doc.md` (the demo branch is rebased on main). | The checklist has no shared rules, and the doc has no template. |
 
 The access rows are in `definition.md`. An edit in the wizard is a commit to the agent's branch, so keep these values there too:
 
@@ -231,7 +231,8 @@ the unit test or this page), the settings of `definition.md`, the checklist's ru
 `task` call of `route-reviewer`, the fallback) and the order of its tools, the instructions' rules, the own tool's file (the standard
 library only), the custom subagent's file, `subagents/route-reviewer.md` (its settings, its instructions and its answer form), the
 subscription's file (its filter on the demo project's name), no Domino host or ID in the folder, no em dash, the glossary's words
-in the folder's text, and this page.
+in the folder's text, and this page. The checklist fills its evidence item by the names of `governance/checks.json` (the item and
+the four labels), searches for no ID, and has at most 110 lines (spec #499).
 
 With the `domino-agent` package or `AGENT_SERVICE_REPO`, it runs the own tool's unit test (else a `SKIP:` line). With
 `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks each tool name against the service's gateway and relay,
@@ -251,7 +252,8 @@ service's seam helper, `tests/agent_folder_seam.py`), commits the folder in a te
 - The Job's spec has the skill, the own tool (its file, and `own_*` allowed for the main agent), the access rows, Run a Job off,
   Git push on, the permissions and the limits. The gateway's decisions
   for this task allow the attachment, the findings and the evidence on the event's bundle and `git_push`, and deny `run_job` and
-  a project dataset.
+  a project dataset. The checklist's result by names reaches a fake Domino as IDs: the gateway finds the evidence item and its
+  four fields in the bundle's policy, and Domino gets their IDs, with the values as they are.
 - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 
 On a Mac, run it with Docker, in the image of the service's checks (in domino-agent-service, `./tests/linux_checks.sh` builds it

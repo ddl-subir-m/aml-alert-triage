@@ -4,11 +4,14 @@ Stdlib only. Each check imports it from its own folder (tests/), so that the thr
 
 - check(), done(), text(): one line per case, and exit 1 on any failure.
 - load_checks(): governance/checks.json, the one source of the names and labels, and one check's entry, found by its folder.
-- rules(), blocks(): one case for each rule that a line (or a paragraph) of a text says.
+- rules(), blocks(): one case for each rule that a line (or a paragraph) of a text says. The rules that the three checks share are
+  in governance/rules.md (spec #499): tests/check_validator_parts.py checks that file, one time for the three checks.
 - LEAK, leaks(): what the public repo must not hold.
+- id_search(), result_call(): the checklists of checks 1 and 2 fill their evidence item by names (spec #499, ticket #509).
 - The seam part, for a local agent service (the service's seam helper, tests/agent_folder_seam.py, on Linux): the event bundle's GET,
   a stage move, its publish to the subscription, the Job that it starts, and that Job's spec. These import the service's own modules
-  (agent_service, requests) only when they run, from AGENT_SERVICE_REPO.
+  (agent_service, requests) only when they run, from AGENT_SERVICE_REPO. submit(): a result by names, as the gateway sends it to
+  Domino.
 """
 import json
 import re
@@ -94,6 +97,24 @@ def leaks(files):
     return sorted({f"{rel}: {m.group(0)}" for rel, body in files.items() for m in LEAK.finditer(body)})
 
 
+# ------------------------------------------------------------------------------------------------ the checklists of checks 1 and 2
+# write_policy_result takes the evidence item's name and each field's label, and the gateway finds their IDs in the bundle's policy
+# (domino-agent-service ADR 0059, ticket #500). So a checklist names its item and its fields, and it searches for no ID (spec #499).
+ID_SEARCH = re.compile(r"evidenceId|artifact IDs?\b|keep its `id`|<[A-Z][a-z ]* ID>")
+CALL = re.compile(r'domino_write_policy_result\(bundleId, evidenceName="([^"]+)", content=\{(.*?)\}\)')
+
+
+def id_search(skill):
+    """Each place where the checklist `skill` searches for an ID of the policy (an evidenceId, an artifact ID), as "<line>: <words>"."""
+    return [f"{n}: {m.group(0)}" for n, ln in enumerate(skill.splitlines(), 1) for m in ID_SEARCH.finditer(ln)]
+
+
+def result_call(skill):
+    """The checklist's write_policy_result call: (the evidence item's name, [the keys of its content, in order]), or (None, [])."""
+    m = CALL.search(skill)
+    return (m.group(1), re.findall(r'"([^"]+)":', m.group(2))) if m else (None, [])
+
+
 # --------------------------------------------------------------------------------------------- the seam part: a local agent service
 # The fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it (agent_service/audit_source.py)
 PAYLOAD = ("source", "triggeredBy", "occurredAt", "auditTraceId", "bundle.id", "bundle.name", "fromStage", "toStage", "policy.id",
@@ -157,3 +178,46 @@ def spec_of(seam, job):
     tok = requests.post(f"{seam.B}/api/runtime/sessions/{job['sid']}/claim", headers={"authorization": f"Bearer {job['credential'][1]}"},
                         json={"runId": f"localjob{len(seam.JOBS)}"}, timeout=30).json().get("token")
     return requests.get(f"{seam.B}/api/runtime/sessions/{job['sid']}/spec", headers={"x-agent-session-token": tok}, timeout=30).json()
+
+
+def policy_of(checks):
+    """GET /api/governance/v1/policies/{id}, as Domino answers it (guardrails.Policy of the service's
+    reference_materials/domino-api-specs/api-governance.swagger.json), for the evidence items and the fields of governance/checks.json
+    (tests/check_validation_policy.py checks that the policy YAML has the same): the Intake stage and its item, and the Validation stage
+    with one item for each check. Domino gives each item and each artifact its own ID."""
+    n = iter(range(1, 100))
+    field = lambda label, kind, values=(): {"id": f"art-{next(n)}", "artifactType": "input", "visible": True, "details": {
+        "type": kind, "label": label, **({"options": [{"label": v[:1].upper() + v[1:], "value": v} for v in values]} if values else {})}}
+    item = lambda name, fields: {"id": f"ev-{next(n)}", "name": name, "policyId": POLICY["id"], "visible": True, "artifacts": fields}
+    labels = checks.get("fields") or {}
+    four = lambda: [field(labels.get("verdict"), "radio", checks.get("verdicts") or []),
+                    field(labels.get("severity"), "radio", checks.get("severities") or []),
+                    field(labels.get("summary"), "textarea"), field(labels.get("doc"), "textinput")]
+    intake = item("Intake", [field("Purpose", "textarea"), field("Users", "textinput"),
+                             field("Data class", "radio", ["Public", "Internal", "Confidential", "Restricted"])])
+    validation = [item(c.get("evidenceItem"), four()) for c in checks.get("checks") or [] if isinstance(c, dict)]
+    return {"id": POLICY["id"], "name": POLICY["name"], "status": "Published", "stages": [
+        {"id": "st-intake", "name": "Intake", "evidenceSet": [intake]}, {"id": "st-validation", "name": "Validation", "evidenceSet": validation}]}
+
+
+def submit(gateway, decision, checks, project):
+    """Run the gateway's decision for a write_policy_result call (gateway.decide) with the gateway's own execute(), against a fake
+    Domino in Domino's shape (api-governance.swagger.json): the event bundle (guardrails.Bundle) of `project`, its policy (policy_of)
+    and POST /rpc/submit-result-to-policy (a guardrails.ComputedPolicy with the new results). -> (execute's answer, each body that
+    the submit got, the policy)"""
+    policy, sent = policy_of(checks), []
+    bundle = {"id": BUNDLE["id"], "name": BUNDLE["name"], "projectId": project["id"], "projectName": project["name"],
+              "policyId": POLICY["id"], "policyName": POLICY["name"], "stage": "Validation", "state": "Active"}
+
+    def http(method, path, query=None, body=None):
+        if (method, path) == ("GET", f"/api/governance/v1/bundles/{BUNDLE['id']}"):
+            return 200, bundle
+        if (method, path) == ("GET", f"/api/governance/v1/policies/{POLICY['id']}"):
+            return 200, policy
+        if (method, path) == ("POST", "/api/governance/v1/rpc/submit-result-to-policy"):
+            sent.append(body)
+            return 200, {"bundle": bundle, "policy": policy, "results": [
+                {"id": f"res-{k}", "artifactId": k, "artifactContent": v, "bundleId": BUNDLE["id"], "evidenceId": body.get("evidenceId"),
+                 "isLatest": True, "createdAt": "2026-11-21T10:00:00Z"} for k, v in (body.get("content") or {}).items()]}
+        return 404, {"message": f"{path} not found"}
+    return gateway.execute(decision, http), sent, policy

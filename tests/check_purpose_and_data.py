@@ -17,7 +17,7 @@ a fake Domino (the service's seam helper, tests/agent_folder_seam.py):
   - The subscription is made from subscription.json. A stage move to Validation in the demo project starts one task, as the service
     account. A move to another stage, or in another project, starts none.
   - The Job's spec has the store skill, Run a Job off, Git push on and the access rows, and the gateway allows the writes on the
-    event's bundle.
+    event's bundle. The evidence by names (spec #499) reaches a fake Domino as the IDs of its item and its fields.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
 #397.
 
@@ -44,7 +44,6 @@ EVIDENCE = mine.get("evidenceItem") or "Validation: Purpose and data"
 FOLDER = ROOT / (mine.get("folder") or "governance/check-purpose-and-data")
 LABELS = CHECKS.get("fields") or {}
 VERDICTS = CHECKS.get("verdicts") or []
-SEVERITIES = CHECKS.get("severities") or []
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 FILES = ("README.md", "SKILL.md", "instructions.md", "agent.json", "subscription.json", "compare.py")
@@ -59,15 +58,25 @@ check("SKILL.md, the store skill's text, has YAML on top with the name purpose-a
       and re.search(r"^description: \S.{20,}$", top.group(1), re.M), skill[:300])
 
 # --------------------------------------------------------------------------------------------------- the checklist (the store skill)
-# The rules of governance/README.md, as this check applies them. The doc's file name is #391's (governance/README.md, The three checks).
+# The checklist does this check's own work. The rules that the three checks share are in governance/rules.md (spec #499, ticket
+# #508): the checklist says to read it, and each step that applies a rule names it. The doc's file name is #391's (governance/README.md,
+# The three checks).
 DOC = "docs/validation/purpose-and-data-<bundleId>.md"
 rule = shared.rules("the skill says", skill)   # one line of the skill says the rule: it holds every one of the words (case aside)
+rule("the project folder's shared parts: the rules file, governance/rules.md", "`governance/rules.md`",
+     "rules that the three checks share")
+rule("...and the doc's template, governance/validation-doc.md", "`governance/validation-doc.md`", "template of the doc")
+rule("read the rules file first, and follow it in each step", "read `governance/rules.md` first", "each step")
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
-rule("find its own evidence item by its exact name, and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
-rule("find each field by its label (governance/checks.json)", "details.label",
-     *(f'"{LABELS.get(k, k).lower()}"' for k in ("verdict", "severity", "summary", "doc")))
-rule("a radio field takes one of its options' values", "radio", "details.options", "value")
+FOUR = [LABELS.get(k) for k in ("verdict", "severity", "summary", "doc")]   # the four fields' labels, in checks.json's order
+SAMPLE = dict(zip(FOUR, [(VERDICTS + ["?"] * 2)[1], "S1", "One S1 finding: the Intake's Data class is lower than the data's.",
+                       f"agent/AGT-1 at {'0' * 40}, {DOC}"]))   # a result as the checklist fills it, by label
+CALLED, CALLED_KEYS = shared.result_call(skill)   # the evidence item and the content keys that it names
+check(f"the checklist fills its evidence item by names (spec #499): {EVIDENCE!r} and the four fields by their labels, as "
+      "governance/checks.json names them, in its order", CALLED == EVIDENCE and CALLED_KEYS == FOUR, (CALLED, CALLED_KEYS))
+check("...so it searches for no ID: no evidenceId, no artifact ID (the gateway finds them in the bundle's policy)",
+      not shared.id_search(skill), shared.id_search(skill))
 rule("find the Intake values with get_policy: the stage Intake, its item Intake, and each field by its label", 'stage named "intake"',
      '"purpose"', '"users"', '"data class"', "details.label")
 rule("...each field's value is its result.artifactContent, and a field with no result is not filled", "result.artifactcontent",
@@ -80,17 +89,14 @@ rule("judge the data class by the kind of data that the App is built to hold", "
 rule("...not by whether the sample data is fake: the doc can say that it is fake", "not by whether", "fake")
 rule("compare the App with the Intake's Purpose, Users and Data class", "compare", "intake", "purpose", "users", "data class")
 rule("an Intake data class lower than the data's class is S1 (the shared scale's example)", "data class", "lower", "s1")
-rule("the severity scale is governance/README.md's", "governance/readme.md", "severity", "s0", "s3")
+rule("the severity scale is the rules file's", "governance/rules.md", "severity", "s0", "s3")
+rule("each real finding's name follows the finding names of the rules file", "name", "finding names", "governance/rules.md")
 rule("the doc follows the shared template, at its own file name", "governance/validation-doc.md", DOC.lower())
-rule("...with the shared top part and only its own middle part: delete the other two", "top part", f'"{NAME.lower()}"', "delete",
-     "other two")
-rule("...with every field replaced and every comment deleted", "{{field}}", "<!--")
+rule("...trimmed to this check as the rules file says: its middle part is the check's", "governance/rules.md", "trim",
+     f'"{NAME.lower()}"')
 rule("the doc says what this check could not check", "could_not_check", "default branch")
-rule("the doc's own Doc location names only the file and the task branch (it is written before the push)", "doc_location",
-     "before", "push")
-FORM = f"agent/<task key>, {DOC}"   # governance/README.md's form for checks 1 and 2: the task branch and the file, with no commit
-own = [re.findall(r"`([^`]+)`", ln)[1:] for ln in skill.splitlines() if ln.startswith("- `doc_location`")]
-check(f"the doc's own Doc location has the one form of checks 1 and 2 (governance/README.md): `{FORM}`", own == [[FORM]], own)
+rule("the doc's own Doc location: the form of the rules file, with its own file", "`doc_location`", "governance/rules.md",
+     DOC.lower())
 rule("push the doc with git_push, and keep its branch, commit and dryRun", "domino_git_push", "branch", "commit", "dryrun")
 rule("attach the doc: a Report from GBP, with the task branch and the push's commit", "domino_write_bundle_attachment", '"report"',
      '"gbp"', "branch", "commit", DOC.lower())
@@ -99,20 +105,20 @@ rule("a dry-run push: attach nothing, and say so under what this check could not
      "could not check")
 rule("file findings only in its own part, not code security", "only", "own part", "code security")
 rule("...and nothing for another check's part: that check files it", "another check", "files it")
-rule(f"each finding's name is [{NAME}] <what> in <where>", "domino_write_governance_finding", f'"[{NAME.lower()}] <what> in <where>"',
-     "severity")
+rule("file each real finding with the name and the severity of the doc's table", "domino_write_governance_finding", "name",
+     "severity", "doc's table")
 rule("file no false hit: it goes in the doc, with the reason", "no false hit", "reason")
-rule("the verdict: do not approve when a real finding is S0 or S1", "do not approve", "s0 or s1")
-rule("...approve when the highest is S2, S3 or none", "approve", "s2, s3 or `none`")
-rule("...could not check when the check could not do its work, before the other two", "could not check", "could not do its work",
-     "before")
-rule("Highest severity is the highest of the real findings, or none", "highest severity", "real findings", "none")
-rule("fill only its own evidence item, by the IDs from get_policy", "domino_write_policy_result", "only", f'"{EVIDENCE}"', "evidenceid")
-rule("the Doc location is the task branch at the push's commit, with the doc's file", "<branch> at <commit>", DOC.lower())
-rule("...or says that the doc is not in the repo", "not in the repo:", "the doc is in the task's result")
-rule("a failed or denied call: go on with the other steps, and name it under what this check could not check", "fail", "denied",
-     "go on", "could not check")
+rule("the verdict, the highest severity and the summary follow the rules file", "`verdict`", "`highest_severity`", "`summary`",
+     "governance/rules.md")
+rule("...the cases of this check that give could not check: the policy or the Intake values not read, or no App code",
+     "`could not check`", "policy", "intake values", "app's code")
+rule("fill only its own evidence item, by its name", "fill only your own evidence item", "domino_write_policy_result",
+     f'evidencename="{EVIDENCE}"')
+rule("the evidence's Doc location: the line of the rules file, with the push's branch and commit and the doc's file",
+     "doc location", "governance/rules.md", "branch and commit", DOC.lower())
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
+rule("...and it is the result of the rules file: its four lines first, with the evidence item's values", "governance/rules.md",
+     "four lines", "same values")
 
 order = ["domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_write_bundle_attachment",
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result"]
@@ -124,27 +130,29 @@ steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
 check("each step ends with its completion criterion (a 'Done when' line)",
       steps and all("Done when:" in part for part in re.split(r"^## \d+\. ", skill, flags=re.M)[1:]), steps)
-result = [ln.strip() for ln in skill.split("\n## ")[-1].splitlines()]
-want = [f"{LABELS.get('verdict')}: {' | '.join(VERDICTS)}", f"{LABELS.get('severity')}: {' | '.join(SEVERITIES)}",
-        f"{LABELS.get('summary')}: ", f"{LABELS.get('doc')}: "]
-got = [next((ln for ln in result if ln.startswith(w.split(":")[0] + ":")), None) for w in want]
-check("the last step gives the result's four lines, in order, with checks.json's labels and the exact Verdict and severity values",
-      all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),
-      got)
+BUDGET = 100   # spec #499: the checklist shows only the check (the rules are in governance/rules.md)
+check(f"the checklist has at most {BUDGET} lines (spec #499)", len(skill.splitlines()) <= BUDGET, f"{len(skill.splitlines())} lines")
+
+# The rules that the checklist applies are in the rules file, governance/rules.md. tests/check_validator_parts.py checks that
+# file one time for the three checks, and that it agrees with checks.json. So this check does not read the rules file again.
 
 # ------------------------------------------------------------------------------------------- the instructions (the system prompt)
 irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
 irule("load the store skill purpose-and-data first, and do its checklist in order", "first", "skill purpose-and-data", "in order")
 irule("fill only its own evidence item", "only", "own evidence item", f'"{EVIDENCE}"')
-irule(f"file only the real findings of its own part, each name starting with [{NAME}]", "only the real findings", "own part",
-      f'"[{NAME.lower()}] "')
+irule("the rules that the three checks share are in the rules file, governance/rules.md: follow them", "governance/rules.md",
+      "rules that the three checks share", "follow")
+irule("file only the real findings of its own part, each named as the rules file says", "only the real findings", "own part",
+      "governance/rules.md")
 irule("judge the data class by the kind of data that the App is built to hold, not by whether the sample is fake", "kind of data",
       "built to hold", "not by whether", "fake")
 irule("a false hit goes in the doc with its reason", "false hit", "doc", "reason")
-irule("say what it could not check, in the doc and in the result", "could not check", "doc", "result")
+irule("say what it could not check, as the rules file says, and a dry-run push too", "could not check", "governance/rules.md",
+      "dry-run push")
 irule("nobody answers an event task: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
 irule("the checklist's writes are the task's work: no asking first", "push", "attachment", "findings", "evidence", "without asking")
-irule("end with report_result, once, last", "domino_report_result", "once", "last")
+irule("end with report_result, once, last, with the result of the rules file", "domino_report_result", "once", "last",
+      "governance/rules.md")
 
 # --------------------------------------------------------------------------------------------------------------- the tool names
 # opencode names a tool of the relay's MCP server `domino` as domino_<name> (the service's agent_runtime/gateway.py)
@@ -462,7 +470,9 @@ rrule("share it with the analyst who moves the stage, else a stage move starts n
 rrule("...and with the approver as an editor, else Validation status shows not started", "approver", "editor", "not started")
 rrule("the platform App polls the audit trail", "smoke_audit_poll_seconds")
 rrule("...and pushes for real, else the push is a dry run and the doc isn't attached", "smoke_push_dry_run=0", "dry run", "attach")
-rrule("the demo project's default branch has the shared parts", "default branch", "governance/validation-doc.md", "governance/readme.md")
+rrule("the demo project's default branch has the shared parts", "default branch", "governance/rules.md",
+      "governance/validation-doc.md", "governance/readme.md")
+rrule("the rules that the three checks share are in the rules file", "[governance/rules.md](../rules.md)")
 rrule("the live script compares the agent with compare.py diff", "compare.py diff agent.json", "get /api/agents/{id}")
 rrule("...and the subscription too", "compare.py diff subscription.json", "get /api/agents/{id}/triggers")
 rrule("...and checks the stored token's status, which no reference file holds", "identitycredential.status", "active")
@@ -639,13 +649,24 @@ try:
             "branch": "agent/AGT-1"}},
         "write_governance_finding": {"bundleId": BUNDLE["id"], "name": f"[{NAME}] Data class Internal for Restricted data in the Intake",
                                      "severity": "S1", "description": "Evidence."},
-        "write_policy_result": {"bundleId": BUNDLE["id"], "evidenceId": "ev-1", "content": {"art-verdict": "do not approve"}},
+        # the checklist's call, by the names that it gives (the files part checks them against checks.json)
+        "write_policy_result": {"bundleId": BUNDLE["id"], **({"evidenceName": CALLED} if CALLED else {}),
+                                "content": {k: SAMPLE.get(k, "?") for k in CALLED_KEYS}},
     }
     for name, args in CALLS.items():
         d = gateway.decide(name, args, policy) if policy else {}
         check(f"the gateway allows {name} on the event's bundle, by its own row (named), with no owner check",
               d.get("allow") is True and d.get("row") == "named" and not any(s.get("expect") for s in d.get("steps") or []),
               {k: d.get(k) for k in ("allow", "row", "why")})
+    d = gateway.decide("write_policy_result", CALLS["write_policy_result"], policy) if policy else {}
+    out, sent, pol = shared.submit(gateway, d, CHECKS, seam.PROJECT) if d.get("allow") else ({}, [], {})
+    own_item = next((e for st in pol.get("stages") or [] for e in st["evidenceSet"] if e["name"] == EVIDENCE), {})
+    ids = {a["details"]["label"]: a["id"] for a in own_item.get("artifacts") or []}
+    check(f"...and the result by names reaches Domino as IDs: the gateway finds {EVIDENCE!r} and its four fields in the bundle's "
+          "policy, and Domino gets their IDs, with the values as they are (the result lands where a result by IDs lands)",
+          out.get("ok") is True and own_item and sent == [{"bundleId": BUNDLE["id"], "policyId": pol["id"],
+                                                           "evidenceId": own_item["id"],
+                                                           "content": {ids.get(k): SAMPLE[k] for k in FOUR}}], (out, sent))
     d = gateway.decide("git_push", {"message": "The doc"}, policy) if policy else {}
     check("...and git_push, in the task's project", d.get("allow") is True, {k: d.get(k) for k in ("allow", "row", "why")})
     d = gateway.decide("get_dataset", {"datasetId": "ds-of-the-project"}, policy) if policy else {}

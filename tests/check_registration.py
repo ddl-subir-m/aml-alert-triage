@@ -121,8 +121,10 @@ FRAMEWORK_IMPORT = re.compile(r"^\s*(from|import)\s+(domino_agui|langgraph|langc
 contract_code = sorted(str(p.relative_to(ROOT)) for p in ROOT.rglob("*.py")
                        if not any(part.startswith(".") or part == "__pycache__" for part in p.relative_to(ROOT).parts)
                        and p.parent != ROOT / "agent" and FRAMEWORK_IMPORT.search(text(p)))
-OTHER_AGENT_CODE = ["governance/check-vulnerability-scan/graph.py",   # the check Vulnerability scan of spec #388: a fixed graph of its own
-                    "tests/check_vulnerability_scan.py"]               # its check, which runs that graph
+OTHER_AGENT_CODE = ["governance/check-vulnerability-scan/calls.py",    # the graph's gateway calls, for both paths (spec #499)
+                    "governance/check-vulnerability-scan/graph.py",    # the check Vulnerability scan of spec #388: a fixed graph of its own
+                    "governance/check-vulnerability-scan/rescan.py",   # the graph's schedule path (spec #499)
+                    "tests/check_vulnerability_scan.py"]                # its check, which runs that graph
 check("no other Python file imports domino-agui or an agent framework, but the Vulnerability scan's graph and its check",
       contract_code == OTHER_AGENT_CODE, contract_code)
 
