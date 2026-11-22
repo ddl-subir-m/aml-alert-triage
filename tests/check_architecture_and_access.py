@@ -289,6 +289,8 @@ steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
 check("each step ends with its completion criterion (a 'Done when' line)",
       steps and all("Done when:" in part for part in re.split(r"^## \d+\. ", skill, flags=re.M)[1:]), steps)
+BUDGET = 110   # spec #499: the checklist shows only the check (the rules are in governance/rules.md)
+check(f"the checklist has at most {BUDGET} lines (spec #499)", len(skill.splitlines()) <= BUDGET, f"{len(skill.splitlines())} lines")
 
 # ------------------------------------------------------------------------------- the rules that the checklist applies (the rules file)
 # These were lines of the checklist before spec #499. The checklist now says to read the rules file, so the rules are read from it.
