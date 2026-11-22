@@ -6,7 +6,7 @@ description: The checklist of the check Purpose and data, from the governance bu
 
 The task's instruction names the bundle ID (`bundleId` below). Do the steps in order. A step is done when its "Done when" line is true. This check owns one part of the validation: what the App is for and what data it holds, compared with the Intake answers (Purpose, Users, Data class). It is not a review of code security: two other checks own the access, the code and the dependencies.
 
-The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step: `governance/rules.md` has the rules that the three checks share (the evidence fields and the verdict rule, could not check, also for a failed or denied call, the doc location, the severity scale S0 to S3, the finding names, the doc's template and the result), `governance/README.md` has the three checks and what each one owns, and `governance/validation-doc.md` is the template of the doc.
+The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step. It has the rules that the three checks share: the evidence fields, the verdict rule, could not check (also for a failed or denied call), the doc location, the severity scale S0 to S3, the finding names, the doc's template and the result. `governance/README.md` has the three checks and what each one owns. `governance/validation-doc.md` is the template of the doc.
 
 ## 1. Read the bundle and the Intake
 
