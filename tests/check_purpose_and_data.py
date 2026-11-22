@@ -17,7 +17,7 @@ a fake Domino (the service's seam helper, tests/agent_folder_seam.py):
   - The subscription is made from subscription.json. A stage move to Validation in the demo project starts one task, as the service
     account. A move to another stage, or in another project, starts none.
   - The Job's spec has the store skill, Run a Job off, Git push on and the access rows, and the gateway allows the writes on the
-    event's bundle.
+    event's bundle. The evidence by names (spec #499) reaches a fake Domino as the IDs of its item and its fields.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
 #397.
 

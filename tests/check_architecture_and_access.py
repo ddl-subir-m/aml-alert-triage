@@ -34,7 +34,8 @@ seam helper, tests/agent_folder_seam.py), with the folder committed in a tempora
   - The Job's spec (the skill, the own tool, the custom subagent as opencode gets it, read only, with the built-in subagent off, the
     access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions for that task on the event's
     bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
-    attached to the task", and run_job is denied.
+    attached to the task", and run_job is denied. The evidence by names (spec #499) reaches a fake Domino as the IDs of its item
+    and its fields.
   - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
 #397.
