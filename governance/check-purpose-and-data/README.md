@@ -1,8 +1,9 @@
 # Check 1: Purpose and data
 
 One of the three checks of the App validation demo (domino-agent-service spec #388, Implementation Decision 8). The rules that the
-three checks share are in [governance/README.md](../README.md). This check owns what the App is for and what data it holds, compared
-with the Intake answers (Purpose, Users, Data class). It does not review code security.
+three checks share are in [governance/rules.md](../rules.md), and what each check owns is in [governance/README.md](../README.md).
+This check owns what the App is for and what data it holds, compared with the Intake answers (Purpose, Users, Data class). It does
+not review code security.
 
 It is a wizard agent: a harness agent (opencode) that a person makes in the agent service App's wizard, with no code. The person makes
 it once, with the steps on this page. This folder is its reference copy in git, so that it can be made again on a new deployment.
@@ -33,9 +34,9 @@ starts a task. The task does the steps of the store skill, in order:
 6. It pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
 7. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
    (`domino_write_bundle_attachment`).
-8. It files each real finding, named `[Purpose and data] <what> in <where>` (`domino_write_governance_finding`).
+8. It files each real finding, with its name by the finding names of `governance/rules.md` (`domino_write_governance_finding`).
 9. It fills its own evidence item (`domino_write_policy_result`).
-10. Its result (`domino_report_result`) starts with the four lines of `governance/README.md`, "The result". The scripted check
+10. Its result (`domino_report_result`) starts with the four lines of `governance/rules.md`, "The result". The scripted check
     "Validation status" shows them to the approver.
 
 What it can't check goes under "What this check could not check", in the doc and in the result: the commit of the App version under
@@ -77,7 +78,8 @@ The repo is public, so the reference files have no user name and no Domino ID. `
 - **The platform App** (the smoke App) has the project setting `SMOKE_AUDIT_POLL_SECONDS` (10 in the demo): it polls the audit trail,
   so a stage move reaches the agent. It also has `SMOKE_PUSH_DRY_RUN=0`, else each push is a dry run: the doc is not in the repo,
   and the task doesn't attach it.
-- **The shared parts:** the demo project's default branch has `governance/validation-doc.md` and `governance/README.md`.
+- **The shared parts:** the demo project's default branch has `governance/rules.md`, `governance/validation-doc.md` and
+  `governance/README.md`. The checklist reads them in the project folder.
 
 ## Make it in the wizard
 

@@ -8,8 +8,8 @@ It fills only its own evidence item, "Validation: Architecture and access". All 
 
 It is the folder validator of spec #260 (the tag `app-validation-two-ways` keeps it), narrowed to its part, as below.
 It runs no scan and no Job (Run a Job is off): known vulnerabilities are the part of the check "Vulnerability scan".
-The shared rules of the three checks (the evidence fields, the verdict rule, the severity scale, the finding names, the result and the
-doc template) are on [governance/README.md](../README.md).
+The shared rules of the three checks (the evidence fields, the verdict rule, could not check, the doc location, the severity scale,
+the finding names, the doc's template and the result) are on [governance/rules.md](../rules.md).
 
 | File | What it holds | Deployed |
 |---|---|---|
@@ -46,10 +46,11 @@ The checklist's steps, in order:
 6. It commits and pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
 7. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
    (`domino_write_bundle_attachment`).
-8. It files each real finding of its part, named `[Architecture and access] <what> in <where>` (`domino_write_governance_finding`).
+8. It files each real finding of its part, with its name by the finding names of `governance/rules.md`
+   (`domino_write_governance_finding`).
 9. It fills its own evidence item (`domino_write_policy_result`).
-10. Its result (`domino_report_result`) starts with four lines: `Verdict: ...`, `Highest severity: ...`, `Summary: ...` and
-   `Doc location: ...`. The scripted check of the policy (`governance/validation_status.py`) shows them to the approver.
+10. Its result (`domino_report_result`) starts with the four lines of `governance/rules.md`, "The result". The scripted check of
+   the policy (`governance/validation_status.py`) shows them to the approver.
 
 It files findings only in its own part. A known vulnerability (a CVE, PYSEC or GHSA ID) is the part of the check "Vulnerability
 scan", and the data class is the part of the check "Purpose and data": it files none for them.
@@ -183,7 +184,7 @@ these once, after the first deploy. A later deploy keeps them.
 | The approver | Share the agent with the approver as an owner or an editor. | The scripted check shows "not started": a user of the agent can't read its tasks. |
 | The poller | The platform App (the smoke App) has the project setting `SMOKE_AUDIT_POLL_SECONDS` (10 in the demo). | No stage move reaches the agent. |
 | Real pushes | The platform App has the project setting `SMOKE_PUSH_DRY_RUN=0`. | Each push is a dry run: the doc is not in the repo, and the check doesn't attach it. |
-| The shared rules | The demo project's default branch has `governance/README.md` and `governance/validation-doc.md` (the demo branch is rebased on main). | The checklist has no shared rules, and the doc has no template. |
+| The shared rules | The demo project's default branch has `governance/rules.md`, `governance/README.md` and `governance/validation-doc.md` (the demo branch is rebased on main). | The checklist has no shared rules, and the doc has no template. |
 
 The access rows are in `definition.md`. An edit in the wizard is a commit to the agent's branch, so keep these values there too:
 
