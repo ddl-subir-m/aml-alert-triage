@@ -44,7 +44,6 @@ EVIDENCE = mine.get("evidenceItem") or "Validation: Purpose and data"
 FOLDER = ROOT / (mine.get("folder") or "governance/check-purpose-and-data")
 LABELS = CHECKS.get("fields") or {}
 VERDICTS = CHECKS.get("verdicts") or []
-SEVERITIES = CHECKS.get("severities") or []
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 FILES = ("README.md", "SKILL.md", "instructions.md", "agent.json", "subscription.json", "compare.py")
@@ -134,44 +133,8 @@ check("each step ends with its completion criterion (a 'Done when' line)",
 BUDGET = 100   # spec #499: the checklist shows only the check (the rules are in governance/rules.md)
 check(f"the checklist has at most {BUDGET} lines (spec #499)", len(skill.splitlines()) <= BUDGET, f"{len(skill.splitlines())} lines")
 
-# ------------------------------------------------------------------------------- the rules that the checklist applies (the rules file)
-# These were lines of the checklist before spec #499. The checklist now says to read the rules file, so the rules are read from it.
-# tests/check_validator_parts.py checks the whole file, and that it agrees with checks.json.
-rules_md = text(shared.RULES)
-frule = shared.rules("the rules file says", rules_md, shared.blocks)   # one paragraph, list item or table row of it says the rule
-frule("the severity scale, S0 to S3", "| s0 (critical) |")
-frule(f"...with its example for {NAME}: an Intake data class lower than the data is S1", f"| {NAME.lower()} |", "lower than",
-      "| s1 |")
-frule("a finding's name is [<check name>] <what> in <where>", "`[<check name>] <what> in <where>`")
-frule(f"...with an example for {NAME}", f"| {NAME.lower()} |", f"`[{NAME.lower()}] ")
-frule("a false hit goes in the doc only, with the reason", "false hit", "doc only", "reason")
-frule("the template: keep the shared top part and only the middle part with the check's name", "shared top part",
-      "only the middle part", "check's name")
-frule("...delete the other two middle parts", "delete the other two middle parts")
-frule("...with every field replaced and every comment deleted", "{{field}}", "<!--")
-frule("the verdict: do not approve when a real finding is S0 or S1", "`do not approve`", "s0 or s1")
-frule("...approve when the highest is S2, S3 or none", "`approve`", "s2, s3 or `none`")
-frule("...could not check when the check could not do its work, before the other two", "`could not check`", "could not do its work",
-      "before the other two")
-frule("Highest severity is the highest of the real findings, or none", "highest severity", "real findings", "`none`")
-frule("the Doc location of checks 1 and 2: the task branch at the push's commit, with the doc's file",
-      "`<task branch> at <commit>, docs/validation/<file>`")
-frule("...or says that the doc is not in the repo", "`not in the repo: <why>. the doc is in the task's result.`")
-frule("the doc's own Doc location of checks 1 and 2: the task branch and the file, with no commit (it is written before the push)",
-      "before its push", "`<task branch>, docs/validation/<file>`", "`agent/<task key>`")
-frule("a failed or denied call: go on with the other steps, and try it again at most once", "fails or is denied", "go on",
-      "at most once")
-frule("...and name it under what this check could not check, with Domino's answer", '"what this check could not check"',
-      "with domino's answer")
-result = shared.result_block(rules_md, LABELS.get("verdict") or "Verdict")
-want = [f"{LABELS.get('verdict')}: {' | '.join(VERDICTS)}", f"{LABELS.get('severity')}: {' | '.join(SEVERITIES)}",
-        f"{LABELS.get('summary')}: ", f"{LABELS.get('doc')}: "]
-got = [next((ln for ln in result if ln.startswith(w.split(":")[0] + ":")), None) for w in want]
-check("the rules file gives the result's four lines, in order, with checks.json's labels and the exact Verdict and severity values",
-      all(got) and got[0] == want[0] and got[1] == want[1] and [result.index(g) for g in got] == sorted(result.index(g) for g in got),
-      got)
-frule("...each line with no Markdown, then the findings, the false hits and what it could not check", "no markdown",
-      "real findings", "false hits", '"could not check:"')
+# The rules that the checklist applies are in the rules file, governance/rules.md. tests/check_validator_parts.py checks that
+# file one time for the three checks, and that it agrees with checks.json. So this check does not read the rules file again.
 
 # ------------------------------------------------------------------------------------------- the instructions (the system prompt)
 irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule
