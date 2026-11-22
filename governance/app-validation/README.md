@@ -11,6 +11,10 @@ an own tool or a custom subagent, so its skills use what the wizard gives: the s
 "Start Domino jobs" (for `governance/scan.py`). This folder is its reference copy in git, so that it can be made again on a new
 deployment. The live script reads the agent back and compares it with this copy.
 
+The cost of a wizard agent: a custom subagent can be limited to read (`route-reviewer` of check 2 has only the read tools and Read
+only on the project files). The built-in subagent has the agent's tools: the shell, the Domino tools and Git push. Its prompt tells
+it to only read, and the agent decides each finding and makes each write.
+
 | File | What it holds |
 |---|---|
 | `skills/architecture-and-access/SKILL.md` | A store skill: the checklist of the check Architecture and access. It reads the routes with the shell, in place of the own tool `route_table` of `governance/check-architecture-and-access/`, and gives their review to the built-in subagent, with the brief of the custom subagent `route-reviewer` |
@@ -28,16 +32,19 @@ The first skill is the store skill `purpose-and-data` of check 1, as it is: its 
 ## What a task does
 
 When the analyst moves the bundle of the second project, `aml-validation-wizard`, to the Validation stage of the policy "App
-deployment policy", the subscription starts one task. The task does the three store skills in order, each one to its end:
+deployment policy", the subscription starts one task. First, the task records the commit of the project folder
+(`git rev-parse HEAD`): that commit is the App version under review, and each doc cites it. Then it does the three store skills in
+order, each one to its end:
 
 1. `purpose-and-data`: what the App is for and what data it holds, compared with the Intake answers. Its doc is
    `docs/validation/purpose-and-data-<bundle ID>.md`.
 2. `architecture-and-access`: all access, the tech stack, the design and the dependencies. It reads the routes with read-only shell
-   commands, and gives the route table to the built-in subagent once (the `task` tool, `subagent_type` `general`), which only reads
-   and gives a verdict for each route. Its doc is `docs/validation/architecture-and-access-<bundle ID>.md`.
+   commands, and gives the route table to the built-in subagent once (the `task` tool, `subagent_type` `general`), which is told to
+   only read, and gives a verdict for each route. Its doc is `docs/validation/architecture-and-access-<bundle ID>.md`.
 3. `vulnerability-scan`: known vulnerabilities in the code and the dependencies. It runs `python governance/scan.py` in a Domino Job
    (`domino_run_job`), calls `domino_wait_job` until the Job ends, and reads the summary between its two marker lines
-   (governance/README.md, "The scan" and "A failed scan"). Its doc is `docs/validation/vulnerability-scan-<bundle ID>.md`.
+   (governance/README.md, "The scan" and "A failed scan"). The Job runs on the task branch: the recorded commit plus only this
+   task's doc commits, so the App's code is the same. Its doc is `docs/validation/vulnerability-scan-<bundle ID>.md`.
 
 Each skill pushes its doc to the task branch `agent/<task key>` (`domino_git_push`) and attaches it to the bundle as a `Report` from
 `GBP`, with the task branch and the push's commit. Each one files its real findings, with their names by the finding names of

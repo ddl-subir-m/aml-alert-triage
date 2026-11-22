@@ -35,15 +35,17 @@ from three_checks import ROOT, check, done, text
 FOLDER = ROOT / "governance" / "app-validation"
 CHECKS, _ = shared.load_checks("")
 BY_FOLDER = {c.get("folder"): c for c in CHECKS.get("checks") or [] if isinstance(c, dict)}
-PD = BY_FOLDER.get("governance/check-purpose-and-data") or {}
-AA = BY_FOLDER.get("governance/check-architecture-and-access") or {}
-VS = BY_FOLDER.get("governance/check-vulnerability-scan") or {}
+# The agent's three store skills, in their order: the skill's name, the prefix of its placeholders in agent.json, and the entry in
+# checks.json of the check whose work it does. The first one is check 1's skill, as it is; this folder has the other two.
+SKILLS = [{"slug": slug, "prefix": prefix, "check": BY_FOLDER.get(f"governance/check-{slug}") or {}}
+          for slug, prefix in (("purpose-and-data", "PD"), ("architecture-and-access", "AA"), ("vulnerability-scan", "VS"))]
+SLUGS = [s["slug"] for s in SKILLS]
+CHECK_NAMES = [s["check"].get("name") for s in SKILLS]
+EVIDENCE_ITEMS = [s["check"].get("evidenceItem") for s in SKILLS]
 check("governance/checks.json names the three checks whose work this agent does",
-      [c.get("name") for c in (PD, AA, VS)] == ["Purpose and data", "Architecture and access", "Vulnerability scan"],
-      [c.get("name") for c in (PD, AA, VS)])
+      CHECK_NAMES == ["Purpose and data", "Architecture and access", "Vulnerability scan"], CHECK_NAMES)
 LABELS = CHECKS.get("fields") or {}
 FOUR = [LABELS.get(k) for k in ("verdict", "severity", "summary", "doc")]   # the four fields' labels, in checks.json's order
-SKILLS = ["purpose-and-data", "architecture-and-access", "vulnerability-scan"]   # the order of the agent's store skills
 BUDGET = 120   # #529: each new store skill has at most 120 lines
 
 # --------------------------------------------------------------------------------------------------------------------- the files
@@ -54,9 +56,10 @@ every = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.
 check(f"{FOLDER.relative_to(ROOT)}/ holds the reference copy and nothing else: {', '.join(FILES)}", sorted(every) == sorted(FILES),
       sorted(every))
 instructions = every.get("instructions.md", "")
-aa = every.get("skills/architecture-and-access/SKILL.md", "")
-vs = every.get("skills/vulnerability-scan/SKILL.md", "")
-pd = text(ROOT / "governance" / "check-purpose-and-data" / "SKILL.md")   # check 1's store skill, as it is
+SKILLS[0]["text"] = text(ROOT / "governance" / "check-purpose-and-data" / "SKILL.md")   # check 1's store skill, as it is
+for s in SKILLS[1:]:
+    s["text"] = every.get(f"skills/{s['slug']}/SKILL.md", "")
+arch_skill, scan_skill = SKILLS[1]["text"], SKILLS[2]["text"]
 
 
 def top_name(skill):
@@ -66,13 +69,14 @@ def top_name(skill):
     return name.group(1) if name and re.search(r"^description: \S.{20,}$", top.group(1), re.M) else None
 
 
-check("check 1's store skill is purpose-and-data, the first skill of this agent (it does not change)", top_name(pd) == SKILLS[0],
-      pd[:200])
+check("check 1's store skill is purpose-and-data, the first skill of this agent (it does not change)",
+      top_name(SKILLS[0]["text"]) == SLUGS[0], SKILLS[0]["text"][:200])
 
 # ------------------------------------------------------------------------------------------------------- the two new store skills
 # Each one is check 2's or check 3's checklist, for a wizard agent: it fills its evidence item by names, searches for no ID, and
 # names only the tools that a wizard agent has. A wizard agent can't have an own tool or a custom subagent.
-for slug, skill, mine in (("architecture-and-access", aa, AA), ("vulnerability-scan", vs, VS)):
+for record in SKILLS[1:]:
+    slug, skill, mine = record["slug"], record["text"], record["check"]
     doc = f"docs/validation/{slug}-<bundleId>.md"
     evidence = mine.get("evidenceItem")
     check(f"{slug}: the store skill has YAML on top with the name {slug} and a description (else opencode never offers it)",
@@ -109,6 +113,11 @@ for slug, skill, mine in (("architecture-and-access", aa, AA), ("vulnerability-s
          "same values")
     rule("...and it calls no report_result: the system prompt reports one result", "do not call `domino_report_result`",
          "system prompt")
+    rule("its evidence item has the doc's first three values", "the first three values are the same as in the doc")
+    rule("the doc cites the commit that the system prompt recorded before the first skill (the App version under review)",
+         "`app_and_version`", "the commit that the system prompt recorded before the first skill", "app version under review")
+    rule("...and what it could not check agrees: the bundle's App version, not the recorded commit", "`could_not_check`",
+         "the app version that the bundle names", "the recorded commit is the head of the project's default branch")
     order = ["domino_git_push", "domino_write_bundle_attachment", "domino_write_governance_finding", "domino_write_policy_result"]
     at = [skill.find(t) for t in order]
     check(f"{slug}: its writes come in order: push, attachment, findings, evidence",
@@ -118,7 +127,7 @@ for slug, skill, mine in (("architecture-and-access", aa, AA), ("vulnerability-s
           sorted(set(re.findall(r"own_route_table|own tool|route-reviewer|custom subagent", skill, re.I))))
 
 # architecture-and-access: the shell in place of the own tool route_table, the built-in subagent in place of route-reviewer
-arule = shared.rules("architecture-and-access says", aa)
+arule = shared.rules("architecture-and-access says", arch_skill)
 arule("read the bundle and the policy with the bundle's ID", "domino_get_bundle(bundleid)")
 arule("...and the Intake's fields by their labels", "domino_get_policy(bundleid)", 'stage named "intake"', "details.label")
 arule("read the routes with the shell, with commands that only read", "shell", "only read", "grep")
@@ -131,18 +140,29 @@ arule("each row has the handler, its file and line, reads_identity and changes_s
 arule("a write: the rule of the own tool (SQL, open with a write mode, a write call, global)", "insert into", "delete from",
       "write_text", "unlink", "`global`")
 arule("what it can't read goes under what this check could not check", "not valid python", "could not check")
+arule("...also a decorator with a path that it does not know (a route of another framework)", "decorator with a path",
+      "route of another framework")
+check("architecture-and-access: the route table and the other facts are two steps",
+      "\n## 2. Make the route table\n" in arch_skill and "\n## 3. Read the stack, the design and the dependencies\n" in arch_skill)
+arule("...and HEAD now is not that commit: an earlier push moved it", "not `git rev-parse head` now", "moved head")
 arule("give the route table to the built-in subagent, once, with the task tool", "built-in subagent", "once", "`task` tool",
       "`subagent_type` `general`")
+arule("the built-in subagent has the agent's tools: only the prompt tells it to only read, so the agent decides and writes",
+      "built-in subagent has the agent's tools", "only this prompt tells it to only read", "you decide each finding",
+      "you make each write")
 arule("the brief: the subagent only reads, with the read tools only", "you only read", "read, glob, grep")
 arule("...runs no shell command and calls no Domino tool", "no shell command", "no domino tool")
 arule("...writes no file and files no finding: the main agent files the findings", "write no file", "file no finding",
       "main agent files")
-arule("...judges only access", "judge only access")
+for said in ("The Intake's Users say who must reach the App", "Judge only access"):
+    check(f"architecture-and-access: step 4 says {said!r} one time (in the access rules)", arch_skill.count(said) == 1,
+          arch_skill.count(said))
+arule("...and a severity by access rule 5", "severity by access rule 5")
 arule("...one JSON object in a json block, with a verdict for each route", "one json object", "json block")
 check("architecture-and-access: the brief ends with the Intake's Users and Data class, the access rules and the route table",
-      all(re.search(rf"^{w}", aa, re.M) for w in ("Users: <", "Data class: <", "Access rules:$", "Route table:$")))
+      all(re.search(rf"^{w}", arch_skill, re.M) for w in ("Users: <", "Data class: <", "Access rules:$", "Route table:$")))
 check("architecture-and-access: the brief's answer has the fields of route-reviewer's answer",
-      all(f'"{k}"' in aa for k in ("routes", "method", "path", "who_can_call", "what_it_changes", "problem", "severity",
+      all(f'"{k}"' in arch_skill for k in ("routes", "method", "path", "who_can_call", "what_it_changes", "problem", "severity",
                                    "severity_reason", "evidence", "not_reviewed")))
 for n, words in {1: ("domino access setting", "anyone who can open the app"), 2: ("access check", "domino-username"),
                  3: ("changes state", "no access check"), 4: ("record who made it", "no identity"),
@@ -150,18 +170,21 @@ for n, words in {1: ("domino access setting", "anyone who can open the app"), 2:
     arule(f"access rule {n}", f"{n}. ", *words)
 arule("a failed task call or no usable answer: judge the routes yourself, and the check goes on", "no usable answer",
       "do not call it again", "judge the routes yourself")
-arule("the subagent files nothing: the main agent files the findings", "subagent files nothing")
+arule("the agent files the findings itself, not the subagent", "you file them yourself, not the subagent")
+check("architecture-and-access: the condition of could not check comes first in step 5",
+      "When you could not read the App's code, or Domino denied `domino_get_policy`, this check can't do its work: the Verdict is "
+      "`could not check`." in arch_skill)
 arule("it runs no scan and starts no Job", "runs no scan", "starts no job")
-check("architecture-and-access: it starts no Domino Job (domino_run_job is the scan's)", "domino_run_job" not in aa)
+check("architecture-and-access: it starts no Domino Job (domino_run_job is the scan's)", "domino_run_job" not in arch_skill)
 check("architecture-and-access: its middle part of the doc has the route table: method, path, who can call it, what it changes",
-      re.search(r"table of each route: method, path, who can call it, what it changes", aa) is not None)
+      re.search(r"table of each route: method, path, who can call it, what it changes", arch_skill) is not None)
 
 # vulnerability-scan: check 3's steps, with the scan in a Domino Job and the doc pushed to the task branch
 SCAN = text(ROOT / "governance" / "scan.py")
 start, end, ran = (m.group(1) if (m := re.search(rf'{k} = "([^"]+)"', SCAN)) else None for k in ("START", "END", "RAN"))
 start, end = ((m.group(1), m.group(2)) if (m := re.search(r'START, END = "([^"]+)", "([^"]+)"', SCAN)) else (start, end))
 check("governance/scan.py has the summary's two marker lines and its result line", start and end and ran, (start, end, ran))
-vrule = shared.rules("vulnerability-scan says", vs)
+vrule = shared.rules("vulnerability-scan says", scan_skill)
 vrule("run the shared scan in a Domino Job", 'domino_run_job(command="python governance/scan.py"')
 vrule("...then wait_job, again until finished, with the harness's longest wait", "domino_wait_job(jobid, seconds=45)", "finished")
 vrule("...at most about 20 minutes", "about 20 minutes")
@@ -170,6 +193,10 @@ vrule("...and get_job_logs when a marker is not in the log", "domino_get_job_log
 vrule("the scan ran only when the Job succeeded and both tools ran", "`succeeded`", f"`{ran}`")
 vrule("...else a failed scan, by governance/README.md: no finding from the scan", "a failed scan", "governance/readme.md",
       "no finding from the scan")
+vrule("...also a Job that is not finished after the 27 calls, or a wait_job with no state of the Job", "scan failed",
+      "not finished after the 27 calls", "no state of the job")
+vrule("the Job runs on the task branch: the recorded commit plus only this task's doc commits", "task branch",
+      "the recorded commit plus only this task's doc commits", "app's code is the same")
 vrule("a real hit: the code makes it reachable", "reachable", "false hit")
 vrule("look for known vulnerabilities that no scanner shows", "no scanner shows")
 vrule("each real finding gets a key, from the scan's summary", "key", "scan's summary")
@@ -177,15 +204,16 @@ vrule("...a pip-audit hit: its first ID, also for an alias", "first id", "pysec-
 vrule("...a bandit hit: its rule ID, then its file and line", "rule id", "b602 case_server/server.py:120")
 vrule("...a finding in the code: its file and line", "no scanner hit", "file and line")
 vrule("the parts that a tool did not check go under could not check", "- not audited:", "- not scanned:", "could not check")
-vrule("the doc's commit is the summary's commit line", "`commit:`", "app_and_version")
+vrule("the doc names the summary's commit line too, and says that the Job ran on the task branch", "`app_and_version`",
+      "`commit:`", "ran on the task branch", "recorded commit plus only this task's doc commits")
 vrule("the doc is pushed, so its location is the pushed form, with no dataset and no snapshot", "pushed doc", "no dataset",
       "no snapshot")
 vrule("each filed finding's description starts with its key", "domino_write_governance_finding", '"key: <its key>" first')
 vrule("only its own part: not access, not the pin, not the data class", "who can call a route", "pinned or installed",
       "kind of data", "file none")
 check("vulnerability-scan: it names no doc dataset tool (the doc goes to the task branch, as checks 1 and 2 do)",
-      not re.search(r"write_bundle_doc|DatasetSnapshotFile|write_dataset", vs))
-part = (re.split(r"^## The schedule part$", vs, maxsplit=1, flags=re.M) + [""])[1]
+      not re.search(r"write_bundle_doc|DatasetSnapshotFile|write_dataset", scan_skill))
+part = (re.split(r"^## The schedule part$", scan_skill, maxsplit=1, flags=re.M) + [""])[1]
 check("vulnerability-scan: it has a schedule part, after the event steps", bool(part.strip()))
 srule = shared.rules("its schedule part says", part)
 srule("it scans again with the event steps 2 to 4", "steps 2, 3 and 4")
@@ -200,8 +228,18 @@ srule("...and each bundle's findings, in the full view, page by page", 'domino_l
       "page by page")
 srule("a bundle's keys: the first line of each finding's description", "`key: `", "first line", "description")
 srule("new findings by key, never by name, one key once", "compare keys, never names", "once")
-srule("one report, pushed, attached as a Report only to each bundle that gets a new finding",
-      "docs/validation/vulnerability-scan-scheduled-", "domino_git_push", "`report`", "only to each bundle that gets a new finding")
+srule("one report, pushed with its own message (no bundle), and kept: ok, branch, commit, dryRun",
+      "docs/validation/vulnerability-scan-scheduled-", 'domino_git_push(message="re-scan report of the bundles in approval")',
+      "`ok`", "`dryrun`")
+srule("...attached as a Report, only after a real push, to each bundle that gets a new finding", "only when the push answered",
+      "`report`", "each bundle that gets a new finding")
+srule("each new finding must also have its report: it is filed only on a bundle that has the report attached",
+      "each new finding must also have its report", "only when the report is attached to that bundle")
+srule("...a failed attachment: nothing on that bundle, and the other bundles go on", "attachment to one bundle fails",
+      "file nothing on that bundle", "other bundles")
+srule("...a failed or dry-run push: nothing on any bundle", "push failed or was a dry run", "file nothing")
+srule("...and the result line of a bundle that gets nothing", "filed now (0), because <why>", "not attached")
+check("vulnerability-scan: its schedule push names no bundle", re.search(r'domino_git_push\(message="[^"]*bundleId', part) is None)
 srule("it fills no evidence item", "fills no evidence item", "never calls `domino_write_policy_result`")
 srule("its result's lines", "bundles in approval: <n>", "filed: <n> new findings on <m> bundles")
 srule("it files nothing when the scan failed, a list call failed or there is no project ID", "file nothing",
@@ -211,11 +249,12 @@ check("vulnerability-scan: the schedule part calls no domino_write_policy_result
 
 # --------------------------------------------------------------------------------------------------- the instructions (the system prompt)
 irule = shared.rules("the instructions say", instructions, shared.blocks)
-names = [c.get("name") for c in (PD, AA, VS)]
-irule("it does the work of the three checks in one task", "three checks", "one task", *[f'"{n}"' for n in names])
-skill_at = [instructions.find(f"skill {s}") for s in SKILLS]
+irule("it does the work of the three checks in one task", "three checks", "one task", *[f'"{n}"' for n in CHECK_NAMES])
+irule("it records the commit first, before the first skill: the App version under review", "first, before the first skill",
+      "`git rev-parse head`", "app version under review", "each skill cites it")
+skill_at = [instructions.find(f"skill {s}") for s in SLUGS]
 check("the instructions do the three store skills in order: purpose-and-data, architecture-and-access, vulnerability-scan",
-      all(i >= 0 for i in skill_at) and skill_at == sorted(skill_at), dict(zip(SKILLS, skill_at)))
+      all(i >= 0 for i in skill_at) and skill_at == sorted(skill_at), dict(zip(SLUGS, skill_at)))
 irule("...each one to its end, with the skill tool", "each one to its end", "skill tool")
 irule("in purpose-and-data's last step, no report_result: its result waits for the end", "purpose-and-data",
       "do not call domino_report_result", "keep its result for the end")
@@ -228,14 +267,15 @@ irule("...each part starts with the line ## <check name>, then the rules file's 
 irule("a task of the schedule: only the schedule part of vulnerability-scan, no other skill, no evidence item", "schedule",
       "only the schedule part", "vulnerability-scan", "load no other skill", "fill no evidence item")
 irule("fill only the three evidence items, each with its own skill", "only the three evidence items",
-      *[f'"{c.get("evidenceItem")}"' for c in (PD, AA, VS)])
+      *[f'"{e}"' for e in EVIDENCE_ITEMS])
 irule("in each part, only that part's real findings, named by the rules file", "only the real findings", "governance/rules.md")
 irule("a false hit goes in the doc with its reason", "false hit", "doc", "reason")
 irule("say what it could not check, as the rules file says, and a dry-run push too", "could not check", "governance/rules.md",
       "dry-run push")
 irule("the docs are the only files that it writes, and the shell only reads", "only files that you write", "shell only")
 irule("a Domino Job only for the scan", "domino job only for the scan", "python governance/scan.py")
-irule("the built-in subagent only reviews: the agent makes each write", "built-in subagent only reviews", "you make each write")
+irule("the built-in subagent is told to only read: only its prompt keeps it to reading, so the agent decides and writes",
+      "built-in subagent is told to only read", "only its prompt", "you decide each finding", "you make each write")
 irule("only the bundles of the task's own project, by its ID: never a bundle of another project",
       "only at the bundles of the task's own project", "project's id", "never list, read, attach to or file on a bundle of another project")
 irule("nobody answers: no question and no access request", "nobody answers", "domino_ask_user", "domino_request_access")
@@ -248,10 +288,10 @@ NAMES = {"domino_get_bundle", "domino_get_policy", "domino_git_push", "domino_wr
          "domino_write_governance_finding", "domino_write_policy_result", "domino_report_result", "domino_ask_user",
          "domino_request_access", "domino_run_job", "domino_wait_job", "domino_get_job_logs", "domino_list_bundles",
          "domino_list_bundle_findings"}
-named = set(re.findall(r"\bdomino_[a-z_]+", aa + vs + instructions))
+named = set(re.findall(r"\bdomino_[a-z_]+", arch_skill + scan_skill + instructions))
 check("the skills and the instructions name the Domino tools of the work, and no other", named == NAMES, sorted(named ^ NAMES))
 bare = sorted(set(re.findall(r"(?<![a-z_`])(?:get_bundle|get_policy|run_job|wait_job|git_push|list_bundle\w*|write_[a-z_]+|"
-                             r"report_result)\(", aa + vs + instructions)))
+                             r"report_result)\(", arch_skill + scan_skill + instructions)))
 check("they call no tool by its plain name (a framework agent's name): a harness agent has only the domino_ names", not bare, bare)
 
 # ---------------------------------------------------------------------------------------------------- the reference settings
@@ -261,12 +301,12 @@ try:
 except ValueError as e:
     ref = {"error": str(e)}
 ref = ref if isinstance(ref, dict) else {}
-g = ref.get("guardrails") or {}
+guardrails = ref.get("guardrails") or {}
 check("agent.json is the agent's settings, in the order of the wizard's steps (the shape of check 1's), with no other key",
       list(ref) == ["lane", "name", "description", "tags", "scope", "inputs", "model", "execution", "systemPrompt", "directTrigger",
                     "skills", "completion", "onError", "identity", "access", "guardrails"], list(ref))
 check("its name is App validation (no clash with a check's name), with a description",
-      ref.get("name") == "App validation" and ref.get("name") not in names and ref.get("description"), ref.get("name"))
+      ref.get("name") == "App validation" and ref.get("name") not in CHECK_NAMES and ref.get("description"), ref.get("name"))
 check("it is a harness agent (the card Domino Agent Harness), for any project, with a required project input, and no tags",
       ref.get("lane") == "harness" and ref.get("scope") == {"type": "global"} and ref.get("tags") == []
       and ref.get("inputs") == [{"name": "project", "type": "project", "required": True, "multiple": False, "description": ""}],
@@ -279,11 +319,11 @@ check("its Environment is the harness's, by name, with 60 minutes, 300 turns and
 check("its system prompt is instructions.md (a placeholder that compare.py fills)", ref.get("systemPrompt") == "__INSTRUCTIONS__",
       ref.get("systemPrompt"))
 check("its skills are the three store skills, in order, as the wizard's picker names them (IDs and versions from the store)",
-      ref.get("skills") == [{"id": f"__{p}_SKILL_ID__", "name": s, "version": f"__{p}_SKILL_VERSION__"}
-                            for p, s in zip(("PD", "AA", "VS"), SKILLS)], ref.get("skills"))
+      ref.get("skills") == [{"id": f"__{s['prefix']}_SKILL_ID__", "name": s["slug"], "version": f"__{s['prefix']}_SKILL_VERSION__"}
+                            for s in SKILLS], ref.get("skills"))
 check("a person closes the task, a failure ends it with a report, with no plan and no check-ins",
-      ref.get("completion") == "review" and ref.get("onError") == "fail" and g.get("planFirst") is False
-      and g.get("checkInOften") is False, (ref.get("completion"), ref.get("onError"), g.get("planFirst"), g.get("checkInOften")))
+      ref.get("completion") == "review" and ref.get("onError") == "fail" and guardrails.get("planFirst") is False
+      and guardrails.get("checkInOften") is False, (ref.get("completion"), ref.get("onError"), guardrails.get("planFirst"), guardrails.get("checkInOften")))
 check("no suggested prompt and no notification", ref.get("directTrigger") == {"starterPrompts": [], "writeBack": []},
       ref.get("directTrigger"))
 check("it acts as the service account of the three checks (a placeholder: no user name in the public repo)",
@@ -291,13 +331,13 @@ check("it acts as the service account of the three checks (a placeholder: no use
 check("it is shared with the analyst (People) and the approver (Editors)",
       ref.get("access") == {"mode": "restricted", "users": ["__ANALYST__"], "editors": ["__APPROVER__"]}, ref.get("access"))
 check("its tools: Shell on, Web fetch off, Subagents on (the built-in subagent), Start Domino jobs on (the scan), Git push on",
-      g.get("tools") == {"bash": True, "web": False, "subagents": True, "jobs": True, "push": True}, g.get("tools"))
+      guardrails.get("tools") == {"bash": True, "web": False, "subagents": True, "jobs": True, "push": True}, guardrails.get("tools"))
 check("its Resource access: Project files Read & write, Project datasets No access, Other resources attached to the task Read & "
       "write, Resources not attached to the task No access (no bundle of another project)",
-      g.get("access") == {"project": "write", "data": "none", "inputs": {}, "named": "write", "other": "none"}, g.get("access"))
-check("its outbound traffic: Domino services only", g.get("network") == {"mode": "domino", "domains": []}, g.get("network"))
-check("guardrails has the wizard's five parts and no other", sorted(g) == ["access", "checkInOften", "network", "planFirst", "tools"],
-      sorted(g))
+      guardrails.get("access") == {"project": "write", "data": "none", "inputs": {}, "named": "write", "other": "none"}, guardrails.get("access"))
+check("its outbound traffic: Domino services only", guardrails.get("network") == {"mode": "domino", "domains": []}, guardrails.get("network"))
+check("guardrails has the wizard's five parts and no other", sorted(guardrails) == ["access", "checkInOften", "network", "planFirst",
+                                                                             "tools"], sorted(guardrails))
 
 # ------------------------------------------------------------------------------------------------------------- the trigger files
 PAYLOAD = set(shared.PAYLOAD)   # the fields of a governance.bundle.stage_changed payload, as the service's audit poller builds it
@@ -325,8 +365,8 @@ title, instruction = sub.get("titleTemplate") or "", sub.get("instructionTemplat
 check("...its title: App validation and the bundle ID", title == "App validation: bundle {{bundle.id}}", title)
 check("...its instruction names the bundle, the three skills in order and the three evidence items, and ends with the bundle ID",
       "{{bundle.id}}" in instruction and "{{bundle.name}}" in instruction
-      and [instruction.find(s) for s in SKILLS] == sorted(instruction.find(s) for s in SKILLS) and all(s in instruction for s in SKILLS)
-      and all(f'"{c.get("evidenceItem")}"' in instruction for c in (PD, AA, VS))
+      and [instruction.find(s) for s in SLUGS] == sorted(instruction.find(s) for s in SLUGS) and all(s in instruction for s in SLUGS)
+      and all(f'"{e}"' in instruction for e in EVIDENCE_ITEMS)
       and instruction.splitlines()[-1:] == ["Bundle ID: {{bundle.id}}"], instruction)
 fields = set(re.findall(r"\{\{([^}]+)\}\}", title + instruction))
 check("...each placeholder of its templates is a field of the stage-change payload", fields and fields <= PAYLOAD,
@@ -352,9 +392,10 @@ check("...it pins no resource and writes nothing back", sch.get("defaultResource
 
 # ------------------------------------------------------------------------------------------------------------- the compare helper
 HELPER = FOLDER / "compare.py"
-VALUES = {"__SERVICE_ACCOUNT__": "sa-one", "__ANALYST__": "ana", "__APPROVER__": "abe", "__PD_SKILL_ID__": "skl_pd",
-          "__PD_SKILL_VERSION__": "0.1.0", "__AA_SKILL_ID__": "skl_aa", "__AA_SKILL_VERSION__": "0.2.0", "__VS_SKILL_ID__": "skl_vs",
-          "__VS_SKILL_VERSION__": "0.3.0", "__WIZARD_PROJECT_ID__": "proj-two"}
+STORED = [{"id": f"skl_{s['prefix'].lower()}", "name": s["slug"], "version": f"0.{n}.0"} for n, s in enumerate(SKILLS, 1)]
+VALUES = {"__SERVICE_ACCOUNT__": "sa-one", "__ANALYST__": "ana", "__APPROVER__": "abe",
+          **{f"__{s['prefix']}_SKILL_{k.upper()}__": got[k] for s, got in zip(SKILLS, STORED) for k in ("id", "version")},
+          "__WIZARD_PROJECT_ID__": "proj-two"}
 SETS = [x for k, v in VALUES.items() for x in ("--set", f"{k}={v}")]
 work = Path(tempfile.mkdtemp(prefix="check-app-validation-"))
 atexit.register(shutil.rmtree, work, ignore_errors=True)
@@ -383,11 +424,10 @@ def diff(reference, got, sets=SETS):
 code, body = filled("agent.json", *SETS)
 check("compare.py fill agent.json gives the body to send, with each placeholder filled and the system prompt from instructions.md",
       code == 0 and "__" not in json.dumps(body) and body.get("systemPrompt") == instructions.strip()
-      and body.get("skills") == [{"id": "skl_pd", "name": SKILLS[0], "version": "0.1.0"},
-                                 {"id": "skl_aa", "name": SKILLS[1], "version": "0.2.0"},
-                                 {"id": "skl_vs", "name": SKILLS[2], "version": "0.3.0"}]
+      and body.get("skills") == STORED
       and body.get("access") == {"mode": "restricted", "users": ["ana"], "editors": ["abe"]}, (code, json.dumps(body)[:300]))
-code, out = helper("fill", "agent.json", *SETS[:-6])
+code, out = helper("fill", "agent.json", *[x for i in range(0, len(SETS), 2) if not SETS[i + 1].startswith("__VS_SKILL_VERSION__=")
+                                           for x in SETS[i:i + 2]])
 check("...and refuses, naming it, when a placeholder has no value", code == 2 and "__VS_SKILL_VERSION__" in out and "{" not in out,
       (code, out[:300]))
 if body:
@@ -448,7 +488,7 @@ WIZARD = {
     "execution.idleWaitMin": ("Wait for answers (min)", ("0",)),
     "systemPrompt": ("System prompt", ("instructions.md",)),
     "directTrigger.starterPrompts": ("Suggested prompts (optional)", ("none",)),
-    "skills": ("Skills", tuple(SKILLS) + ("in this order",)),
+    "skills": ("Skills", tuple(SLUGS) + ("in this order",)),
     "guardrails.planFirst": ("Planning", ("Start right away",)),
     "completion": ("Task completion", ("A person closes the task",)),
     "onError": ("Error recovery", ("Fail and report",)),
@@ -580,9 +620,21 @@ rrule("...and the two triggers too", "compare.py diff subscription.json", "compa
       "get /api/agents/{id}/triggers")
 rrule("...and checks the stored token's status", "identitycredential.status", "active")
 check("the README says what one task leaves: the three docs, each with its file name",
-      all(f"`docs/validation/{s}-<bundle ID>.md`" in readme for s in SKILLS), [s for s in SKILLS if s not in readme])
+      all(f"`docs/validation/{s}-<bundle ID>.md`" in readme for s in SLUGS), [s for s in SLUGS if s not in readme])
 rrule("...pushed to the task branch, each one attached as a Report from GBP", "task branch", "`report`", "`gbp`")
 rrule("...one result in three parts, each starting with ## <check name>", "three parts", "`## <check name>`")
+rrule("the cost of a wizard agent: a custom subagent can be limited to read, the built-in one has the agent's tools",
+      "cost of a wizard agent", "custom subagent can be limited to read", "built-in subagent has the agent's tools",
+      "prompt tells it to only read")
+rrule("the task records the commit first: the App version under review, which each doc cites", "records the commit",
+      "`git rev-parse head`", "app version under review")
+rrule("...and the scan Job runs on the task branch: the recorded commit plus only this task's doc commits", "task branch",
+      "recorded commit plus only this task's doc commits")
+GUARANTEE = re.compile(r"changes nothing|only reviews|which only reads|files nothing", re.I)
+said = sorted(f"{rel}: {m.group(0)}" for rel, body in every.items() if rel.endswith(".md")
+              for ln in body.splitlines() if "subagent" in ln.lower() for m in GUARANTEE.finditer(ln))
+check("no Markdown of the folder says that the built-in subagent can't change anything (only its prompt tells it to read)",
+      not said, said)
 rrule("how to run this check", "python tests/check_app_validation.py")
 hub = text(ROOT / "governance" / "README.md")
 check("governance/README.md (the hub of the three checks) names this folder, in its own section",
@@ -613,7 +665,7 @@ from agent_runtime import gateway, proxies  # noqa: E402  (stdlib only, so any O
 offered = {f"domino_{n}" for n in gateway.TOOLS} | {f"domino_{n}" for n in proxies.RELAY_TOOLS}
 check("each tool that they name is a gateway tool or a relay tool of this service, as opencode names it (domino_<name>)",
       named and named <= offered, sorted(named - offered))
-waits = [int(n) for n in re.findall(r"domino_wait_job\(jobId, seconds=(\d+)\)", vs)]
+waits = [int(n) for n in re.findall(r"domino_wait_job\(jobId, seconds=(\d+)\)", scan_skill)]
 check("the skill's wait is the longest wait of wait_job for a harness agent (opencode's call stops at 60 s)",
       waits and all(w == gateway.WAIT_MAX["harness"] for w in waits), (waits, gateway.WAIT_MAX))
 SUBAGENTS = text(service / "agent_service" / "custom_subagents.py")
