@@ -1,7 +1,9 @@
 """The shared parts of the three checks of the App validation demo (domino-agent-service spec #388, Implementation Decisions 5 to 7),
 seen from outside: the scan script as a Domino Job runs it, the doc template (one shared top part and one middle part for each
-check), and the shared rules of governance/README.md (the three checks, the four evidence fields and their values, the severity scale
-with its examples for each check, the finding names, the result and a failed scan). The file name is the one of spec #260.
+check), the three checks and a failed scan (governance/README.md), and the rules file governance/rules.md (spec #499, ticket #508: the
+four evidence fields and their values, the verdict rule, could not check, the doc location, the severity scale with its examples for
+each check, the finding names, the trim of the template and the result). The rules file agrees with governance/checks.json, and no
+other Markdown file of the repo copies one of its rules. The file name is the one of spec #260.
 
 The scan script runs with no network: a bare venv (no pip-audit, no bandit, no pip) and fake scanners on PYTHONPATH that answer with
 the real tools' output, saved in tests/fixtures/scan/ (pip-audit 2.10.1 and bandit 1.9.4 on case_server: `clean` is main,
@@ -240,8 +242,12 @@ shutil.rmtree(tmp, ignore_errors=True)
 
 # ---------------------------------------------------------------------------------------------------- the shared rules: the checks
 # Spec #388, Implementation Decisions 5 to 7: three checks, each one built its own way, each one owns one part. The names are the
-# ones of the spec (and of governance/checks.json, which this check does not read).
-RULES = ROOT / "governance" / "README.md"
+# ones of the spec. governance/README.md has the three checks and the scan. Each rule that the three checks share is in
+# governance/rules.md, one time (spec #499, ticket #508): the cases of the rules read it, the cases below make sure that it agrees
+# with governance/checks.json, and that no other file copies a rule.
+HUB = ROOT / "governance" / "README.md"
+hub = HUB.read_text() if HUB.is_file() else ""
+RULES = ROOT / "governance" / "rules.md"
 rules = RULES.read_text() if RULES.is_file() else ""
 CHECKS = ["Purpose and data", "Architecture and access", "Vulnerability scan"]
 
@@ -262,7 +268,7 @@ def one_line(text):
     return " ".join(text.split())
 
 
-checks = {r[0]: r for r in table(section(rules, "The three checks"))}
+checks = {r[0]: r for r in table(section(hub, "The three checks"))}
 check("governance/README.md has a row for each of the three checks, in the spec's order, and no other row",
       list(checks) == CHECKS, list(checks))
 BUILT = {"Purpose and data": "wizard agent", "Architecture and access": "registered agent", "Vulnerability scan": "framework agent"}
@@ -291,17 +297,20 @@ check("each check's row says where its doc goes: checks 1 and 2 push it to their
 check("each check's doc file name names the check and the bundle ID",
       all(re.search(rf"`[^`]*{c.lower().replace(' ', '-')}-<bundle ID>[^`]*\.md`", docs[c]) for c in CHECKS), docs)
 check("governance/README.md says that a check files findings only in its own part",
-      "A check files findings only in its own part." in one_line(rules), one_line(section(rules, "The three checks"))[:300])
+      "A check files findings only in its own part." in one_line(hub), one_line(section(hub, "The three checks"))[:300])
 check("governance/README.md names the tag app-validation-two-ways, which keeps the same job done two ways (spec #388, user story 47)",
-      any(TAG in ln and "the same job, two ways" in ln for ln in rules.splitlines()), [ln for ln in rules.splitlines() if TAG in ln])
+      any(TAG in ln and "the same job, two ways" in ln for ln in hub.splitlines()), [ln for ln in hub.splitlines() if TAG in ln])
+check("governance/README.md links to the rules file, governance/rules.md, for the rules that the three checks share",
+      "[rules.md](rules.md)" in hub, [ln for ln in hub.splitlines() if "rules.md" in ln])
 
 # --------------------------------------------------------------------------------------------- the shared rules: the evidence fields
 # Spec #388, Implementation Decision 7: each evidence item has the same four fields, with these values. They replace spec #260's
 # "Critical vulns" (yes or no, and "not analyzed" in the doc) and its verdict "approve after fixes".
+check("governance/rules.md is in the repo: the one file of the rules that the three checks share", bool(rules))
 FIELDS = {"Verdict": ["approve", "do not approve", "could not check"], "Highest severity": ["S0", "S1", "S2", "S3", "none"],
           "Summary": [], "Doc location": []}
 fields = {r[0]: r for r in table(section(rules, "The evidence fields"))}
-check("governance/README.md has the four evidence fields, in order: Verdict, Highest severity, Summary, Doc location, and no other",
+check("governance/rules.md has the four evidence fields, in order: Verdict, Highest severity, Summary, Doc location, and no other",
       list(fields) == list(FIELDS), list(fields))
 values = {f: re.findall(r"`([^`]+)`", " ".join(fields.get(f, [])[1:2])) for f in FIELDS}
 check("Verdict's values are exactly approve, do not approve and could not check", values["Verdict"] == FIELDS["Verdict"], values)
@@ -310,16 +319,16 @@ check("Highest severity's values are exactly S0, S1, S2, S3 and none", values["H
 check("Summary and Doc location are text, with no list of values", not values["Summary"] and not values["Doc location"]
       and all(len(fields.get(f, [])) > 1 and fields[f][1] for f in ("Summary", "Doc location")), values)
 evidence = one_line(section(rules, "The evidence fields"))
-check("governance/README.md says that Highest severity is the highest severity of the check's real findings, and none with none",
+check("governance/rules.md says that the evidence item, the doc's Evidence and the result's first four lines have the same values",
+      "The evidence item, the doc's part \"Evidence\" and the first four lines of the result have the same values." in evidence,
+      evidence[:400])
+check("governance/rules.md says that Highest severity is the highest severity of the check's real findings, and none with none",
       "the highest severity of the check's real findings" in evidence and re.search(r"`none` when [^.]*no real finding", evidence),
       evidence[:400])
-check("governance/README.md says when the Verdict is could not check: the check could not do its work, and the Summary says why",
-      re.search(r"`could not check` when the check could not do its work", evidence) is not None and "Summary says why" in evidence,
-      evidence[:400])
-check(f"governance/README.md gives the doc's own Doc location of {CHECKS[0]} and {CHECKS[1]}: the task branch and the doc's file, "
-      "with no commit (the doc is written before its push)",
-      f"For {CHECKS[0]} and {CHECKS[1]}, that is `<task branch>, docs/validation/<file>`, where the task branch is "
-      "`agent/<task key>`." in evidence, evidence[evidence.find("**Doc location.**"):][:400])
+check("governance/rules.md says that with could not check, Highest severity counts only the real findings that the check did file, "
+      "and the Summary says what was not checked, and why",
+      "With `could not check`, it counts only the real findings that the check did file" in evidence
+      and "With `could not check`, it says what was not checked, and why." in evidence, evidence[:400])
 # One verdict rule for all three checks (the orchestrator's decision for spec #388, 2026-11-19), so that the approver can compare
 # them. False hits never count.
 verdict_rule = evidence[evidence.find("**Verdict.**"):evidence.find("**Highest severity.**")] if "**Verdict.**" in evidence else ""
@@ -327,19 +336,53 @@ check("the Verdict rule: do not approve when at least one real finding of the ch
       "`do not approve` when at least one real finding of the check is S0 or S1" in verdict_rule, verdict_rule[:400])
 check("the Verdict rule: approve when the highest severity of its real findings is S2, S3 or none",
       "`approve` when the highest severity of its real findings is S2, S3 or `none`" in verdict_rule, verdict_rule[:400])
-check("the Verdict rule: could not check when the check could not do its work, and then Highest severity names only what it did "
-      "check", "`could not check` when the check could not do its work" in verdict_rule
-      and "Highest severity names only what it did check" in verdict_rule, verdict_rule[:400])
-check("the Verdict rule: false hits never count", "False hits never count" in verdict_rule, verdict_rule[:400])
+check("the Verdict rule: could not check when the check could not do its work, before the other two, also with an S0 or S1 finding",
+      "`could not check` when the check could not do its work" in verdict_rule
+      and "This comes before the other two, also with an S0 or S1 finding." in verdict_rule, verdict_rule[:400])
+check("the Verdict rule: false hits never count, and the reason names the findings that decide it",
+      "False hits never count" in verdict_rule and "The reason names the findings that decide it." in verdict_rule, verdict_rule[:400])
 OLD_RULES = re.compile(r"critical vulns|not analyzed|approve after fixes", re.I)
-check("governance/README.md has no rule of spec #260 left: no Critical vulns, no 'not analyzed', no 'approve after fixes'",
-      not OLD_RULES.search(rules), sorted(set(m.group(0) for m in OLD_RULES.finditer(rules))))
+check("governance/README.md and governance/rules.md have no rule of spec #260 left: no Critical vulns, no 'not analyzed', no "
+      "'approve after fixes'", not OLD_RULES.search(hub + rules), sorted(set(m.group(0) for m in OLD_RULES.finditer(hub + rules))))
+
+# ---------------------------------------------------------------------------------------------- the shared rules: could not check
+# Spec #499 (ticket #508): one rule for the three checks: when a check could not do its work, what it does after a failed call, and
+# where it says each limit. Each checklist names its own cases.
+cannot = one_line(section(rules, "Could not check"))
+check("governance/rules.md has the rule for could not check: the check could not read or judge a part that its verdict needs, for "
+      "example a failed scan, a model with no usable answer, or a call that Domino denied",
+      all(w in cannot for w in ("could not read or judge a part that its verdict needs", "a failed scan", "no usable answer",
+                                "a call that Domino denied")), cannot[:400] or "no '## Could not check'")
+check("...each checklist names the cases of its own check", "Each checklist names the cases of its own check." in cannot,
+      cannot[:400])
+check("...a failed or denied call: go on with the steps that don't need its answer, and try a failed call again at most once",
+      "When a call fails or is denied, go on with the steps that don't need its answer. Try a failed call again at most once."
+      in cannot, cannot[:400])
+check('...each limit goes under "What this check could not check" in the doc and under "Could not check:" in the result, and each '
+      "failed or denied call is named with Domino's answer",
+      all(w in cannot for w in ('"What this check could not check"', '"Could not check:"', "with Domino's answer")), cannot[:400])
+check("...a limit alone does not make the Verdict could not check when the check still did its work",
+      "A limit alone does not make the Verdict `could not check` when the check still did its work." in cannot, cannot[:400])
+
+# ---------------------------------------------------------------------------------------------- the shared rules: the doc location
+# Spec #388, Implementation Decision 7: the same line in the evidence item and in the result. The doc's own line has no commit and no
+# snapshot: the doc is written before them.
+location = one_line(section(rules, "The doc location"))
+check(f"governance/rules.md gives the Doc location of {CHECKS[0]} and {CHECKS[1]}: the task branch at the push's commit and the "
+      "doc's file, or why the doc is not in the repo", "`<task branch> at <commit>, docs/validation/<file>`" in location
+      and "`Not in the repo: <why>. The doc is in the task's result.`" in location, location[:400] or "no '## The doc location'")
+check(f"...and of {CHECKS[2]}: the dataset, the snapshot and the file, or why it is not written",
+      "`dataset <ID>, snapshot <ID>, file <name>`" in location and "`Not written: <why>.`" in location, location[:400])
+check(f"governance/rules.md gives the doc's own Doc location of {CHECKS[0]} and {CHECKS[1]}: the task branch and the doc's file, "
+      "with no commit (the doc is written before its push)",
+      f"For {CHECKS[0]} and {CHECKS[1]}, that is `<task branch>, docs/validation/<file>`, where the task branch is "
+      "`agent/<task key>`." in location, location[:400])
 
 # ----------------------------------------------------------------------------------------- the severity scale and the finding names
 # write_governance_finding's own words: "severity: S0 (critical), S1 (high), S2 (medium) or S3 (low)" (agent_runtime/gateway.py).
 SCALE = {"S0": "critical", "S1": "high", "S2": "medium", "S3": "low"}
 rows = dict(re.findall(r"^\| (S\d) \((\w+)\) \|", rules, re.M))
-check("governance/README.md has the severity scale, S0 to S3, with write_governance_finding's words", rows == SCALE, rows)
+check("governance/rules.md has the severity scale, S0 to S3, with write_governance_finding's words", rows == SCALE, rows)
 # The examples that the user agreed (spec #388, Implementation Decision 7), so that "S1" means the same in each check.
 scale = section(rules, "The severity scale")
 examples = table(scale[scale.find("### Examples"):]) if "### Examples" in scale else []
@@ -357,7 +400,7 @@ check("each example's severity is on the scale", examples and all(len(r) > 2 and
 
 # The finding names: spec #388, Implementation Decision 7. The name says which check filed it and where the problem is.
 names = section(rules, "Finding names")
-check("governance/README.md has the finding name rule [<check name>] <what> in <where>",
+check("governance/rules.md has the finding name rule [<check name>] <what> in <where>",
       "`[<check name>] <what> in <where>`" in names, one_line(names)[:300])
 for name in CHECKS:
     shown = re.findall(rf"`\[{re.escape(name)}\] [^`]+ in [^`]+`", names)
@@ -367,15 +410,27 @@ check("the Vulnerability scan's example is the spec's: [Vulnerability scan] Code
 check("a check files only its real findings, and a false hit goes in its doc only, with the reason",
       re.search(r"files only its real findings\. A false hit goes in its doc only, [^.]*with the reason", one_line(names)) is not None,
       one_line(names)[:400])
-check("governance/README.md names no validator of spec #260: no [folder], no [LangGraph] finding names",
-      "[folder]" not in rules and "[LangGraph]" not in rules,
-      [ln for ln in rules.splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
+check("governance/README.md and governance/rules.md name no validator of spec #260: no [folder], no [LangGraph] finding names",
+      "[folder]" not in hub + rules and "[LangGraph]" not in hub + rules,
+      [ln for ln in (hub + rules).splitlines() if "[folder]" in ln or "[LangGraph]" in ln])
+
+# ---------------------------------------------------------------------------------------------- the shared rules: the doc's template
+# Spec #388, Implementation Decision 7: each check keeps the template's shared top part and only its own middle part.
+trim = one_line(section(rules, "The doc's template"))
+check("governance/rules.md says how a check trims the template to its own check: the shared top part, and only the middle part with "
+      "the check's name, with the other two deleted", all(w in trim for w in (
+          "[validation-doc.md](validation-doc.md)", "Keep the shared top part (from the title to \"What this check could not check\") "
+          "and only the middle part with the check's name.", "Delete the other two middle parts, with all their text.")),
+      trim[:400] or "no '## The doc's template'")
+check("...and how it fills it: each {{field}} replaced, every heading kept in its order, every comment deleted",
+      all(w in trim for w in ("Replace each `{{field}}` with its text.", "Keep every heading of the kept parts, in its order.",
+                              "Delete every comment (`<!-- ... -->`).")), trim[:400])
 
 # The result: spec #388, Implementation Decision 7. Checks 1 and 2 end with report_result; check 3, a framework agent, has no
 # report_result and ends with its run's last streamed text. In both, the first lines are the four evidence values, so that
 # "Validation status" and the task page show the same result. Each line is "<field label>: <value>".
 result_rule = section(rules, "The result")
-check("governance/README.md has the rule for the result: Purpose and data and Architecture and access end with report_result, once, "
+check("governance/rules.md has the rule for the result: Purpose and data and Architecture and access end with report_result, once, "
       "last, and Vulnerability scan (a framework agent, with no report_result) with its run's last streamed text",
       "Purpose and data and Architecture and access end with `report_result`, once, last." in one_line(result_rule)
       and "Vulnerability scan is a framework agent, which has no `report_result`: it ends with its run's last streamed text"
@@ -388,11 +443,72 @@ check("the result's Verdict and Highest severity lines give exactly their values
       first[:2] == ["Verdict: approve | do not approve | could not check", "Highest severity: S0 | S1 | S2 | S3 | none"], first)
 check("the result's four values are the same as the evidence item's", "the same values as the evidence item" in one_line(result_rule),
       one_line(result_rule)[:300])
+check("...each line is plain text: the label, a colon and the value, with no Markdown",
+      "Each line is the field's label, a colon and the value, with no Markdown." in one_line(result_rule), one_line(result_rule)[:400])
+check('...then the real findings, the false hits and "Could not check:", and the whole doc when it is not at its location',
+      all(w in one_line(result_rule) for w in ("the real findings (name and severity)", "the false hits (the hit and the reason)",
+                                               '"Could not check:"', "add the whole doc after them")), one_line(result_rule)[:400])
+
+# ------------------------------------------------------------------------------------ the rules file and governance/checks.json agree
+# Spec #499 (ticket #508): checks.json is the one source of the values, and the rules file uses them. Each check name, field label,
+# verdict and severity that the rules file gives is one of checks.json, in checks.json's order.
+try:
+    SOURCE = json.loads((ROOT / "governance" / "checks.json").read_text())
+except (OSError, ValueError) as e:
+    SOURCE = {"error": str(e)}
+src_names = [c.get("name") for c in SOURCE.get("checks") or [] if isinstance(c, dict)]
+src_labels = [(SOURCE.get("fields") or {}).get(k) for k in ("verdict", "severity", "summary", "doc")]
+src_verdicts, src_severities = SOURCE.get("verdicts") or [], SOURCE.get("severities") or []
+check("governance/checks.json names three checks, four labels, the verdicts and the severities",
+      len(src_names) == 3 and all(src_labels) and src_verdicts and src_severities, SOURCE)
+check("the rules file and checks.json agree: the evidence fields are the four labels of checks.json, in its order",
+      list(fields) == src_labels, (list(fields), src_labels))
+check("...Verdict's values are the verdicts of checks.json, and Highest severity's values are its severities, in its order",
+      values["Verdict"] == src_verdicts and values["Highest severity"] == src_severities,
+      (values["Verdict"], values["Highest severity"], src_verdicts, src_severities))
+said_verdicts = re.findall(r"^\s*- `([^`]+)` when ", section(rules, "The evidence fields"), re.M)
+check("...the verdict rule gives each verdict of checks.json one time, and no other", sorted(said_verdicts) == sorted(src_verdicts),
+      said_verdicts)
+check("...the severity scale is the severities of checks.json, in its order, but the last one, none (no real finding)",
+      list(rows) == src_severities[:-1] and src_severities[-1:] == ["none"], (list(rows), src_severities))
+check("...the result's first lines have the labels of checks.json, in its order, and its exact verdicts and severities",
+      [ln.split(":")[0] for ln in first] == src_labels
+      and first[:2] == [f"{src_labels[0]}: {' | '.join(src_verdicts)}", f"{src_labels[1]}: {' | '.join(src_severities)}"], first)
+shown_checks = sorted({*re.findall(r"`\[([^\]<>]+)\] ", names), *(r[0] for r in examples)})
+check("...each check in the examples of the finding names and of the scale is a check of checks.json, and each check of checks.json "
+      "has its examples", shown_checks == sorted(src_names), (shown_checks, src_names))
+check("...the doc location names each check of checks.json", src_names and all(n in location for n in src_names), location[:300])
+
+# ------------------------------------------------------------------------------------------------- no other file copies a rule
+# Spec #499 (ticket #508): each rule that the three checks share is in governance/rules.md one time, so that one change is one edit.
+# Each rule below has the words that say it. No other Markdown file of the repo holds them: a Markdown file is what a person or an
+# agent reads, so a copy there can drift. The code of the Vulnerability scan applies the verdict rule and the finding names with the
+# values of governance/checks.json: that is code, not a copy.
+SAYS = {"the verdict rule": ["s0 or s1"],
+        "the finding name": ["<what> in <where>"],
+        "the severity scale": ["s0 (critical)", "run code on the app's machine"],
+        "the four result lines": ["verdict: approve | do not approve | could not check"],
+        "could not check": ["could not do its work"],
+        "the doc location format": ["branch> at <commit>", "not in the repo: <why>"],
+        "the trim of the template to one check": ["other two middle parts", "only the middle part"]}
+
+
+def flat(body):
+    """A Markdown text as its words: in lower case, on one line, with no backticks."""
+    return " ".join(body.replace("`", "").lower().split())
+
+
+pages = {f.relative_to(ROOT).as_posix(): flat(f.read_text()) for f in sorted(ROOT.rglob("*.md"))
+         if not any(p.startswith(".") for p in f.relative_to(ROOT).parts) and f.resolve() != RULES.resolve()}
+for rule_name, words in SAYS.items():
+    check(f"governance/rules.md says {rule_name}", all(w in flat(rules) for w in words), words)
+    copies = sorted(f"{rel}: {w}" for rel, body in pages.items() for w in words if w in body)
+    check(f"...and no other Markdown file of the repo copies {rule_name}", not copies, copies)
 
 # ---------------------------------------------------------------------------------------------- the shared rules: a failed scan
 # Spec #388, Implementation Decision 10: only check 3 runs the scan now. A failed scan gives "could not check" (it replaces spec #260's
-# "do not approve"), no finding from the scan, and the Summary and the doc say why.
-failed_scan = one_line(section(rules, "A failed scan"))
+# "do not approve"), no finding from the scan, and the Summary and the doc say why. The rest is the rule for could not check.
+failed_scan = one_line(section(hub, "A failed scan"))
 check("governance/README.md has the rule for a failed scan: when the Job did not succeed or the summary's result is not 'both tools "
       "ran'", "`Succeeded`" in failed_scan and "`result: both tools ran`" in failed_scan, failed_scan[:400] or "no '## A failed scan'")
 check("the rule for a failed scan says that only the Vulnerability scan runs the scan",
@@ -402,6 +518,8 @@ check("a failed scan gives the Verdict could not check, and never do not approve
 check("a failed scan gives no finding from the scan", "No finding comes from the scan" in failed_scan, failed_scan[:400])
 check("after a failed scan, the Summary and the doc's Scan results and 'What this check could not check' say that the scan failed, "
       "and why", all(w in failed_scan for w in ("Summary", "Scan results", "What this check could not check", "why")),
+      failed_scan[:400])
+check("...and the rest is the rule for could not check, in the rules file", '"Could not check" of [rules.md](rules.md)' in failed_scan,
       failed_scan[:400])
 
 # ------------------------------------------------------------------------------------------------------------------ the doc template

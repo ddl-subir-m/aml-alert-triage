@@ -8,17 +8,15 @@ The task's instruction names the bundle ID (`bundleId` below). Do the steps in o
 
 You are the check "Architecture and access", one of the three checks of the Validation stage. Your part: all access (who can call each route or tool, what it changes, and which identity each write records), the tech stack, the design, and the dependencies with how they are pinned and installed. You run no scan and start no Job.
 
-The project folder (its path is in the operating rules) holds the shared rules of the three checks:
+The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step:
 
-- `governance/README.md`: the evidence fields, the verdict rule, the severity scale (S0 to S3) with its examples for each check, the finding names and the rule for the result.
+- `governance/rules.md`: the rules that the three checks share: the evidence fields and the verdict rule, could not check (also for a failed or denied call), the doc location, the severity scale (S0 to S3) with its examples for each check, the finding names, the doc's template and the result.
 - `governance/validation-doc.md`: the template of the doc.
 
 File findings only in your own part, never in the parts of the other two checks, "Purpose and data" and "Vulnerability scan". Where two parts meet:
 
 - A known vulnerability (a CVE, PYSEC or GHSA ID) in a dependency or in the code is the part of the check "Vulnerability scan": file none. A dependency's version range, its pin and how it is installed are your part.
 - The kind of data that the App holds, and its data class, are the part of the check "Purpose and data": file none. Who can read that data through the App is your part.
-
-When a call fails or is denied, go on with the steps that don't need its answer. Name the call and Domino's answer under "What this check could not check" (in the doc, or in the result when the doc is already pushed). Try a failed call again at most once.
 
 ## 1. Read the bundle and its policy
 
@@ -71,7 +69,7 @@ The access rules:
 2. An access check is code in the handler, or in a function that it calls, that refuses a caller. Code that only reads the `domino-username` header to record it is not an access check.
 3. A route or a tool that changes state with no access check: anyone who can open the App can make that change.
 4. Each write must record who made it, from the `domino-username` header. A write that records no identity (for example "no identity" when the header is missing) is a problem.
-5. The severity of a problem: the scale of `governance/README.md` (S0 to S3) with its examples for this check. The Intake's Users say who must reach the App, and its Data class says how much harm an open route can do.
+5. The severity of a problem: the scale of `governance/rules.md` (S0 to S3) with its examples for this check. The Intake's Users say who must reach the App, and its Data class says how much harm an open route can do.
 6. Judge only access: a known vulnerability is the part of the check "Vulnerability scan", and the data class is the part of the check "Purpose and data".
 
 Its answer is one JSON object in a json block: in `routes`, for each route its `method` and `path`, `who_can_call`, `what_it_changes`, `problem`, `severity`, `severity_reason` and `evidence` (each a file and line); and in `not_reviewed`, what it could not review. Keep its verdicts for steps 4 and 5. It only reads, and it files nothing: you make each write of the checklist.
@@ -87,25 +85,20 @@ Done when: you have a verdict for each route and each tool, from the review or f
 For each problem in your part, decide: a real finding or a false hit.
 
 - Each route problem of the review is an input, and you decide: check its verdict against the handler at its file and line, then sort it with the rules below, as you sort each other problem.
-- A real finding gets a severity on the scale of `governance/README.md` (S0, S1, S2 or S3: use its examples for this check), a name `[Architecture and access] <what> in <where>`, its evidence (the file and line, and the code) and a fix. `<where>` is a route, a file or a dependency.
-- A false hit is a thing that looked like a problem and is not one. It gets the reason from the code: what the code really does, or why the App needs it. False hits never count, and you file no false hit.
+- A real finding gets a severity on the scale of `governance/rules.md` (use its examples for this check), a name by its finding names (`<where>` is a route, a file or a dependency), its evidence (the file and line, and the code) and a fix.
+- A false hit is a thing that looked like a problem and is not one. It gets the reason from the code: what the code really does, or why the App needs it. You file no false hit.
 
-Then pick two of the evidence values, with the rules of `governance/README.md`:
-
-- Highest severity: the highest severity of your real findings, `S0` to `S3`, or `none` when you have no real finding.
-- Verdict: `do not approve` when at least one real finding is S0 or S1. `approve` when the highest severity is S2, S3 or `none`. `could not check` when the check could not do its work (for example you could not read the App's code, or Domino denied `domino_get_policy`): this comes before the other two. The verdict's reason names the findings that decide it.
+Then pick the Highest severity and the Verdict by `governance/rules.md` ("The evidence fields"), with your real findings. This check can't do its work, so the Verdict is `could not check`, when you could not read the App's code, or Domino denied `domino_get_policy`.
 
 Done when: each problem is a real finding or a false hit, each real finding has a severity and a name, each false hit has a reason, and you have the Verdict and the Highest severity.
 
 ## 5. Write the doc
 
-- Copy `governance/validation-doc.md` to `docs/validation/architecture-and-access-<bundleId>.md` in the project folder.
-- Keep the shared top part (from the title to "What this check could not check") and only your middle part, `## Architecture and access`. Delete the other two middle parts, `## Purpose and data` and `## Vulnerability scan`, with all their text.
-- Replace each `{{field}}` with its text. Keep every heading of your parts, in its order. Delete every comment (`<!-- ... -->`).
+- Copy `governance/validation-doc.md` to `docs/validation/architecture-and-access-<bundleId>.md` in the project folder, and trim it to this check as `governance/rules.md` says ("The doc's template"): your middle part is `## Architecture and access`.
 - `app`: the App's name. `check`: `Architecture and access`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
 - `app_and_version`: the App's name, its repository, and the commit that you read (`git rev-parse HEAD` in the project folder).
-- `verdict`, `highest_severity` and `summary`: the values of step 4. The summary is three to five sentences: the verdict's reason, and each real finding by its name and its severity.
-- `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/architecture-and-access-<bundleId>.md`.
+- `verdict`, `highest_severity` and `summary`: the values of step 4, by the rules of `governance/rules.md` ("The evidence fields").
+- `doc_location`: the doc's own Doc location (`governance/rules.md`, "The doc location"), with the file `docs/validation/architecture-and-access-<bundleId>.md`.
 - `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and what only the running App shows (the Apps proxy, the identity headers, who can open the App). Also each failed or denied call, each item of the tool's `not_read`, and a review of `route-reviewer` with no usable answer (or each row that it did not review).
 - `tech_stack`, `architecture`, `access` and `dependencies`: the facts of step 2, with their evidence. `dependencies` is a table.
 - In the doc's Architecture section, add a table of each route: method, path, who can call it, what it changes.
@@ -131,7 +124,7 @@ Done when: the bundle has the Report attachment, or the result will say why it h
 
 ## 8. File the real findings
 
-For each real finding of the doc: `domino_write_governance_finding(bundleId, name="[Architecture and access] <what> in <where>", severity="S0" to "S3", description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File only the findings of your part, and file no false hit. You file them yourself: `route-reviewer` files nothing.
+For each real finding of the doc: `domino_write_governance_finding(bundleId, name=<its name>, severity=<its severity>, description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File only the findings of your part, and file no false hit. You file them yourself: `route-reviewer` files nothing.
 
 Done when: each real finding of the doc is filed once.
 
@@ -139,21 +132,12 @@ Done when: each real finding of the doc is filed once.
 
 Fill only your own evidence item, "Validation: Architecture and access": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Highest severity ID>: <the highest severity>, <Summary ID>: <the summary>, <Doc location ID>: <the doc location>})`. The first three values are the same as in the doc.
 
-The doc location is one line: `<branch> at <commit>, docs/validation/architecture-and-access-<bundleId>.md`, with the push's branch and commit. When the doc is not in the repo: `Not in the repo: <why>. The doc is in the task's result.`
+The doc location is the line of `governance/rules.md` ("The doc location"), with the push's branch and commit and the file `docs/validation/architecture-and-access-<bundleId>.md`.
 
 Done when: the answer's `results` show your four values for your evidenceId.
 
 ## 10. Report the result
 
-Call `domino_report_result(summary)`, once, last. The summary starts with these four lines, each on its own line, in this order: one of the values, the summary on one line, and the same doc location as in step 9. They are plain text, with no Markdown on those lines.
-
-```
-Verdict: approve | do not approve | could not check
-Highest severity: S0 | S1 | S2 | S3 | none
-Summary: <the summary, on one line>
-Doc location: <the doc location>
-```
-
-Then: the real findings (name and severity), the false hits (what, and the reason), and "Could not check:" with each limit and each failed or denied call. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
+Call `domino_report_result(summary)`, once, last. The summary is the result of `governance/rules.md` ("The result"): its four lines first, with the same values as your evidence item (step 9), then each part that it names after them.
 
 Done when: `domino_report_result` answered "Recorded".

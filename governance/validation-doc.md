@@ -1,10 +1,7 @@
 <!--
-The template of a check's doc (domino-agent-service spec #388, Implementation Decision 7). Each of the three checks fills it.
-How to fill it: keep the shared top part (from the title to "What this check could not check") and only the middle part that has your
-check's name. Delete the other two middle parts. Replace each {{field}} with text, keep every heading of your parts in its order, and
-delete every comment like this one.
-The doc's file name names the check and the bundle ID. The evidence fields, the severity scale, the finding names and the rule for a
-failed scan are in governance/README.md.
+The template of a check's doc (domino-agent-service spec #388, Implementation Decision 7). Each of the three checks fills it, as
+governance/rules.md says ("The doc's template"). The doc's file name names the check and the bundle ID. The evidence fields, could
+not check, the doc location, the severity scale and the finding names are in governance/rules.md too.
 -->
 # Validation of {{app}}: {{check}}
 
@@ -18,11 +15,10 @@ summary). -->
 
 ## Evidence
 
-<!-- The same values as the evidence item "Validation: <check name>" and the first four lines of the result, but the doc location.
-verdict: approve, do not approve or could not check. highest_severity: S0, S1, S2, S3 or none (the highest severity of this check's
-real findings). summary: three to five sentences, with the verdict's reason and the real findings by name and severity. doc_location:
-the doc is written before its push or its snapshot, so here it names only the file and where it goes (the task branch, or the doc
-dataset), with no commit and no snapshot. This is advice: the approver decides. -->
+<!-- The same values as the evidence item "Validation: <check name>" and the first four lines of the result, but the doc location
+(governance/rules.md, "The evidence fields"). verdict: approve, do not approve or could not check. highest_severity: S0, S1, S2, S3 or
+none. summary: the verdict's reason, and the real findings by name and severity. doc_location: the doc's own Doc location, with no
+commit and no snapshot (governance/rules.md, "The doc location"). This is advice: the approver decides. -->
 - Verdict: {{verdict}}
 - Highest severity: {{highest_severity}}
 - Summary: {{summary}}
@@ -62,9 +58,9 @@ data that the App is built to hold. Then the Intake's Data class, and whether it
 
 #### Real findings
 
-<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding:
-[Purpose and data] <what> in <where>. Severity: S0 to S3, on the scale of governance/README.md. Evidence: the file and line, or the
-Intake field, that shows it. "None" when there are none. -->
+<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding: it starts with
+[Purpose and data] (governance/rules.md, "Finding names"). Severity: S0 to S3, on the scale of governance/rules.md. Evidence: the
+file and line, or the Intake field, that shows it. "None" when there are none. -->
 {{real_findings}}
 
 #### False hits
@@ -104,9 +100,9 @@ file, by the start script from PyPI each time the App starts, or already in the 
 
 #### Real findings
 
-<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding:
-[Architecture and access] <what> in <where>. Severity: S0 to S3, on the scale of governance/README.md. Evidence: the file and line, and
-the code that shows it. "None" when there are none. -->
+<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding: it starts with
+[Architecture and access] (governance/rules.md, "Finding names"). Severity: S0 to S3, on the scale of governance/rules.md.
+Evidence: the file and line, and the code that shows it. "None" when there are none. -->
 {{real_findings}}
 
 #### False hits
@@ -130,9 +126,9 @@ summary, or "nothing". -->
 
 #### Real findings
 
-<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding:
-[Vulnerability scan] <what> in <where>. Severity: S0 to S3, on the scale of governance/README.md. Evidence: the file and line, and the
-scanner hit or the code that shows it. "None" when there are none. -->
+<!-- A table: | Name | Severity | Evidence | Fix |. The name is the one filed with write_governance_finding: it starts with
+[Vulnerability scan] (governance/rules.md, "Finding names"). Severity: S0 to S3, on the scale of governance/rules.md. Evidence:
+the file and line, and the scanner hit or the code that shows it. "None" when there are none. -->
 {{real_findings}}
 
 #### False hits

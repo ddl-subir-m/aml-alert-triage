@@ -8,12 +8,11 @@ The task's instruction names the bundle ID (`bundleId` below). Do the steps in o
 
 This check owns one part of the validation: what the App is for and what data it holds, compared with the Intake answers (Purpose, Users, Data class). It is not a review of code security: two other checks own the access, the code and the dependencies.
 
-The project folder (its path is in the operating rules) holds the shared parts of the three checks:
+The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step:
 
-- `governance/README.md`: the three checks and what each one owns, the evidence fields, the severity scale (S0 to S3), the finding names and the result.
+- `governance/rules.md`: the rules that the three checks share: the evidence fields and the verdict rule, could not check (also for a failed or denied call), the doc location, the severity scale (S0 to S3), the finding names, the doc's template and the result.
+- `governance/README.md`: the three checks and what each one owns.
 - `governance/validation-doc.md`: the template of the doc.
-
-When a call fails or is denied, go on with the steps that don't need its answer. Name the call and Domino's answer under "What this check could not check" (in the doc, or in the result when the doc is already pushed). Try a failed call again at most once.
 
 ## 1. Read the bundle and its policy
 
@@ -53,7 +52,7 @@ Done when: the App's data has one class, and each kind of data that decides it h
 
 ## 4. Compare with the Intake
 
-Compare what the App is for and what data it holds (steps 2 and 3) with the Intake's Purpose, Users and Data class (step 1). Each difference that matters is a real finding, with a severity on the scale of `governance/README.md` (S0 to S3):
+Compare what the App is for and what data it holds (steps 2 and 3) with the Intake's Purpose, Users and Data class (step 1). Each difference that matters is a real finding, with a severity on the scale of `governance/rules.md` (S0 to S3):
 
 - An Intake Data class lower than the class of the data that the App is built to hold, or a Data class that is not filled: S1. The data gets less protection than it needs. This is the scale's example for this check.
 - An Intake Data class higher than the class of the data: no finding. Say it in the doc.
@@ -62,7 +61,7 @@ Compare what the App is for and what data it holds (steps 2 and 3) with the Inta
 File findings only in your own part: what the App is for and what data it holds, against the Intake. Not code security.
 When you see a problem in another check's part, file nothing for it: that check files it. Who can read the data through the App (its access) is the part of the check Architecture and access. A weakness in the code or a dependency is the part of the checks Architecture and access and Vulnerability scan.
 
-Each real finding gets a name, its severity, its evidence (the Intake field and its value, and the file and line that show the data) and a fix. The name is `[Purpose and data] <what> in <where>`, where `<where>` is an Intake field, a file or a route. For example: `[Purpose and data] Data class Internal for Restricted data in the Intake`.
+Each real finding gets a name (by the finding names of `governance/rules.md`: its `<where>` is an Intake field, a file or a route), its severity, its evidence (the Intake field and its value, and the file and line that show the data) and a fix.
 
 Something that looks like a problem and is not one is a false hit: it goes in the doc, with the reason why it is not a finding. File no false hit.
 
@@ -70,19 +69,11 @@ Done when: each difference is a real finding with a severity, or a false hit wit
 
 ## 5. Write the doc
 
-- Copy `governance/validation-doc.md` to `docs/validation/purpose-and-data-<bundleId>.md` in the project folder.
-- Keep the shared top part (from the title to "What this check could not check") and only the middle part named "Purpose and data". Delete the other two middle parts ("Architecture and access" and "Vulnerability scan").
-- Replace each `{{field}}` with its text. Keep every heading of your parts, in its order. Delete every comment (`<!-- ... -->`).
+- Copy `governance/validation-doc.md` to `docs/validation/purpose-and-data-<bundleId>.md` in the project folder, and trim it to this check as `governance/rules.md` says ("The doc's template"): your middle part is "Purpose and data".
 - `app`: the App's name. `check`: `Purpose and data`. `bundle_id`: the bundle ID. `written_at`: the time now, from `date -u '+%Y-%m-%d %H:%M'`.
 - `app_and_version`: the App's name, its repository, and the commit that you read (`git rev-parse HEAD` in the project folder).
-- `verdict`: exactly one of `approve`, `do not approve`, `could not check`, by the one rule of the three checks (`governance/README.md`, "The evidence fields"):
-  - `do not approve` when at least one real finding is S0 or S1.
-  - `approve` when the highest severity of the real findings is S2, S3 or `none`.
-  - `could not check` when the check could not do its work: for example you could not read the policy or the Intake values, or the App's code is not in the project folder. This comes before the other two.
-  - The reason names the findings that decide it. The verdict is advice: the approver decides.
-- `highest_severity`: the highest severity of the real findings (`S0` is the highest), or `none` when there is no real finding.
-- `summary`: three to five sentences: the verdict's reason, and each real finding by its name and its severity.
-- `doc_location`: the doc is written before its push, so name only the task branch and the file, with no commit: `agent/<task key>, docs/validation/purpose-and-data-<bundleId>.md`.
+- `verdict`, `highest_severity` and `summary`: by the rules of `governance/rules.md` ("The evidence fields"), with the real findings of step 4. This check can't do its work, so the verdict is `could not check`, when you could not read the policy or the Intake values, or when the App's code is not in the project folder.
+- `doc_location`: the doc's own Doc location (`governance/rules.md`, "The doc location"), with the file `docs/validation/purpose-and-data-<bundleId>.md`.
 - `could_not_check`: each limit of this check. Always: the commit of the App version under review (the task reads the project's default branch, not the version's commit), and the data in the running App (the check reads the code and the sample data, not the App's state). Also each call that failed or that Domino denied.
 - `purpose`, `users`, `data_class`: from steps 2 to 4. Each one gives the Intake's value ("not filled" for a field with no value), and says where it differs.
 - `real_findings`, `false_hits`: the tables of step 4.
@@ -105,7 +96,7 @@ Done when: the bundle has the Report attachment, or the result will say why it h
 
 ## 8. File the real findings
 
-For each real finding of the doc: `domino_write_governance_finding(bundleId, name="[Purpose and data] <what> in <where>", severity="S0" to "S3", description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File no false hit.
+For each real finding of the doc: `domino_write_governance_finding(bundleId, name=<its name>, severity=<its severity>, description=<the evidence, why it matters, the fix, and the doc's location>)`. Use the name and the severity of the doc's table. File no false hit.
 
 Done when: each real finding of the doc is filed once.
 
@@ -113,21 +104,12 @@ Done when: each real finding of the doc is filed once.
 
 Fill only your own evidence item, "Validation: Purpose and data": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Highest severity ID>: <the highest severity>, <Summary ID>: <the summary>, <Doc location ID>: <the doc location>})`.
 
-The doc location is one line, with the push's branch and commit: `<branch> at <commit>, docs/validation/purpose-and-data-<bundleId>.md`. When the doc is not in the repo: `Not in the repo: <why>. The doc is in the task's result.`
+The doc location is the line of `governance/rules.md` ("The doc location"), with the push's branch and commit and the file `docs/validation/purpose-and-data-<bundleId>.md`.
 
 Done when: the answer's `results` show your four values for your evidenceId.
 
 ## 10. Report the result
 
-Call `domino_report_result(summary)`, once, last. The summary starts with these four lines, each on its own line, with the same values as your evidence item (step 9). Each line is the field's label, a colon and the value, with no Markdown:
-
-```
-Verdict: approve | do not approve | could not check
-Highest severity: S0 | S1 | S2 | S3 | none
-Summary: <the Summary, on one line>
-Doc location: <the Doc location>
-```
-
-Then: the real findings (name and severity), the false hits (what and why), and "Could not check:" with each limit and each failed or denied call. When the doc is not in the repo, add the whole doc after them, so that the approver can read it.
+Call `domino_report_result(summary)`, once, last. The summary is the result of `governance/rules.md` ("The result"): its four lines first, with the same values as your evidence item (step 9), then each part that it names after them.
 
 Done when: `domino_report_result` answered "Recorded".
