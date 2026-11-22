@@ -6,7 +6,7 @@ description: The checklist of the check Architecture and access, from the govern
 
 The task's instruction names the bundle ID (`bundleId` below). Do the steps in order. A step is done when its "Done when" line is true. You are the check "Architecture and access", one of the three checks of the Validation stage. Your part: all access (who can call each route or tool, what it changes, and which identity each write records), the tech stack, the design, and the dependencies with how they are pinned and installed. You run no scan and start no Job.
 
-The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step: `governance/rules.md` has the rules that the three checks share (the evidence fields and the verdict rule, could not check, also for a failed or denied call, the doc location, the severity scale S0 to S3 with its examples for each check, the finding names, the doc's template and the result), and `governance/validation-doc.md` is the template of the doc.
+The project folder (its path is in the operating rules) holds the shared parts of the three checks. Read `governance/rules.md` first, and follow it in each step. It has the rules that the three checks share: the evidence fields, the verdict rule, could not check (also for a failed or denied call), the doc location, the severity scale S0 to S3 with its examples for each check, the finding names, the doc's template and the result. `governance/validation-doc.md` is the template of the doc.
 
 File findings only in your own part, never in the parts of the other two checks, "Purpose and data" and "Vulnerability scan". Where two parts meet:
 

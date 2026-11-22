@@ -4,9 +4,8 @@ Stdlib only. Each check imports it from its own folder (tests/), so that the thr
 
 - check(), done(), text(): one line per case, and exit 1 on any failure.
 - load_checks(): governance/checks.json, the one source of the names and labels, and one check's entry, found by its folder.
-- RULES: governance/rules.md, the one file of the rules that the three checks share (spec #499, ticket #508). Each checklist says to
-  read it, so each check's check reads those rules from it.
-- rules(), blocks(): one case for each rule that a line (or a paragraph) of a text says. result_block(): the result's lines.
+- rules(), blocks(): one case for each rule that a line (or a paragraph) of a text says. The rules that the three checks share are
+  in governance/rules.md (spec #499): tests/check_validator_parts.py checks that file, one time for the three checks.
 - LEAK, leaks(): what the public repo must not hold.
 - id_search(), result_call(): the checklists of checks 1 and 2 fill their evidence item by names (spec #499, ticket #509).
 - The seam part, for a local agent service (the service's seam helper, tests/agent_folder_seam.py, on Linux): the event bundle's GET,
@@ -21,7 +20,6 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RULES = ROOT / "governance" / "rules.md"   # each rule that the three checks share, one time
 failed = []
 
 
@@ -86,11 +84,6 @@ def rules(says, body, units=str.splitlines):
     def rule(name, *words):
         check(f"{says}: {name}", any(all(w.lower() in u for w in words) for u in found), words)
     return rule
-
-
-def result_block(md, label):
-    """The lines of the first code block of the Markdown text `md` that starts with "<label>:" (the result's four lines), or []."""
-    return next((b.splitlines() for b in re.findall(r"```\n(.*?)\n```", md, re.S) if b.startswith(f"{label}:")), [])
 
 
 # ------------------------------------------------------------------------------------------------------------- the public repo

@@ -5,9 +5,9 @@ outside: its files as `domino-agent deploy` uploads them, its checklist skill as
 subscription (its file in the folder, ADR 0049 of domino-agent-service, ticket #398), and the agent that a local agent service
 registers from it.
 
-The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities),
-and the rules from governance/rules.md (the rules that the three checks share, spec #499, ticket #508: the checklist says to read
-it) and governance/validation-doc.md (the doc's template).
+The names come from governance/checks.json (the check's name, its evidence item, the field labels, the verdicts and the severities).
+The checklist says to read governance/rules.md (the rules that the three checks share, spec #499: tests/check_validator_parts.py
+checks that file) and governance/validation-doc.md (the doc's template).
 
 With no service, it checks the folder's files: the ones that deploy uploads (with the own tool's file, tools/route_table.py, and the
 custom subagent's file, subagents/route-reviewer.md, and not the unit test or the README), the settings of definition.md, the
@@ -293,41 +293,8 @@ check("each step ends with its completion criterion (a 'Done when' line)",
 BUDGET = 110   # spec #499: the checklist shows only the check (the rules are in governance/rules.md)
 check(f"the checklist has at most {BUDGET} lines (spec #499)", len(skill.splitlines()) <= BUDGET, f"{len(skill.splitlines())} lines")
 
-# ------------------------------------------------------------------------------- the rules that the checklist applies (the rules file)
-# These were lines of the checklist before spec #499. The checklist now says to read the rules file, so the rules are read from it.
-# tests/check_validator_parts.py checks the whole file, and that it agrees with checks.json.
-rules_md = text(shared.RULES)
-frule = shared.rules("the rules file says", rules_md, shared.blocks)   # one paragraph, list item or table row of it says the rule
-frule("the severity scale, S0 to S3", "| s0 (critical) |")
-frule(f"...with its examples for {NAME}", f"| {NAME.lower()} |", "`post /reset`", "| s1 |")
-frule("a real finding's name is [<check name>] <what> in <where>", "`[<check name>] <what> in <where>`")
-frule(f"...with an example for {NAME}", f"| {NAME.lower()} |", f"`[{NAME.lower()}] ")
-frule("Highest severity is the highest severity of its real findings, or none", "highest severity", "real findings", "`none`")
-frule(f"the verdict is `{V[1]}` when a real finding is S0 or S1", f"`{V[1]}`", "real finding", "s0 or s1")
-frule(f"...`{V[0]}` when the highest severity is S2, S3 or none", f"`{V[0]}`", "s2, s3 or `none`")
-frule(f"...`{V[2]}` when the check could not do its work, before the other two", f"`{V[2]}`", "could not do its work",
-      "before the other two")
-frule("false hits never count", "false hits never count")
-frule("the template: keep the shared top part and only the middle part with the check's name", "shared top part",
-      "only the middle part", "check's name")
-frule("...delete the other two middle parts, with all their text", "delete the other two middle parts", "all their text")
-frule("...with every field replaced and every comment deleted", "{{field}}", "<!--")
-frule("the Doc location of checks 1 and 2: the task branch at the push's commit, and the doc's file",
-      "`<task branch> at <commit>, docs/validation/<file>`")
-frule("...or 'Not in the repo', with why", "`not in the repo: <why>. the doc is in the task's result.`")
-frule("the doc's own Doc location of checks 1 and 2: the task branch and the file, with no commit (it is written before the push)",
-      "before its push", "`<task branch>, docs/validation/<file>`", "`agent/<task key>`")
-frule("a failed or denied call: go on with the other steps, and try it again at most once", "fails or is denied", "go on",
-      "at most once")
-frule("...and name it under what the check could not check, with Domino's answer", '"what this check could not check"',
-      "with domino's answer")
-result = shared.result_block(rules_md, LABELS[0] if LABELS else "Verdict")
-want = [f"{LABELS[0]}: {' | '.join(VERDICTS)}", f"{LABELS[1]}: {' | '.join(SEVERITIES)}", f"{LABELS[2]}: ", f"{LABELS[3]}: "]
-got = [next((ln for ln in result if ln.startswith(w.split(":")[0] + ":")), None) for w in want]
-check("the rules file gives the result's four lines, in order, with the labels of checks.json and its exact verdicts and severities",
-      all(got) and got[:2] == want[:2] and all(g.startswith(w) for g, w in zip(got, want))
-      and [result.index(g) for g in got] == sorted(result.index(g) for g in got), got)
-frule("...as plain text, with no Markdown on those lines", "no markdown")
+# The rules that the checklist applies are in the rules file, governance/rules.md. tests/check_validator_parts.py checks that
+# file one time for the three checks, and that it agrees with checks.json. So this check does not read the rules file again.
 
 # ------------------------------------------------------------------------------------------------------------- the instructions
 irule = shared.rules("the instructions say", instructions)   # one line of instructions.md says the rule

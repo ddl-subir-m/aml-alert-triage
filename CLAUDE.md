@@ -25,6 +25,7 @@ use what the platform gives (domino-agent-service spec #499). The code review ch
 | The handling of a cut answer: text that the gateway cut | the list tools' `offset` and `nextOffset` (`contract.call_json()` reads each page) |
 | A regex on prose: a tool's answer in words, the task brief, the instruction | the tools' JSON (`call_json()`) and the task's facts (`contract.task()`) |
 | A snapshot wait loop | `write_bundle_doc`: the file, its snapshot and the attachment, in one call |
+| An import trick: a change of `sys.path` or `sys.modules` | the platform puts the entry point's folder on the import path: a module next to the entry file imports by its name |
 
 A check reads its own files in its own way: for example the summary that `governance/scan.py` prints. When a check needs something
 that the platform does not give, the fix goes in domino-agent-service or domino-agui, not in the check.
