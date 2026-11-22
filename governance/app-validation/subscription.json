@@ -1,0 +1,16 @@
+{
+  "type": "event",
+  "name": "Bundle enters Validation",
+  "enabled": true,
+  "event": {
+    "eventType": "governance.bundle.stage_changed",
+    "filter": [
+      {"field": "toStage", "op": "equals", "value": "Validation"},
+      {"field": "project.id", "op": "equals", "value": "__WIZARD_PROJECT_ID__"}
+    ]
+  },
+  "titleTemplate": "App validation: bundle {{bundle.id}}",
+  "instructionTemplate": "Validate the App of governance bundle {{bundle.id}} ({{bundle.name}}) in project {{project.name}}. The bundle moved from {{fromStage}} to {{toStage}}. Do the three checks with the three skills, in this order: purpose-and-data, architecture-and-access and vulnerability-scan. Fill the three evidence items \"Validation: Purpose and data\", \"Validation: Architecture and access\" and \"Validation: Vulnerability scan\" of bundle {{bundle.id}}, and no other item.\nBundle ID: {{bundle.id}}",
+  "defaultResources": [],
+  "writeBack": []
+}

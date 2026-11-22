@@ -13,6 +13,7 @@ The tag `app-validation-two-ways` keeps the demo of spec #260: two validators th
 | [checks.json](checks.json) | The one source of the values: the check names, the evidence items, the field labels, the verdicts and the severities |
 | [validation-doc.md](validation-doc.md) | The template of each check's doc: one shared top part, and one middle part for each check |
 | [scan.py](scan.py) | The scan: pip-audit and bandit on the case server, in a Domino Job. Only the Vulnerability scan runs it |
+| [app-validation/](app-validation/README.md) | One wizard agent that does the work of the three checks in one task (see "One wizard agent for the three checks") |
 
 There is no list of the expected findings. Each check reads the App and sorts what it finds itself.
 
@@ -34,6 +35,15 @@ owns that part files it. Where two parts meet:
 - Who can call a route, and what it changes, is Architecture and access. A scanner hit in the code is Vulnerability scan.
 - The kind of data that the App holds, and its class, is Purpose and data. Who can read that data through the App is Architecture
   and access.
+
+## One wizard agent for the three checks
+
+For a person who writes no code, `governance/app-validation/` holds one wizard agent, `App validation`, that does the work of the
+three checks in one task. The person makes it and runs it only in the App: the Skills library, the wizard and the Triggers tab. It
+has three store skills: `purpose-and-data` of check 1, as it is, and two new ones, `architecture-and-access` and
+`vulnerability-scan`. It works in a second project, `aml-validation-wizard`, so the three checks never see its bundles. Each
+skill fills its own evidence item, and all three docs go to the task branch as Reports. "Validation status" finds a check's task by
+its agent's name, so it does not show this agent: the approver reads the three evidence items.
 
 ## The scan
 

@@ -1,0 +1,28 @@
+{
+  "lane": "harness",
+  "name": "App validation",
+  "description": "Does the work of the three checks of the App validation demo in one task, when a governance bundle of its project moves to the Validation stage: Purpose and data, Architecture and access, and Vulnerability scan. Pushes three docs to its task branch, attaches them, files its findings and fills the three evidence items. Each Monday, it scans the App again for the bundles of its project in Approval. Fake data only.",
+  "tags": [],
+  "scope": {"type": "global"},
+  "inputs": [{"name": "project", "type": "project", "required": true, "multiple": false, "description": ""}],
+  "model": {"source": "gateway", "models": ["google/gemini-3.8-flash"], "access": "acting"},
+  "execution": {"environment": {"name": "Domino Agent Runtime (opencode)"}, "maxRuntimeMin": 60, "maxTurns": 300, "idleWaitMin": 0},
+  "systemPrompt": "__INSTRUCTIONS__",
+  "directTrigger": {"starterPrompts": [], "writeBack": []},
+  "skills": [
+    {"id": "__PD_SKILL_ID__", "name": "purpose-and-data", "version": "__PD_SKILL_VERSION__"},
+    {"id": "__AA_SKILL_ID__", "name": "architecture-and-access", "version": "__AA_SKILL_VERSION__"},
+    {"id": "__VS_SKILL_ID__", "name": "vulnerability-scan", "version": "__VS_SKILL_VERSION__"}
+  ],
+  "completion": "review",
+  "onError": "fail",
+  "identity": {"mode": "service_account", "serviceAccount": {"userName": "__SERVICE_ACCOUNT__"}},
+  "access": {"mode": "restricted", "users": ["__ANALYST__"], "editors": ["__APPROVER__"]},
+  "guardrails": {
+    "planFirst": false,
+    "checkInOften": false,
+    "access": {"project": "write", "data": "none", "inputs": {}, "named": "write", "other": "none"},
+    "tools": {"bash": true, "web": false, "subagents": true, "jobs": true, "push": true},
+    "network": {"mode": "domino", "domains": []}
+  }
+}
