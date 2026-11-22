@@ -23,21 +23,21 @@ The live script reads the agent back and compares it with this copy. All the dat
 When the analyst moves an App's governance bundle to the Validation stage of the policy "App deployment policy", the subscription
 starts a task. The task does the steps of the store skill, in order:
 
-1. It reads the bundle and its policy (`domino_get_bundle`, `domino_get_policy`). It finds its evidence item "Validation: Purpose and
-   data" by its name, and each field (Verdict, Highest severity, Summary, Doc location) by its label. It reads the Intake values that
-   the analyst filled (Purpose, Users, Data class).
+1. It reads the bundle (`domino_get_bundle`) and the Intake values that the analyst filled (Purpose, Users, Data class), with
+   `domino_get_policy`.
 2. It reads the App's README, its start script, its code and the sample data that the code loads.
 3. It classifies the data by the kind of data that the App is built to hold, not by whether the sample data is fake.
 4. It compares this with the Intake. An Intake Data class lower than the data's class is S1.
 5. It writes the doc from `governance/validation-doc.md` (the shared top part and its own middle part) to
    `docs/validation/purpose-and-data-<bundle ID>.md`.
-6. It pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`).
-7. It attaches the doc to the bundle: a `Report` from `GBP`, with the task branch and the push's commit
-   (`domino_write_bundle_attachment`).
-8. It files each real finding, with its name by the finding names of `governance/rules.md` (`domino_write_governance_finding`).
-9. It fills its own evidence item (`domino_write_policy_result`).
-10. Its result (`domino_report_result`) starts with the four lines of `governance/rules.md`, "The result". The scripted check
-    "Validation status" shows them to the approver.
+6. It pushes the doc to its task branch, `agent/<task key>` (`domino_git_push`), and attaches it to the bundle: a `Report` from
+   `GBP`, with the task branch and the push's commit (`domino_write_bundle_attachment`).
+7. It files each real finding, with its name by the finding names of `governance/rules.md` (`domino_write_governance_finding`).
+8. It fills its own evidence item by its name, "Validation: Purpose and data", and each field by its label (Verdict, Highest
+   severity, Summary, Doc location), with `domino_write_policy_result`. The gateway finds their IDs in the bundle's policy, so the
+   checklist searches for no ID.
+9. Its result (`domino_report_result`) starts with the four lines of `governance/rules.md`, "The result". The scripted check
+   "Validation status" shows them to the approver.
 
 What it can't check goes under "What this check could not check", in the doc and in the result: the commit of the App version under
 review (an event task reads the demo project's default branch), the data in the running App (it reads the code and the sample data),
@@ -224,9 +224,11 @@ One line per case, with a non-zero exit code on any failure. Its own part uses t
 of its tools, the instructions' rules, the reference settings (each value of decision 8), the subscription's file, `compare.py` (run
 with no site-packages), the steps on this page (one row for each key of `agent.json` and of `subscription.json`, with the wizard's
 label), and no Domino host, ID or token in the folder. The names, the evidence item, the field labels, the verdicts and the
-severities come from `governance/checks.json`. With `AGENT_SERVICE_REPO` (a domino-agent-service checkout, any OS), it also checks
-each tool name against the service's gateway and relay, and each label in quotes in the tables against the wizard's code. The rest
-needs Linux: it starts the agent service with a fake Domino (the service's seam helper, `tests/agent_folder_seam.py`), and then:
+severities come from `governance/checks.json`. The store skill fills its evidence item by the names of `governance/checks.json` (the
+item and the four labels), searches for no ID, and has at most 100 lines (spec #499). With `AGENT_SERVICE_REPO` (a
+domino-agent-service checkout, any OS), it also checks each tool name against the service's gateway and relay, and each label in
+quotes in the tables against the wizard's code. The rest needs Linux: it starts the agent service with a fake Domino (the
+service's seam helper, `tests/agent_folder_seam.py`), and then:
 
 - The store skill is added through the skills API. The agents API takes the reference settings, filled by `compare.py`, as the
   wizard's Save sends them, with the service account's token. `compare.py diff` finds no difference in the stored agent.
@@ -234,6 +236,8 @@ needs Linux: it starts the agent service with a fake Domino (the service's seam 
   account, and its Job. A move to another stage, or in another project, starts none. An analyst who is not in "People" starts none.
 - The Job's spec has the store skill's text, Run a Job off, Git push on, the access rows and the limits. The gateway allows the
   attachment, the findings and the evidence on the event's bundle, and the push, and no project dataset.
+- The store skill's result by names reaches a fake Domino as IDs: the gateway finds the evidence item and its four fields in the
+  bundle's policy, and Domino gets their IDs, with the values as they are.
 
 On a Mac, run it with Docker, in the image of the service's checks (in domino-agent-service, `./tests/linux_checks.sh` builds it
 once; `docker images domino-agent-service-checks` lists it), from the root of this repo:

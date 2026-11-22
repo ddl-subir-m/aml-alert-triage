@@ -4,8 +4,8 @@
 #
 # The shape is Domino's policy YAML (docs.domino.ai, Governance, "Policy components"): Domino took a policy in this shape and
 # published it (from Draft to Published). The artifacts' content shapes are in Domino's governance API spec (GET /policies/{id} and
-# POST /rpc/submit-result-to-policy). Domino gives each artifact its own ID when it reads this file: read them with GET /policies/{id}
-# (the gateway tool get_policy), and find each field by its evidence item's name and its label.
+# POST /rpc/submit-result-to-policy). Domino gives each artifact its own ID when it reads this file (GET /policies/{id}, the gateway
+# tool get_policy). The gateway tool write_policy_result takes the evidence item's name and each field's label, and finds the IDs.
 #
 # The live script makes the policy (POST /policies with the name "App deployment policy"), puts this file as its definition
 # (PUT /policies/{id}/definition), and publishes it (PUT /policies/{id}/status). Before that, it replaces four placeholders, because

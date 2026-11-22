@@ -34,7 +34,8 @@ seam helper, tests/agent_folder_seam.py), with the folder committed in a tempora
   - The Job's spec (the skill, the own tool, the custom subagent as opencode gets it, read only, with the built-in subagent off, the
     access rows, Run a Job off, Git push on, the permissions, the limits) and the gateway's decisions for that task on the event's
     bundle: the attachment, the findings and the evidence are allowed by the row "Other resources
-    attached to the task", and run_job is denied.
+    attached to the task", and run_job is denied. The evidence by names (spec #499) reaches a fake Domino as the IDs of its item
+    and its fields.
   - A stage move to another stage, or in another project, starts nothing. A second deploy of the same commit keeps the subscription.
 With AGENT_SERVICE_REPO unset, or not on Linux, those parts print a SKIP line. No Domino host: the live run is domino-agent-service
 #397.
@@ -151,9 +152,13 @@ rule("...and the doc's template, governance/validation-doc.md", "`governance/val
 rule("read the rules file first, and follow it in each step", "read `governance/rules.md` first", "each step")
 rule("read the bundle first", "domino_get_bundle", "bundleid")
 rule("read the policy with the bundle's ID", "domino_get_policy", "bundleid")
-rule("find its evidence item by its exact name (checks.json), and keep its ID", f'"{EVIDENCE}"', "evidence item", "exact", "id")
-rule("find each of the four fields by its label (checks.json)", "details.label", *(f'"{label}"' for label in LABELS))
-rule("a radio field takes one of its options' values", "radio", "details.options", "value")
+SAMPLE = dict(zip(LABELS, [V[1], "S1", "One S1 finding: anyone who can open the App can delete all state in POST /reset.",
+                           f"agent/AGT-1 at {'0' * 40}, {DOC}"]))   # a result as the checklist fills it, by label
+CALLED, CALLED_KEYS = shared.result_call(skill)   # the evidence item and the content keys that it names
+check(f"the checklist fills its evidence item by names (spec #499): {EVIDENCE!r} and the four fields by their labels, as "
+      "governance/checks.json names them, in its order", CALLED == EVIDENCE and CALLED_KEYS == LABELS, (CALLED, CALLED_KEYS))
+check("...so it searches for no ID: no evidenceId, no artifact ID (the gateway finds them in the bundle's policy)",
+      not shared.id_search(skill), shared.id_search(skill))
 rule("find the Intake values with get_policy: the stage Intake, its item Intake, and each field by its label", 'stage named "intake"',
      '"purpose"', '"users"', '"data class"', "details.label")
 rule("...each field's value is its result.artifactContent, and a field with no result is not filled", "result.artifactcontent",
@@ -266,8 +271,8 @@ rule("a dry-run push: attach nothing, and say so under what the check could not 
 rule("a failed push (ok false): attach nothing, and say why", "`ok` is false", "attach nothing", "why")
 rule("file each real finding with the name and the severity of the doc's table, and no false hit", "domino_write_governance_finding",
      "name", "severity", "doc's table", "no false hit")
-rule("fill only its own evidence item, by the IDs from get_policy", "domino_write_policy_result", "only", f'"{EVIDENCE}"', "evidenceid")
-rule("...with its four fields, by their IDs", "domino_write_policy_result", *(f"<{label} id>" for label in LABELS))
+rule("fill only its own evidence item, by its name", "fill only your own evidence item", "domino_write_policy_result",
+     f'evidencename="{EVIDENCE}"')
 rule("the evidence's Doc location: the line of the rules file, with the push's branch and commit and the doc's file",
      "doc location", "governance/rules.md", "branch and commit", DOC)
 rule("the result goes to report_result, once, last", "domino_report_result", "once", "last")
@@ -285,6 +290,8 @@ steps = [int(n) for n in re.findall(r"^## (\d+)\. ", skill, re.M)]
 check("the checklist is numbered steps, in order", len(steps) >= 8 and steps == list(range(1, len(steps) + 1)), steps)
 check("each step ends with its completion criterion (a 'Done when' line)",
       steps and all("Done when:" in part for part in re.split(r"^## \d+\. ", skill, flags=re.M)[1:]), steps)
+BUDGET = 110   # spec #499: the checklist shows only the check (the rules are in governance/rules.md)
+check(f"the checklist has at most {BUDGET} lines (spec #499)", len(skill.splitlines()) <= BUDGET, f"{len(skill.splitlines())} lines")
 
 # ------------------------------------------------------------------------------- the rules that the checklist applies (the rules file)
 # These were lines of the checklist before spec #499. The checklist now says to read the rules file, so the rules are read from it.
@@ -845,13 +852,23 @@ CALLS = {
         "filename": DOC.replace("<bundleId>", BUNDLE["id"]), "commit": "0" * 40, "source": "GBP", "branch": "agent/AGT-1"}},
     "write_governance_finding": {"bundleId": BUNDLE["id"], "name": f"[{NAME}] Anyone who can open the App can delete all state in "
                                  "POST /reset", "severity": "S1", "description": "Evidence."},
-    "write_policy_result": {"bundleId": BUNDLE["id"], "evidenceId": "ev-1", "content": {"art-verdict": V[1]}},
+    # the checklist's call, by the names that it gives (the files part checks them against checks.json)
+    "write_policy_result": {"bundleId": BUNDLE["id"], **({"evidenceName": CALLED} if CALLED else {}),
+                            "content": {k: SAMPLE.get(k, "?") for k in CALLED_KEYS}},
 }
 for name, args in CALLS.items():
     d = gateway.decide(name, args, policy) if policy else {}
     check(f"the gateway allows {name} on the event's bundle, by its own row (named), with no owner check",
           d.get("allow") is True and d.get("row") == "named" and not any(s.get("expect") for s in d.get("steps") or []),
           {k: d.get(k) for k in ("allow", "row", "why")})
+d = gateway.decide("write_policy_result", CALLS["write_policy_result"], policy) if policy else {}
+out, sent, pol = shared.submit(gateway, d, CHECKS, seam.PROJECT) if d.get("allow") else ({}, [], {})
+own_item = next((e for st in pol.get("stages") or [] for e in st["evidenceSet"] if e["name"] == EVIDENCE), {})
+ids = {a["details"]["label"]: a["id"] for a in own_item.get("artifacts") or []}
+check(f"...and the result by names reaches Domino as IDs: the gateway finds {EVIDENCE!r} and its four fields in the bundle's "
+      "policy, and Domino gets their IDs, with the values as they are (the result lands where a result by IDs lands)",
+      out.get("ok") is True and own_item and sent == [{"bundleId": BUNDLE["id"], "policyId": pol["id"], "evidenceId": own_item["id"],
+                                                       "content": {ids.get(k): SAMPLE[k] for k in LABELS}}], (out, sent))
 d = gateway.decide("git_push", {"message": "The doc"}, policy) if policy else {}
 check("...and git_push, in the task's project", d.get("allow") is True, {k: d.get(k) for k in ("allow", "row", "why")})
 d = gateway.decide("run_job", {"command": "python app.py"}, policy) if policy else {}
