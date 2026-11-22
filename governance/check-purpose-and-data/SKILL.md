@@ -14,15 +14,12 @@ The project folder (its path is in the operating rules) holds the shared parts o
 - `governance/README.md`: the three checks and what each one owns.
 - `governance/validation-doc.md`: the template of the doc.
 
-## 1. Read the bundle and its policy
+## 1. Read the bundle and the Intake
 
 - `domino_get_bundle(bundleId)`: the bundle's name, its project and its stage.
-- `domino_get_policy(bundleId)`: the policy that the bundle follows. In its stage named "Validation", find the evidence item whose name is exactly "Validation: Purpose and data", and keep its `id`: that is your evidenceId.
-- In that item's `artifacts`, find each field by its `details.label` and keep its `id`: "Verdict", "Highest severity", "Summary", "Doc location".
-- A radio field (Verdict, Highest severity) takes one of its `details.options` as its value: use the option's `value`, exactly.
-- The Intake values that the analyst filled: in the stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
+- `domino_get_policy(bundleId)`: the policy that the bundle follows, with the values that the analyst filled. In its stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
 
-Done when: you have the evidenceId and the four artifact IDs, or you know which of them the policy doesn't have, and you have the three Intake values (or know which ones are not filled). When you can't read the policy, the check can't do its work: the verdict is `could not check` (step 5).
+Done when: you have the three Intake values, or you know which ones are not filled. When you can't read the policy, the check can't do its work: the verdict is `could not check` (step 5).
 
 ## 2. Read the App
 
@@ -102,11 +99,11 @@ Done when: each real finding of the doc is filed once.
 
 ## 9. Fill your evidence item
 
-Fill only your own evidence item, "Validation: Purpose and data": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Highest severity ID>: <the highest severity>, <Summary ID>: <the summary>, <Doc location ID>: <the doc location>})`.
+Fill only your own evidence item, by its name and the labels of its fields: `domino_write_policy_result(bundleId, evidenceName="Validation: Purpose and data", content={"Verdict": <the verdict>, "Highest severity": <the highest severity>, "Summary": <the summary>, "Doc location": <the doc location>})`. The gateway finds their IDs in the bundle's policy.
 
 The doc location is the line of `governance/rules.md` ("The doc location"), with the push's branch and commit and the file `docs/validation/purpose-and-data-<bundleId>.md`.
 
-Done when: the answer's `results` show your four values for your evidenceId.
+Done when: the answer's `results` show your four values.
 
 ## 10. Report the result
 

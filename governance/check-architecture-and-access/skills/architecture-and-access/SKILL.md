@@ -18,17 +18,14 @@ File findings only in your own part, never in the parts of the other two checks,
 - A known vulnerability (a CVE, PYSEC or GHSA ID) in a dependency or in the code is the part of the check "Vulnerability scan": file none. A dependency's version range, its pin and how it is installed are your part.
 - The kind of data that the App holds, and its data class, are the part of the check "Purpose and data": file none. Who can read that data through the App is your part.
 
-## 1. Read the bundle and its policy
+## 1. Read the bundle and the Intake
 
 - `domino_get_bundle(bundleId)`: the bundle's name, its project and its stage.
-- `domino_get_policy(bundleId)`: the policy that the bundle follows. In its stage named "Validation", find the evidence item whose name is exactly "Validation: Architecture and access", and keep its `id`: that is your evidenceId.
-- In that item's `artifacts`, find each field by its `details.label` and keep its `id`: "Verdict", "Highest severity", "Summary", "Doc location".
-- A radio field takes one of its `details.options` as its value: use the option's `value`, exactly.
-- The Intake values that the analyst filled: in the stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
+- `domino_get_policy(bundleId)`: the policy that the bundle follows, with the values that the analyst filled. In its stage named "Intake", find the evidence item "Intake", and in its `artifacts` the fields "Purpose", "Users" and "Data class" by `details.label`. Each field's value is its `result.artifactContent`. A field with no `result` is not filled.
 
 The Intake's Users say who must reach the App, and its Data class says how much harm an open route can do. Use them to pick the severity of an access finding. Do not judge the data class itself: that is the part of the check "Purpose and data".
 
-Done when: you have the evidenceId and the four artifact IDs, or you know which of them the policy doesn't have, and you have the three Intake values (or know which ones are not filled).
+Done when: you have the three Intake values, or you know which ones are not filled.
 
 ## 2. Read the App
 
@@ -130,11 +127,11 @@ Done when: each real finding of the doc is filed once.
 
 ## 9. Fill your evidence item
 
-Fill only your own evidence item, "Validation: Architecture and access": `domino_write_policy_result(bundleId, evidenceId=<step 1>, content={<Verdict ID>: <the verdict>, <Highest severity ID>: <the highest severity>, <Summary ID>: <the summary>, <Doc location ID>: <the doc location>})`. The first three values are the same as in the doc.
+Fill only your own evidence item, by its name and the labels of its fields: `domino_write_policy_result(bundleId, evidenceName="Validation: Architecture and access", content={"Verdict": <the verdict>, "Highest severity": <the highest severity>, "Summary": <the summary>, "Doc location": <the doc location>})`. The gateway finds their IDs in the bundle's policy. The first three values are the same as in the doc.
 
 The doc location is the line of `governance/rules.md` ("The doc location"), with the push's branch and commit and the file `docs/validation/architecture-and-access-<bundleId>.md`.
 
-Done when: the answer's `results` show your four values for your evidenceId.
+Done when: the answer's `results` show your four values.
 
 ## 10. Report the result
 
