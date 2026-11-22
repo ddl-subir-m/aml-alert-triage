@@ -659,6 +659,7 @@ approver decides.
 | File | What it holds |
 |---|---|
 | `governance/checks.json` | The one source of the names and labels: the three checks (name, evidence item, folder), the four fields' labels, the verdicts and the severities. JSON, so that a stdlib script can read it |
+| `governance/rules.md` | The rules that the three checks share, each one time: the evidence fields and the verdict rule, could not check, the doc location, the severity scale, the finding names, the doc's template and the result |
 | `governance/app-deployment-policy.yaml` | The policy's definition, in Domino's policy YAML |
 | `governance/validation_status.py` | The scripted check. Stdlib only |
 
@@ -679,8 +680,8 @@ the file.
 
 A check fills its own evidence item with `write_policy_result`. Domino gives each field its own artifact ID when it reads the
 file, so the check reads the IDs with `get_policy`: it finds its item by its name, and each field by its label. The values:
-Verdict is `approve`, `do not approve` or `could not check`; Highest severity is `S0`, `S1`, `S2`, `S3` or `none` (the highest
-severity of the check's real findings); Summary and Doc location are text.
+Verdict is `approve`, `do not approve` or `could not check`; Highest severity is `S0`, `S1`, `S2`, `S3` or `none`; Summary and Doc
+location are text. The rules for each value are in `governance/rules.md`.
 
 ### The scripted check
 
