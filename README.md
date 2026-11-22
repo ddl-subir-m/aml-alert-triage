@@ -679,9 +679,8 @@ the file.
 | `__APPROVER__` | Who approves: a user or an organization that is a member of the demo project |
 
 A check fills its own evidence item with `write_policy_result`. Domino gives each field its own artifact ID when it reads the
-file. Purpose and data and Architecture and access give the item's name and each field's label, and the gateway finds the IDs in
-the bundle's policy. Vulnerability scan reads the IDs with `get_policy`: it finds its item by its name, and each field by its
-label. The values:
+file. Each of the three checks gives the item's name and each field's label, and the gateway finds the IDs in the bundle's policy.
+The values:
 Verdict is `approve`, `do not approve` or `could not check`; Highest severity is `S0`, `S1`, `S2`, `S3` or `none`; Summary and Doc
 location are text. The rules for each value are in `governance/rules.md`.
 
