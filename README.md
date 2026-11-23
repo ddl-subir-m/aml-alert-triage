@@ -662,6 +662,7 @@ approver decides.
 | `governance/rules.md` | The rules that the three checks share, each one time: the evidence fields and the verdict rule, could not check, the doc location, the severity scale, the finding names, the doc's template and the result |
 | `governance/app-deployment-policy.yaml` | The policy's definition, in Domino's policy YAML |
 | `governance/validation_status.py` | The scripted check. Stdlib only |
+| `governance/app-validation/` | One wizard agent, `App validation`, that does the work of the three checks in one task, made only in the App: for a person who writes no code |
 
 ### Make the policy
 

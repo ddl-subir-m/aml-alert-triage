@@ -1,0 +1,11 @@
+{
+  "type": "schedule",
+  "name": "Weekly re-scan of approved Apps",
+  "enabled": true,
+  "schedule": {"cron": "0 6 * * 1", "timezone": "UTC"},
+  "project": {"name": "aml-validation-wizard"},
+  "titleTemplate": "App validation: weekly re-scan, {{schedule.scheduledFor}}",
+  "instructionTemplate": "Re-scan the App of this task's project for known vulnerabilities in its code and its dependencies, with the schedule part of the skill vulnerability-scan. Find the governance bundles of this task's own project in the stage Approval, by that project's ID, and file on each one each new real finding. Never look at a bundle of another project. Fill no evidence item.\nSchedule: {{schedule.name}}, {{schedule.cron}} ({{schedule.timezone}}), fired for {{schedule.scheduledFor}}",
+  "defaultResources": [],
+  "writeBack": []
+}
