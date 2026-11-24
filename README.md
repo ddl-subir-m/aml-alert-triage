@@ -248,22 +248,29 @@ The three ready-made agents do the same things for the platform (the agent contr
 Each variant uses only the packages of its framework's certified Environment (domino-agent-service's
 `environments/agent-<framework>.lock`). The repo has no requirements file at its root: Domino installs a root `requirements.txt` at
 the start of each Job, which would change the Environment's packages. The ready-made agents came with domino-agui 0.2.0, so a
-variant runs only on an Environment revision that has them. On an older revision, the import fails. On the Domino test deployment, revision #4
-and later of each Environment have them (domino-agent-service #155, November 11, 2026). Revision #7 installs domino-agui 0.2.0 from
-PyPI (domino-agent-service #193, November 13, 2026).
+variant runs only on an Environment revision that has domino-agui 0.2.0 or later. On an older revision, the import fails. On the Domino
+test deployment, revision #4 and later of each Environment have them (domino-agent-service #155, November 11, 2026). Revision #7
+installs domino-agui 0.2.0 from PyPI (domino-agent-service #193, November 13, 2026). Revision #8 of the LangGraph Environment installs
+domino-agui 0.3.0 from PyPI (domino-agent-service #516, November 22, 2026).
 
 ## Certification
 
 Certification (domino-agent-service's ADR 0003 decision 8) proves that an agent follows the platform's agent contract: agent-side
 tools through the relay, client-side tools across AG-UI runs and across Jobs with an approval, an interrupt, an expired question, a
-thread that survives a Job restart, and the ready-made agent's own model and tools (C1 to C11). A scripted fake model drives each
-test, so it doesn't test the AML judgment.
+thread that survives a Job restart, the ready-made agent's own model and tools (C1 to C11), and the task's facts (C12). A scripted
+fake model drives each test, so it doesn't test the AML judgment.
 
 The three entry points are the same lines as domino-agent-service's examples (`examples/langgraph/graph.py`,
 `examples/crewai/flow.py`, `examples/domino_agui/anthropic_agent.py`). So the platform's certification of each Environment covers
-this repo's code too: C1 to C11 pass in both formats for all three, on a laptop and in Domino Jobs on revision #7 of each Environment
-on the Domino test deployment (November 13, 2026, domino-agent-service #193), and before that on revision #4 (November 11, 2026, #155). Its
-records are domino-agent-service's `docs/certification/<framework>.md`.
+this repo's code too:
+
+- LangGraph, revision #8 (domino-agui 0.3.0): C1 to C12 pass in both formats, on a laptop (domino-agent-service #514) and in a Domino
+  Job on the Domino test deployment (#516, November 22, 2026). C12 is new: the task's facts (its ID, its project and a pinned
+  resource) reach the agent.
+- All three, revision #7 (domino-agui 0.2.0): C1 to C11 pass in both formats, on a laptop and in Domino Jobs on the Domino test
+  deployment (#193, November 13, 2026), and before that on revision #4 (November 11, 2026, #155).
+
+Its records are domino-agent-service's `docs/certification/<framework>.md`.
 
 On November 10, 2026, C1 ran on each variant, in both formats, in the new images (domino-agui 0.2.0):
 
@@ -344,9 +351,11 @@ with no view-as switch and no console command.
 3. Each reviewer can open the platform App. When its access is "Invited users only", invite them. The first time a person opens
    the App, Domino shows a consent page: they allow it.
 4. The platform App has an Environment certified for the variant's framework, on a revision with the ready-made agents
-   (domino-agui 0.2.0; see "The agent"). The wizard lists the certified Environments, and the script asks the App for them
-   (`GET api/platform/certified-environments`). On the Domino test deployment, the platform App `agent-framework-smoke` certifies revision #7
-   of the three Environments (domino-agent-service #193, November 13, 2026).
+   (domino-agui 0.2.0 or later; see "The agent"). The wizard lists the certified Environments, and the script asks the App for them
+   (`GET api/platform/certified-environments`). On the Domino test deployment, the platform App `agent-framework-smoke` certifies
+   revision #8 of the LangGraph Environment (domino-agent-service #516, November 22, 2026), and revision #7 of the CrewAI and the
+   Domino AG-UI SDK Environments (#193, November 13, 2026). The App's list keeps LangGraph revision #7 before revision #8, and a
+   LangGraph Job starts on the last one: revision #8.
 
 ### In the wizard
 
