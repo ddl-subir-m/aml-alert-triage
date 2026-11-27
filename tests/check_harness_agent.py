@@ -149,6 +149,17 @@ if not sys.platform.startswith("linux"):
 sys.path.insert(0, str(service / "tests"))
 import agent_folder_seam as seam  # noqa: E402  (the service's seam helper, from AGENT_SERVICE_REPO)
 
+seam.PROJECT["name"] = "aml-alert-triage"   # definition.md's `project`: the agent runs only in the project of this name
+_fake_get = seam._fake_get
+
+
+def _named(path, *args, **kw):
+    """The seam's fake Domino, with its one project under the name that definition.md names."""
+    out = _fake_get(path, *args, **kw)
+    return json.loads(json.dumps(out).replace('"local-proj"', '"aml-alert-triage"')) if path.startswith("/api/projects/") else out
+
+
+seam._fake_get = _named   # before the service starts: the seam reads its fake Domino when it starts
 seam.start()
 repo = seam.Repo(files, path="harness", remote=REMOTE)
 
@@ -214,7 +225,7 @@ check("its starter prompts triage each alert of the seed", alerts and (a.get("di
 # A task: the Job's start and its spec, as the Job's bootstrapper reads it.
 n = len(seam.JOBS)
 job, spec = seam.spec_of(a.get("id"), ANALYST, instruction="Triage alert A-1001.") if a.get("id") else (None, "no agent")
-check("a task in a project starts one Domino Job, as the analyst (the requester's credential)",
+check("a task in the project aml-alert-triage starts one Domino Job, as the analyst (the requester's credential)",
       job is not None and len(seam.JOBS) == n + 1 and seam.JOBS[-1]["credential"] == ("bearer", seam.PEOPLE[ANALYST])
       and job.get("projectId") == seam.PROJECT["id"], spec if job is None else seam.JOBS[-1]["credential"])
 spec = spec if isinstance(spec, dict) else {}
