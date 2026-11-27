@@ -11,4 +11,7 @@ expect:
       alert_id: A-1001
     outcome: allowed
   - no-tool: domino_aml_escalate_to_sar
+  - tool: write                 # the note of task memory: the agent's file tool, on a file of its task memory folder
+    args:
+      filePath: task-memory
   - ends-with: result

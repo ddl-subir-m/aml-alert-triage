@@ -10,6 +10,9 @@ expect:
       alert_id: A-1002
     outcome: denied
   - no-tool: domino_aml_close_alert
+  - tool: write                 # the note of task memory: the agent's file tool, on a file of its task memory folder
+    args:
+      filePath: task-memory
   - ends-with: result
   - judge: |
       The reply says that the cash deposits look like structuring, and that the escalation did not go through.
