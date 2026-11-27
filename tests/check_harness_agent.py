@@ -58,12 +58,22 @@ def text(path):
 
 # --------------------------------------------------------------------------------------------------------------------- the files
 files = {p.relative_to(FOLDER).as_posix(): p.read_text() for p in sorted(FOLDER.rglob("*")) if p.is_file()} if FOLDER.is_dir() else {}
-check("harness/ holds definition.md and instructions.md, and nothing else (deploy uploads only an agent folder's known paths)",
-      sorted(files) == ["definition.md", "instructions.md"], sorted(files))
+cases = sorted(f for f in files if f.startswith("evals/"))   # the eval cases: `deploy` never sends a file of evals/
+check("harness/ holds definition.md, instructions.md and the eval cases in evals/, and nothing else (deploy uploads only an agent "
+      "folder's known paths)", sorted(f for f in files if f not in cases) == ["definition.md", "instructions.md"], sorted(files))
+seeded = [x["alert_id"] for x in json.loads(text(SEED)).get("alerts") or []] if SEED.is_file() else []
+check("evals/ has one eval case for each alert of the seed, and each case's first message triages its alert",
+      len(cases) == len(seeded) > 0 and all(c.endswith(".yaml") and c.count("/") == 1 for c in cases)
+      and sorted(re.findall(r"^  - Triage alert (A-\d+)\.$", "\n".join(files[c] for c in cases), re.M)) == sorted(seeded),
+      (cases, seeded))
+check("the eval case that writes says so, and names the reset of the case server",
+      sum("POST /reset" in files[c] for c in cases) == 1 and all("domino_aml_close_alert" in files[c] for c in cases), cases)
 instructions = files.get("instructions.md", "")
 settings = files.get("definition.md", "")
 check("definition.md holds only the settings, between its two --- lines: the instructions are instructions.md",
       settings.startswith("---\n") and settings.rstrip().endswith("\n---") and settings.count("\n---") == 1, settings[-200:])
+check("definition.md turns on the three kinds of memory: personal, agent and task",
+      re.search(r"^memory:[^\n]*\n  personal: true[^\n]*\n  agent: true[^\n]*\n  task: true", settings, re.M) is not None, settings[-600:])
 
 # ----------------------------------------------------------------------------------------------------- the AML rules in instructions
 lines = [ln.lower() for ln in instructions.splitlines()]
@@ -92,6 +102,12 @@ rule("a question ends the turn, and the answer comes in a new run", "domino_ask_
 rule("after a denied escalation, report the denial and who denied it", "denies", "report the denial", "who denied it")
 rule("...and make no other write", "denies", "no other write")
 rule("the summary goes to domino_report_result, once, last", "domino_report_result", "once", "last")
+rule("notes of the work go to task memory before a question or the end of a round", "task memory", "before you ask the analyst",
+     "before you end a round")
+rule("a fact for everybody is a memory proposal, which an owner or an editor accepts", "agent memory", "memory proposal",
+     "an owner or an editor", "accept")
+rule("a wish of the analyst about the writing goes to personal memory, and the summary keeps its parts", "personal memory", "wish",
+     "four parts")
 heads = ["**Decision**", "**Rationale**", "**Evidence**", "**Action taken**"]
 at = [instructions.find(h) for h in heads]
 check("the instructions end the task with the summary: Decision, Rationale, Evidence, Action taken, in that order",

@@ -1,0 +1,14 @@
+# evals/salary-closes.yaml
+# A-1001 is a large amount that the customer's salary explains: a clear false positive, so the agent closes it with no question
+# (rule 7). This case WRITES: it closes A-1001 in the case-management system. Load the seed again before each eval run
+# (POST /reset on the case server), or the alert is closed already and the case fails.
+messages:
+  - Triage alert A-1001.
+expect:
+  - tool: domino_aml_get_customer_profile
+  - tool: domino_aml_close_alert
+    args:
+      alert_id: A-1001
+    outcome: allowed
+  - no-tool: domino_aml_escalate_to_sar
+  - ends-with: result

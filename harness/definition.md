@@ -24,6 +24,10 @@ access:
   project: read
   datasets: none
 on-error: fail
+memory:                      # what the agent keeps outside the conversation of a task (domino-agent 0.10.0)
+  personal: true             # about one analyst: only the tasks that this analyst starts directly read it
+  agent: true                # for every analyst: a run proposes a note, and an owner or an editor of the agent accepts it
+  task: true                 # the working notes of one task: a later round (a new Job) and a task that names it read them
 starter-prompts:
   - Triage alert A-1001.
   - Triage alert A-1002.
