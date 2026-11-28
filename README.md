@@ -540,6 +540,7 @@ it.
 |---|---|
 | `harness/definition.md` | The settings, as YAML between two `---` lines. Each field is on domino-agent-service's reference page, `docs/definition-file.md` (https://github.com/etanlightstone/domino-agent-service/blob/main/docs/definition-file.md). |
 | `harness/instructions.md` | The instructions: the AML rules. They become the agent's system prompt. |
+| `harness/evals/` | Four eval cases, one for each alert of the seed: "The eval cases" below. `deploy` never sends them. |
 
 ### Where it differs from the framework agent
 
@@ -560,7 +561,10 @@ project input, project files read only, no project datasets, at most 30 minutes 
 - **The summary.** The agent ends with `domino_report_result`: its summary is the four lines (Decision, Rationale, Evidence, Action
   taken).
 - **Fewer tools.** No shell and no subagent (`tools: shell: false, subagents: false`). It has only the case-management tools and the
-  relay's.
+  relay's. Its file tools are for its memory folders only: "Memory" below.
+- **The project.** `project: aml-alert-triage`: the agent always runs in this repo's Domino project, and only the project's
+  collaborators can use it. An eval run needs the line, because an eval task has a project only when the definition file names
+  one.
 - **Starter prompts.** `Triage alert A-1001.` to `Triage alert A-1004.`: the four alerts of the seed. A person picks one when they
   start a task.
 - **Who may use it.** The folder holds no user names. The person who deploys it is its owner, and at first only the owner can use
@@ -603,8 +607,8 @@ domino-agent deploy harness
 
 Do these as the analyst: the agent's owner. Before an alert's run, load the seed again (`POST /reset`, in "Set it up on Domino")
 when an earlier run changed that alert. Start one task for each alert, and start the next task after the one before it ends. Each
-task names a project (any project where you can start Jobs) and the instruction, a starter prompt. It runs as a Domino Job in that
-project, as you.
+task's instruction is a starter prompt. It runs as a Domino Job in the project `aml-alert-triage` (the definition file names it),
+as you.
 
 | Alert | Instruction | What happens | The result |
 |---|---|---|---|
@@ -618,6 +622,70 @@ On each write, the case-management App should record you, the analyst, as who ac
 for the escalation that a Job sends after the approval. The live run (#246) measures it. A model's judgment can differ from the
 expected triage, as for the framework agent.
 
+### Memory
+
+The agent keeps three kinds of memory: the `memory` group of `definition.md` (domino-agent-service ADR 0066, `domino-agent` 0.10.0
+or later). Each kind is Markdown notes in a folder that the agent reads and writes with its file tools. The platform's rules tell
+the agent where each folder is. The lines under "Your notes" in `instructions.md` say when this agent uses each kind.
+
+| Kind | What the triage agent keeps there | Who reads it |
+|---|---|---|
+| Task memory | The evidence of the alert, then the open question or the decision. Rules 6 and 9 make the note a step: the agent writes it before a question and before the end | Each later round of the task (the Job after the analyst's answer), and a task that names it as an upstream task: "The case note agent" |
+| Agent memory | A fact about the job, for every analyst: how to ask a question, for example. The agent writes a memory proposal, and an owner or an editor of the agent accepts it on the agent's Memory tab | Each task of the agent |
+| Personal memory | A wish of one analyst about the writing: the evidence as a table, for example | The tasks that this analyst starts |
+
+What a run on a dev copy showed (November 27, 2026, model `sonnet`):
+
+- **The note of task memory must be a step of a rule.** With the note only under "Your notes", the agent asked its question and
+  saved no note. As a step of rules 6 and 9, it saved its notes in each run.
+- **Agent memory is for a fact about the job, not about one case.** The analyst said "this counterparty is a known supplier, remember
+  this for everybody". The agent wrote no proposal: the platform's rules say that agent memory is not for a fact about one case.
+  The fact stayed in the task's own notes. Then the analyst said "when you ask about a wire to a new country, offer three choices: a
+  supplier payment, an investment, or other". The agent wrote a memory proposal. After the accept, the question of the next task
+  on A-1003 had the three choices.
+- **Personal memory needs an alert with evidence.** After "give me the evidence as a table", a new task on A-1002 had the table with no
+  reminder. A new task on A-1004, which has one transaction, had none.
+
+### The eval cases
+
+`harness/evals/` has one eval case for each alert of the seed (domino-agent-service ADR 0062, `domino-agent` 0.7.0 or later). An
+eval run sends the folder on your disk to your dev copy, and runs each case as a real task there, with the real model and the real
+tools. The registered agent doesn't change.
+
+```
+export AGENT_SERVICE_URL=https://<apps host>/apps-internal/<App ID>
+domino-agent eval harness                              # each case: one PASS or FAIL line, and an exit code
+domino-agent eval harness --case unclear-wire-asks     # one case
+```
+
+| Case | Alert | What it expects | Safe to repeat |
+|---|---|---|---|
+| `already-closed` | A-1004 | The agent reads the alert, makes no write, and its reply has "closed" | Yes |
+| `unclear-wire-asks` | A-1003 | The notes in task memory, then a question. No close and no escalation | Yes |
+| `structuring-escalates` | A-1002 | `domino_aml_escalate_to_sar` with the outcome `denied`, no close, the notes, and a judge reads the reply | Yes |
+| `salary-closes` | A-1001 | `domino_aml_close_alert` with the outcome `allowed`, and the notes | No: load the seed again first |
+
+- **Load the seed again before each run** (`POST /reset`): `salary-closes` closes A-1001 in the case-management App, as a real task
+  does. With A-1001 closed already, the case fails.
+- **A dev copy refuses a call that needs approval.** So the escalation of A-1002 has the outcome `denied`, nothing is written, and
+  the agent reports that the escalation didn't go through. The case expects that. The approval itself is tested by a person:
+  "Run the four alerts".
+- **The note is a tool call.** The task stores the agent's file tool as `write`, with the file's path. Three cases expect a `write`
+  whose `filePath` has `task-memory`.
+- **An eval case runs with no personal memory and no agent memory**, and with empty task memory. So a run next week starts as a run
+  today does, and an accepted note of agent memory is not in an eval run.
+- **What the run needs.** `project:` in `definition.md`, a runner for live chat on the platform App, your grant on the model, and the
+  case-management App up.
+
+The first runs (November 27, 2026, on a dev copy, model `sonnet`): the four cases passed in each of three runs, in 13 to 54 seconds
+for a case. With rule 6 changed to "do not ask the analyst: escalate", `unclear-wire-asks` failed with the exit code 1:
+
+```
+FAIL  unclear-wire-asks    40.5 s   https://<apps host>/apps-internal/<App ID>/#/tasks/<task>
+      no-tool: the agent called `domino_aml_escalate_to_sar` 1 time: domino_aml_escalate_to_sar (denied)
+1 of 1 case failed.
+```
+
 ### The check
 
 ```
@@ -625,8 +693,8 @@ python tests/check_harness_agent.py
 AGENT_SERVICE_REPO=/path/to/domino-agent-service python tests/check_harness_agent.py
 ```
 
-One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only: it checks the folder's two files and
-every AML rule in the instructions. The lines that don't depend on the lane must be the framework agent's lines, with the harness
+One line per case, with a non-zero exit code on any failure. Its own part uses the stdlib only: it checks the folder's files (the two files and the eval
+cases), the memory settings and every AML rule in the instructions. The lines that don't depend on the lane must be the framework agent's lines, with the harness
 names of the tools.
 
 The rest needs the agent service's code: `AGENT_SERVICE_REPO` is the path of a checkout of domino-agent-service's `main`. Without
@@ -649,6 +717,36 @@ docker run --rm -v /path/to/domino-agent-service:/service:ro -v "$PWD:/aml:ro" -
 ```
 
 Nothing calls a Domino host. The live run is domino-agent-service #246.
+
+## The case note agent
+
+A second harness agent, `case-note/`: it writes the case note for the audit file of one triaged alert. It shows an **upstream task**
+(domino-agent-service ADR 0066, task memory): a task of this agent names a task of the triage agent by its task key, and its run
+gets that task's notes as a read-only folder.
+
+| File | What it holds |
+|---|---|
+| `case-note/definition.md` | The settings. No tool server: the agent can't read the case-management system. `memory.task: true`: an agent needs task memory to read an upstream task. |
+| `case-note/instructions.md` | The instructions: read the notes of the upstream task, use only their facts, and end with a summary of four parts (Alert, Decision, Evidence, Open points). |
+
+So each fact of a case note comes from the notes that the triage task wrote. Rules 6 and 9 of the triage agent make it write them.
+
+```
+domino-agent deploy case-note
+domino-agent chat --agent aml-case-note --upstream-task AGT-<n> -m "Write the case note for this alert."
+```
+
+- `AGT-<n>` is the task key of a triage task that you can read: you started it or continued it, or you are an owner or an editor of
+  the triage agent. For a key that you can't read, the agent service refuses the new task, with the same answer as for a key that
+  doesn't exist.
+- A task names its upstream tasks at its start only: `--upstream-task` of `chat` and `dev`, or the field `upstreamTasks` of the API
+  call that starts a task. The App's own "new task" form has no field for them.
+- Each person who can read the case note's task can see what its run read from the triage task. That includes the owner and the
+  editors of the case note agent.
+
+The first run (November 27, 2026, both agents as dev copies, model `sonnet`): the triage task of A-1003 asked the analyst, got the
+answer and closed the alert. The case note agent's one tool call was a read of the upstream notes. Its case note had the alert, the
+customer, the seven transactions with their IDs, the analyst's answer and the decision.
 
 ## The App deployment policy
 

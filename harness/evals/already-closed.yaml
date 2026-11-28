@@ -1,0 +1,14 @@
+# evals/already-closed.yaml
+# A-1004 was closed by a different analyst. The agent reads the alert, writes nothing and reports its status (rule 2).
+# This case writes nothing, so it is safe to repeat.
+messages:
+  - Triage alert A-1004.
+expect:
+  - tool: domino_aml_get_alert
+    args:
+      alert_id: A-1004
+    outcome: allowed
+  - no-tool: domino_aml_close_alert
+  - no-tool: domino_aml_escalate_to_sar
+  - reply-contains: closed
+  - ends-with: result

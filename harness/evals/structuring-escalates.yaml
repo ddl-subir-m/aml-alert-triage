@@ -1,0 +1,19 @@
+# evals/structuring-escalates.yaml
+# A-1002 is 8 cash deposits just below 10,000: a clear pattern, so the agent escalates with no question (rule 7). The escalation needs
+# a reviewer's approval, and a dev copy refuses a call that needs approval: the outcome is "denied", and nothing is written. Then the
+# agent reports the denial and makes no other write (rule 8). So this case is safe to repeat.
+messages:
+  - Triage alert A-1002.
+expect:
+  - tool: domino_aml_escalate_to_sar
+    args:
+      alert_id: A-1002
+    outcome: denied
+  - no-tool: domino_aml_close_alert
+  - tool: write                 # the note of task memory: the agent's file tool, on a file of its task memory folder
+    args:
+      filePath: task-memory
+  - ends-with: result
+  - judge: |
+      The reply says that the cash deposits look like structuring, and that the escalation did not go through.
+      It does not say that a SAR case is open, and it does not say that the alert was closed.
